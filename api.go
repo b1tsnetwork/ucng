@@ -108,6 +108,14 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) (Identity, string, b
 	return me, ip, true
 }
 
+// writeDenied: Grund, warum in room nicht geschrieben werden darf.
+func (s *Server) writeDenied(room string) error {
+	if s.hub.IsDMBlocked(room) {
+		return ErrDMBlocked
+	}
+	return ErrReadOnly
+}
+
 func (s *Server) posterOf(me Identity, ipHash string) Poster {
 	return Poster{ID: me.ID, Name: me.Name, Team: me.Team, Since: me.Created, IPHash: ipHash,
 		Roles: me.Roles, Perms: s.hub.Roles().PermsOf(me.Roles, me.Team)}
@@ -126,6 +134,7 @@ type sessionInfo struct {
 	Sanction *SanctionInfo `json:"sanction,omitempty"`
 	Member   bool          `json:"member,omitempty"` // Konto (Modus „hosted“)
 	Pinned   []string      `json:"pinned"`           // angepinnte Kanäle
+	Blocked  []string      `json:"blocked"`          // von mir blockierte Personen (IDs)
 }
 
 func (s *Server) sessionOf(me Identity, ipHash string) sessionInfo {
@@ -134,7 +143,8 @@ func (s *Server) sessionOf(me Identity, ipHash string) sessionInfo {
 		viewer = me.ID + "." + s.hub.Mod().PresenceSig(me.ID+"|"+me.Session) + "." + me.Session
 	}
 	info := sessionInfo{Name: me.Name, ID: me.ID, Team: me.Team, Viewer: viewer, Member: me.Member, Pinned: s.users.PinnedOf(me.ID),
-		Roles: s.hub.Roles().Filter(me.Roles), Perms: s.hub.Roles().PermsOf(me.Roles, me.Team)}
+		Blocked: s.hub.Blocks().List(me.ID),
+		Roles:   s.hub.Roles().Filter(me.Roles), Perms: s.hub.Roles().PermsOf(me.Roles, me.Team)}
 	if info.Roles == nil {
 		info.Roles = []string{}
 	}
@@ -231,7 +241,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.hub.CanWrite(room, a) {
-		fail(w, ErrReadOnly)
+		fail(w, s.writeDenied(room))
 		return
 	}
 	if enc, peer, fed := s.e2eMode(room, me); enc || in.E2E != "" {
@@ -385,6 +395,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, statusFor(err), err.Error())
 		return
+	}
+	if a := s.accessOf(r); a != nil {
+		if floor := s.hub.DMFloor(room, a.ID); floor > 0 {
+			keep := hits[:0]
+			for _, h := range hits {
+				if h.Message.ID > floor {
+					keep = append(keep, h)
+				}
+			}
+			hits = keep
+		}
 	}
 	writeJSON(w, http.StatusOK, hits)
 }

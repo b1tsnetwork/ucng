@@ -73,7 +73,10 @@ func (r *room) canWrite(a *Access) bool {
 	if !r.canRead(a) {
 		return false
 	}
-	if r.kind == RoomDM || len(r.writeRoles) == 0 {
+	if r.kind == RoomDM {
+		return !r.dmBlocked()
+	}
+	if len(r.writeRoles) == 0 {
 		return true
 	}
 	return a != nil && (a.Team || intersects(r.writeRoles, a.Roles))
@@ -121,7 +124,16 @@ func (h *Hub) HistoryAs(roomName string, a *Access, before int64, limit int) ([]
 	if !h.CanRead(roomName, a) {
 		return nil, false, ErrNoRoom
 	}
-	return h.History(roomName, before, limit)
+	msgs, more, err := h.History(roomName, before, limit)
+	if err == nil && a != nil {
+		if floor := h.DMFloor(roomName, a.ID); floor > 0 {
+			if before > 0 && before <= floor+1 {
+				return []Message{}, false, nil
+			}
+			msgs, more = (&room{}).trimFloor(msgs, more, floor)
+		}
+	}
+	return msgs, more, err
 }
 
 // RefreshViewer übernimmt geänderte Rollen/Team einer Person in die offenen Verbindungen und

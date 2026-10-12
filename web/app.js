@@ -74,6 +74,10 @@
   const isDM = (r) => /^dm-/.test(r || "");
   const dmOf = (r) => dms.find((d) => d.room === r);
   const roomLabel = (r) => (isDM(r) ? "@" + ((dmOf(r) || {}).name || _t("app.direktnachricht")) : "#" + r);
+  // Blockierte Personen: keine Direktnachrichten; ihre Beiträge in Kanälen sind eingeklappt.
+  const isBlocked = (id) => !!id && (me.blocked || []).includes(id);
+  const revealed = new Set(); // aufgeklappte Nachrichten blockierter Personen
+  const hideBlocked = (m) => !isDM(room) && !m.deleted && isBlocked(m.userId) && !revealed.has(m.id);
 
   function h(tag, cls, text) {
     const e = document.createElement(tag);
@@ -134,6 +138,7 @@
     smile: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 11.5a3.5 3.5 0 0 0 6 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="7.6" cy="8" r="1" fill="currentColor"/><circle cx="12.4" cy="8" r="1" fill="currentColor"/></svg>',
     edit: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16h3l8.5-8.5a2.1 2.1 0 0 0-3-3L4 13z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
     x: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    block: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m5.2 14.8 9.6-9.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   };
 
   // ---------- Verschlüsselte Direktnachrichten (Modus „hosted“) ----------
@@ -226,6 +231,15 @@
     bubble.replaceChildren();
     bubble.classList.toggle("deleted", !!m.deleted);
     if (m.deleted) { bubble.textContent = deletedText(m); return; }
+    bubble.classList.toggle("blocked-msg", hideBlocked(m));
+    if (hideBlocked(m)) {
+      bubble.append(h("span", "blocked-note", _t("app.nachricht_einer_blockierten_person")), " ");
+      const b = h("button", "text-btn", _t("app.trotzdem_anzeigen"));
+      b.type = "button";
+      b.addEventListener("click", (e) => { e.stopPropagation(); revealed.add(m.id); fillBubble(bubble, m); });
+      bubble.append(b);
+      return;
+    }
     let text = m.text;
     if (m.e2e) {
       const st = e2eState(m.e2e, m);
@@ -878,6 +892,7 @@
     addMessage(m, own, true);
     if (m.thread) { threadLive(m); clearTimeout(onLiveMessage.t); onLiveMessage.t = setTimeout(loadRooms, 800); } // Thread-Liste in der Seitenleiste
     if (own) return;
+    if (!isDM(room) && isBlocked(m.userId)) return; // kein Hinweis, kein Ton
     const visible = !document.hidden && atBottom();
     if (visible) markRead();
     else {
@@ -920,6 +935,8 @@
     closeSearch();
     $("roomTitle").textContent = isDM(r) ? ((dmOf(r) || {}).name || _t("app.direktnachricht")) : r;
     $("roomHash").textContent = isDM(r) ? "@" : "#";
+    $("dmMenuBtn").hidden = !isDM(r) || !me.name;
+    if (isDM(r) && me.name && !dmOf(r)) loadDMs(); // neu erschienene Unterhaltung
     setRoomInfo(rooms.find((x) => x.name === r) || (isDM(r) ? { description: dmDescription(r) } : null));
     if (decodeURIComponent(location.hash.slice(1)) !== r) history.replaceState(null, "", "#" + encodeURIComponent(r));
     $("sidebar").classList.remove("open");
@@ -1296,8 +1313,18 @@
     }
     note.hidden = !s;
     const ro = !s && !writable();
-    $("readonlyNote").textContent = ro ? _t("app.in_diesem_kanal_duerfen_nur_bestimmte") : "";
-    $("readonlyNote").hidden = !ro;
+    const dm = isDM(room) ? dmOf(room) : null;
+    const ron = $("readonlyNote");
+    ron.textContent = !ro ? "" : dm && dm.blocked
+      ? (dm.blockedByMe ? _t("app.du_hast_name_blockiert", { name: dm.name }) : _t("app.in_dieser_unterhaltung_kannst_du_nicht"))
+      : _t("app.in_diesem_kanal_duerfen_nur_bestimmte");
+    if (ro && dm && dm.blockedByMe) {
+      const b = h("button", "text-btn", _t("app.blockierung_aufheben"));
+      b.type = "button";
+      b.addEventListener("click", () => setBlocked(dm.with, dm.name, false));
+      ron.append(" ", b);
+    }
+    ron.hidden = !ro;
     input.disabled = !!s || ro;
     $("composer").classList.toggle("blocked", !!s || ro);
     $("composer").classList.toggle("e2e", dmE2E());
@@ -1485,7 +1512,10 @@
 
   // ---------- Schreiben erlaubt? ----------
 
-  function writable() { return !roomInfo || roomInfo.canWrite !== false; }
+  function writable() {
+    if (isDM(room) && (dmOf(room) || {}).blocked) return false;
+    return !roomInfo || roomInfo.canWrite !== false;
+  }
 
   // Namen meiner Rollen, die per @ erwähnt werden können (kleingeschrieben).
   function myRoleMentions() {
@@ -1686,15 +1716,21 @@
     const own = isOwn(m);
     if (me.perms.pin && !m.deleted) items.push([ICON.pin, isPinned(m.id) ? _t("app.loesen") : _t("app.anpinnen"), () => setPin(m, !isPinned(m.id))]);
     if (!own && !m.deleted) items.push([ICON.flag, _t("app.melden"), () => openReport(m)]);
-    if (!own && !m.bot && m.userId && dmsEnabled && !isDM(room)) items.push([ICON.mail, _t("app.direktnachricht_an", { name: m.name }), () => startDM(m.userId)]);
+    if (!own && !m.bot && m.userId && dmsEnabled && !isDM(room) && !isBlocked(m.userId)) items.push([ICON.mail, _t("app.direktnachricht_an", { name: m.name }), () => startDM(m.userId)]);
+    if (!own && !m.bot && m.userId && me.name && !isDM(room)) {
+      items.push(isBlocked(m.userId)
+        ? [ICON.block, _t("app.blockierung_von_aufheben", { name: m.name }), () => setBlocked(m.userId, m.name, false)]
+        : [ICON.block, _t("app.name_blockieren", { name: m.name }), () => openBlock(m.userId, m.name)]);
+    }
     if (!own && me.perms.delete && !m.deleted && (!m.team || me.team)) items.push([ICON.shield, _t("app.loeschen_moderation"), () => chatModDelete(m), "danger"]);
     if (!own && me.perms.mute && !m.bot && m.userId && (!m.team || me.team)) items.push([ICON.mute, _t("app.stummschalten", { name: m.name }), () => openMute(m), "danger"]);
     return items;
   }
 
   const menu = $("msgMenu");
-  function openMsgMenu(anchor, m) {
-    menu.replaceChildren(...msgMenuItems(m).map(([icon, label, fn, cls]) => {
+  function openMsgMenu(anchor, m) { openMenu(anchor, msgMenuItems(m)); }
+  function openMenu(anchor, items) {
+    menu.replaceChildren(...items.map(([icon, label, fn, cls]) => {
       const b = h("button", "menu-item" + (cls ? " " + cls : ""));
       b.type = "button";
       b.setAttribute("role", "menuitem");
@@ -1772,8 +1808,10 @@
       const res = await fetch("/api/dms", { headers: { Authorization: "Bearer " + token } });
       if (!res.ok) return;
       const d = await res.json();
+      const was = isDM(room) ? !!(dmOf(room) || {}).blocked : null;
       dms = d.dms || [];
       dmsEnabled = !!d.enabled;
+      if (was !== null && dmOf(room) && was !== !!dmOf(room).blocked) connect(); // Schreibrecht neu holen
     } catch { return; }
     renderDMList();
     if (isDM(room)) {
@@ -1833,6 +1871,104 @@
       renderDMList();
       switchRoom(d.room);
     } catch (e) { toast(e.message); }
+  }
+
+  // ---------- Blockieren und Unterhaltungen löschen ----------
+
+  let dmAction = null; // { run(checked) }
+  function openDMAction(o) {
+    dmAction = o;
+    $("dmActionTitle").textContent = o.title;
+    $("dmActionText").textContent = o.text;
+    $("dmActionOpt").hidden = !o.check;
+    $("dmActionCheck").checked = false;
+    $("dmActionCheckText").textContent = o.check || "";
+    $("dmActionSubmit").textContent = o.submit;
+    $("dmActionError").textContent = "";
+    $("dmActionDialog").showModal();
+  }
+  $("dmActionForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!dmAction) return;
+    $("dmActionSubmit").disabled = true;
+    try {
+      await dmAction.run($("dmActionCheck").checked);
+      $("dmActionDialog").close();
+    } catch (err) { $("dmActionError").textContent = err.message; }
+    finally { $("dmActionSubmit").disabled = false; }
+  });
+
+  function openBlock(id, name) {
+    const d = dms.find((x) => x.with === id);
+    openDMAction({
+      title: _t("app.name_blockieren", { name }),
+      text: _t("app.blockieren_erklaerung", { name }),
+      check: d && d.messages ? _t("app.unterhaltung_mit_name_auch_loeschen", { name }) : "",
+      submit: _t("app.blockieren"),
+      run: (clear) => setBlocked(id, name, true, clear, true),
+    });
+  }
+
+  async function setBlocked(id, name, block, clear = false, throwErr = false) {
+    try {
+      const r = await api("/api/blocks", { method: "POST", body: JSON.stringify({ userId: id, block, clear }) });
+      me.blocked = (r.blocked || []).map((x) => x.id);
+      blockedCache = r.blocked || [];
+      renderBlockedList(true);
+      toast(block ? _t("app.name_ist_blockiert", { name }) : _t("app.blockierung_von_name_aufgehoben", { name }));
+      await loadDMs();
+      if (isDM(room) && !dmOf(room)) switchRoom(firstRoom()); // Unterhaltung gelöscht
+      else if (isDM(room)) connect();
+      renderAll();
+      updateComposer();
+    } catch (err) { if (throwErr) throw err; toast(err.message); }
+  }
+
+  function openClearDM(r) {
+    const d = dmOf(r) || {};
+    openDMAction({
+      title: _t("app.unterhaltung_loeschen"),
+      text: d.fed ? _t("app.unterhaltung_loeschen_fed", { name: d.name }) : _t("app.unterhaltung_loeschen_erklaerung", { name: d.name }),
+      check: _t("app.meine_nachrichten_auch_bei_name_loeschen", { name: d.name }),
+      submit: _t("app.loeschen"),
+      run: async (own) => {
+        await api(`/api/dms/${encodeURIComponent(r)}${own ? "?own=1" : ""}`, { method: "DELETE" });
+        toast(_t("app.unterhaltung_geloescht"));
+        await loadDMs();
+        if (room === r) switchRoom(dmOf(r) ? r : firstRoom());
+      },
+    });
+  }
+
+  $("dmMenuBtn").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!menu.hidden) { menu.hidden = true; return; }
+    if (!dmOf(room)) await loadDMs(); // z. B. gerade erst neu erschienen
+    const d = dmOf(room);
+    if (!d) return;
+    const items = [];
+    if (d.blockedByMe) items.push([ICON.block, _t("app.blockierung_von_aufheben", { name: d.name }), () => setBlocked(d.with, d.name, false)]);
+    else items.push([ICON.block, _t("app.name_blockieren", { name: d.name }), () => openBlock(d.with, d.name), "danger"]);
+    items.push([ICON.trash, _t("app.unterhaltung_loeschen"), () => openClearDM(room), "danger"]);
+    openMenu($("dmMenuBtn"), items);
+  });
+
+  let blockedCache = null;
+  async function renderBlockedList(cached) {
+    const ul = $("blockedList");
+    if (!cached || !blockedCache) {
+      try { blockedCache = (await api("/api/blocks")).blocked || []; } catch { blockedCache = []; }
+    }
+    if (!blockedCache.length) { ul.replaceChildren(h("li", "blocked-empty", _t("app.niemand_blockiert"))); return; }
+    ul.replaceChildren(...blockedCache.map((b) => {
+      const li = h("li");
+      li.append(avatar(b.name, b.fed ? "" : b.id), h("span", "blocked-name", b.name));
+      const btn = h("button", "text-btn", _t("app.aufheben"));
+      btn.type = "button";
+      btn.addEventListener("click", () => setBlocked(b.id, b.name, false));
+      li.append(btn);
+      return li;
+    }));
   }
 
   // ---------- Profilbilder und Status ----------
@@ -2178,7 +2314,7 @@
 
   function setMe(d) {
     const changed = me.id !== d.id || me.name !== d.name || me.team !== !!d.team;
-    me = { id: d.id, name: d.name, team: !!d.team, viewer: d.viewer || "", sanction: d.sanction || null, roles: d.roles || [], perms: d.perms || {}, canUpload: !!d.canUpload, member: !!d.member, pinned: d.pinned || [] };
+    me = { id: d.id, name: d.name, team: !!d.team, viewer: d.viewer || "", sanction: d.sanction || null, roles: d.roles || [], perms: d.perms || {}, canUpload: !!d.canUpload, member: !!d.member, pinned: d.pinned || [], blocked: d.blocked || [] };
     store.set("gochat:name", d.name);
     $("meName").textContent = d.name;
     $("meAvatar").replaceWith(Object.assign(avatar(d.name, d.id), { id: "meAvatar" }));
@@ -2247,6 +2383,7 @@
     const days = settings.retentionDays;
     $("retentionNote").textContent = days ? _t("app.nachrichten_werden_nach_tagen", { days: days }) : "";
     $("retentionNote").hidden = !days;
+    renderBlockedList();
     $("profileDialog").showModal();
   }
   $("profileBtn").addEventListener("click", () => (me.name ? openProfile() : askName()));

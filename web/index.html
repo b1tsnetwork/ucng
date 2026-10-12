@@ -78,6 +78,9 @@
             <span class="room-desc" id="roomDesc"></span>
           </div>
         </div>
+        <button class="icon-btn" id="dmMenuBtn" type="button" hidden aria-haspopup="menu" aria-label="Unterhaltung: Optionen" title="Blockieren, Unterhaltung löschen" data-i18n-aria-label="app.unterhaltung_optionen" data-i18n-title="app.blockieren_unterhaltung_loeschen">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1.6" fill="currentColor"/><circle cx="10" cy="10" r="1.6" fill="currentColor"/><circle cx="15" cy="10" r="1.6" fill="currentColor"/></svg>
+        </button>
         <button class="icon-btn" id="searchBtn" type="button" aria-label="Suchen" title="Im Kanal suchen (Strg+K)" data-i18n-aria-label="app.suchen" data-i18n-title="app.im_kanal_suchen_strg_k">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m13.2 13.2 3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </button>
@@ -274,6 +277,12 @@
       <div class="btn-row"><button type="button" class="btn-quiet" id="accountBtn" data-i18n="app.konto_verwalten">Konto verwalten</button></div>
     </section>
 
+    <section class="profile-section" id="profileBlocked">
+      <h3 class="sec-title" data-i18n="app.blockierte_personen">Blockierte Personen</h3>
+      <p data-i18n="app.blockierte_personen_koennen_dir_keine">Blockierte Personen können dir keine Direktnachrichten schicken. Ihre Beiträge in Kanälen sind bei dir eingeklappt.</p>
+      <ul class="blocked-list" id="blockedList"></ul>
+    </section>
+
     <section class="profile-section" id="profileExport">
       <h3 class="sec-title" data-i18n="app.auf_ein_anderes_geraet_mitnehmen">Auf ein anderes Gerät mitnehmen</h3>
       <p data-i18n="app.mit_der_profil_datei_oder_dem_code_nutzt">Mit der Profil-Datei oder dem Code nutzt du denselben Namen auf dem Handy, in einem anderen Browser oder im Chat auf einer anderen Webseite.</p>
@@ -364,6 +373,20 @@
       <div class="actions">
         <button type="button" class="btn-quiet" data-close data-i18n="app.abbrechen">Abbrechen</button>
         <button type="submit" class="btn-danger" data-i18n="app.stummschalten_2">Stummschalten</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Blockieren / Unterhaltung löschen -->
+  <dialog id="dmActionDialog">
+    <form id="dmActionForm">
+      <h2 id="dmActionTitle"></h2>
+      <p id="dmActionText"></p>
+      <label class="check" id="dmActionOpt"><input type="checkbox" id="dmActionCheck"> <span id="dmActionCheckText"></span></label>
+      <p class="form-error" id="dmActionError" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn-quiet" data-close data-i18n="app.abbrechen">Abbrechen</button>
+        <button type="submit" class="btn-danger" id="dmActionSubmit"></button>
       </div>
     </form>
   </dialog>

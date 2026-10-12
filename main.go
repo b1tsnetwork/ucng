@@ -322,6 +322,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/profiles", s.readGate(s.handleProfiles))
 	mux.HandleFunc("GET /api/dms", s.handleDMs)
 	mux.HandleFunc("POST /api/dms", s.handleDMOpen)
+	mux.HandleFunc("DELETE /api/dms/{room}", s.handleDMClear)
+	mux.HandleFunc("GET /api/blocks", s.handleBlocks)
+	mux.HandleFunc("POST /api/blocks", s.handleBlockSet)
 	mux.HandleFunc("POST /api/profile/avatar", s.handleAvatarSet)
 	mux.HandleFunc("DELETE /api/profile/avatar", s.handleAvatarDelete)
 	mux.HandleFunc("PUT /api/profile/status", s.handleStatus)
@@ -573,7 +576,8 @@ func statusFor(err error) int {
 		errors.Is(err, ErrLastAdmin), errors.Is(err, errBotNoMod), errors.Is(err, errBotNoPerm),
 		errors.Is(err, errBotNoWrite), errors.Is(err, errBotOwnSanct), errors.Is(err, errBotOutOfReach),
 		errors.Is(err, ErrBotLinks), errors.Is(err, ErrReadOnly), errors.Is(err, ErrNoPerm), errors.Is(err, ErrReportOwn),
-		errors.Is(err, ErrUploadsOff), errors.Is(err, ErrUploadKnown), errors.Is(err, ErrUploadRole), errors.Is(err, ErrAvatarsOff), errors.Is(err, ErrDMsOff):
+		errors.Is(err, ErrUploadsOff), errors.Is(err, ErrUploadKnown), errors.Is(err, ErrUploadRole), errors.Is(err, ErrAvatarsOff), errors.Is(err, ErrDMsOff),
+		errors.Is(err, ErrDMBlocked):
 		return http.StatusForbidden
 	case errors.Is(err, ErrNoRoom), errors.Is(err, ErrNoMessage), errors.Is(err, ErrNoBot),
 		errors.Is(err, ErrNoReplyMsg), errors.Is(err, ErrNoUser), errors.Is(err, ErrNoSanction),

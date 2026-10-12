@@ -216,7 +216,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.hub.CanWrite(room, a) {
-		fail(w, ErrReadOnly)
+		fail(w, s.writeDenied(room))
 		return
 	}
 	if enc, _, _ := s.e2eMode(room, me); enc {

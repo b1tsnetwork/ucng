@@ -65,12 +65,16 @@ func (h *Hub) Thread(roomName string, id int64, a *Access) (Message, []Message, 
 		return Message{}, nil, ErrNoMessage
 	}
 	root := r.history[i]
-	if root.Thread != 0 {
+	floor := int64(0)
+	if a != nil {
+		floor = r.dmFloor(a.ID)
+	}
+	if root.Thread != 0 || root.ID <= floor {
 		return Message{}, nil, ErrNoMessage
 	}
 	out := []Message{}
 	for j := i + 1; j < len(r.history); j++ {
-		if r.history[j].Thread == id {
+		if r.history[j].Thread == id && r.history[j].ID > floor {
 			out = append(out, h.out(r, r.history[j], false))
 		}
 	}

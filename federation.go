@@ -570,6 +570,11 @@ func (s *Server) handleFedInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	addr := strings.ToLower(p.From) + "@" + domain
+	// Blockiert: annehmen und verwerfen (die andere Seite erfährt nichts davon).
+	if p.Type != "delete" && s.hub.Blocks().Has(localID, fedPrefix+addr) {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	f := s.hub.Fed()
 	switch p.Type {
 	case "message", "edit":
@@ -920,6 +925,10 @@ func (s *Server) openFedDM(w http.ResponseWriter, r *http.Request, me Identity, 
 			fail(w, ErrDMSelf)
 			return
 		}
+		if s.hub.Blocks().Either(me.ID, id) {
+			writeErr(w, http.StatusForbidden, ErrDMBlocked.Error())
+			return
+		}
 		room := s.hub.OpenDM(me.ID, id)
 		s.hub.NotifyUser("dm", id)
 		enc, _, _ := s.e2eMode(room, me)
@@ -936,6 +945,10 @@ func (s *Server) openFedDM(w http.ResponseWriter, r *http.Request, me Identity, 
 	}
 	addr := strings.ToLower(name) + "@" + domain
 	peer := fedPrefix + addr
+	if s.hub.Blocks().Has(me.ID, peer) {
+		writeErr(w, http.StatusForbidden, ErrDMBlocked.Error())
+		return
+	}
 	if !s.hub.HasRoom(dmRoomName(me.ID, peer)) && !s.dmRL.Allow(me.ID) {
 		fail(w, ErrDMLimit)
 		return

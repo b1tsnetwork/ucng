@@ -510,6 +510,8 @@ Die Admin-API ist absichtlich nicht per CORS freigegeben: Sie funktioniert nur v
 - **Angepinnt:** Oben im Kanal steht die zuletzt angepinnte Nachricht, ein Klick zeigt alle (höchstens 10) und springt hin. Anpinnen dürfen Team, Rollen mit dem Recht und Admins/Moderatoren in der Moderation.
 - **Bilder:** Bild-Knopf, Einfügen aus der Zwischenablage oder Hineinziehen. Bilder werden auf eine feste Größe verkleinert (Admin-Bereich: 320–800 px), Fotos als JPEG, animierte GIFs bleiben animiert; Text im Eingabefeld wird zur Bildunterschrift. Wer hochladen darf, stellst du unter Emotes & GIFs ein (niemand / Namen älter als 24 h / alle / nur Rollen). Bis zu 8 MB, 15 Bilder in 10 Minuten je Person.
 - **Direktnachrichten:** Über den Briefumschlag in der Online-Liste oder „Mehr → Direktnachricht“ an einer Nachricht. Unterhaltungen stehen links unter „Direktnachrichten“, neue zählen wie Erwähnungen. Nur die beiden Beteiligten sehen sie; Bots und Webhooks bekommen nichts davon mit. Abschaltbar unter Allgemein.
+- **Blockieren:** „Mehr → *Name* blockieren“ an einer Nachricht oder **⋯** im Kopf einer Direktnachricht. Danach kann keine der beiden Personen der anderen eine Direktnachricht schicken (auch nicht in einer bestehenden Unterhaltung, Reaktionen eingeschlossen); Nachrichten von anderen Instanzen werden stillschweigend verworfen. Beiträge der blockierten Person in Kanälen sind bei der blockierenden Person eingeklappt („Trotzdem anzeigen“) und lösen weder Ton noch Hinweis aus – für alle anderen bleiben sie sichtbar, dafür gibt es Melden und die Moderation. Die blockierte Person wird nicht benachrichtigt, sieht in der Unterhaltung aber, dass sie nicht mehr schreiben kann. Die Liste steht im Profil unter „Blockierte Personen“.
+- **Unterhaltung löschen:** **⋯** im Kopf einer Direktnachricht. Der Verlauf verschwindet für die löschende Person (auch aus Suche, Threads und angepinnten Nachrichten); schreibt das Gegenüber erneut, erscheint die Unterhaltung wieder – ohne den alten Verlauf. Haben beide gelöscht, entfernt der Server die Nachrichten endgültig (bei Unterhaltungen mit anderen Instanzen sofort, die Gegenseite hat ihre eigene Kopie). Optional werden die eigenen Nachrichten auch beim Gegenüber gelöscht. Bis zum endgültigen Löschen können Admins gemeldete Nachrichten weiterhin prüfen.
 - **Profilbild und Status** (im Profil): eigenes Bild (mittig auf 128 × 128 zugeschnitten) statt des Buchstabens, Status „da“ / „abwesend“ / „beschäftigt“ mit kurzem Text („Im Urlaub“). Der Status erscheint als Punkt am Bild und in der Online-Liste; die Automod prüft den Text.
 - **Melden:** „Mehr → Melden …“ an fremden Nachrichten.
 - **Formatierung:** `**fett**`, `*kursiv*` oder `_kursiv_`, `~~durchgestrichen~~`, `` `Code` ``, ` ```Codeblock``` `, Links werden klickbar. Der Knopf „Aa“ im Eingabefeld zeigt die Übersicht.
@@ -832,7 +834,9 @@ curl -X POST http://localhost:8080/api/bot/rooms/lobby/messages \
 | `POST`  | `/api/users/{id}/mute`              | `{"minutes":15,"reason":"…"}` (1–60) – Recht „stummschalten“ |
 | `GET`   | `/api/rooms/{room}/threads/{id}`    | Thread: `{"root":{…},"messages":[…]}` |
 | `POST`  | `/api/rooms/{room}/upload`          | Bild: `multipart/form-data` mit `file`, optional `text`, `replyTo`, `thread` |
-| `GET`/`POST` | `/api/dms`                     | eigene Direktnachrichten `{"enabled","dms":[{"room","with","name","lastId"}]}` / öffnen `{"userId":"…"}` |
+| `GET`/`POST` | `/api/dms`                     | eigene Direktnachrichten `{"enabled","dms":[{"room","with","name","lastId","blocked","blockedByMe"}]}` / öffnen `{"userId":"…"}` (`403`, wenn eine Seite blockiert hat) |
+| `DELETE`| `/api/dms/{room}?own=1`             | Unterhaltung für mich löschen; `own=1`: eigene Nachrichten auch beim Gegenüber löschen |
+| `GET`/`POST` | `/api/blocks`                  | blockierte Personen `{"blocked":[{"id","name","fed"}]}` / ändern `{"userId":"…","block":true,"clear":false}` (`userId` auch `fed:name@instanz`; `clear`: Unterhaltung zusätzlich löschen). `/api/session` liefert die IDs als `blocked` |
 | `GET`   | `/api/profiles`                     | Profilbilder und Status: `{"<userId>":{"avatar","status","text"}}` |
 | `POST`/`DELETE` | `/api/profile/avatar`       | eigenes Profilbild (`file`) setzen / entfernen |
 | `PUT`   | `/api/profile/status`               | `{"status":"away"|"busy"|"","text":"…"}` |
@@ -988,6 +992,7 @@ filter.go        Wortfilter (ersetzen statt ausblenden)
 uploads.go       Bilder hochladen, Profilbilder verarbeiten, Aufräumen
 profile.go       Profilbild und Status
 dms.go           Direktnachrichten
+blocks.go        Blockieren und Unterhaltungen löschen (Direktnachrichten)
 accounts.go      Admin- und Moderatoren-Konten, Passwörter, Sitzungen, Rollen
 admin.go         Admin-Endpunkte (mit Protokolleinträgen)
 audit.go         Protokoll

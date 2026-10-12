@@ -303,6 +303,21 @@ svg { display: block; }
   font-style: italic; font-size: 14px;
 }
 
+/* Nachricht einer blockierten Person (eingeklappt) */
+.bubble.blocked-msg {
+  background: transparent; color: var(--muted); border-left-style: dashed;
+  font-size: 13.5px;
+}
+.bubble.blocked-msg .text-btn { font-size: 13px; }
+
+/* Blockierte Personen (Profil) */
+.blocked-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.blocked-list li { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.blocked-list .avatar { --size: 26px; font-size: 11px; }
+.blocked-list .blocked-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blocked-list .blocked-empty { color: var(--muted); font-size: 13.5px; }
+.readonly-note .text-btn { font-size: 13.5px; }
+
 /* Aktionen an einer Nachricht (beim Überfahren) */
 .msg .body { position: static; }
 .msg-actions {

@@ -38,7 +38,7 @@ func (h *Hub) OpenDM(a, b string) string {
 	defer h.mu.Unlock()
 	if _, ok := h.rooms[name]; !ok {
 		r := &room{name: name, created: time.Now().UTC(), links: LinksAll, botLinks: LinksAll, amMode: AutomodGlobal,
-			clients: make(map[chan Event]*Viewer), kind: RoomDM, members: []string{a, b}}
+			clients: make(map[chan Event]*Viewer), kind: RoomDM, members: []string{a, b}, blocks: h.blocks}
 		h.rooms[name] = r
 		h.record(storeOp{kind: opRoomMeta, room: name})
 	}
@@ -55,6 +55,9 @@ type DMInfo struct {
 	Messages int       `json:"messages"`
 	Fed      bool      `json:"fed,omitempty"` // Gegenüber auf einer anderen Instanz (With = "fed:name@domain")
 	E2E      bool      `json:"e2e,omitempty"` // Ende-zu-Ende-verschlüsselt
+	// Blockiert: niemand kann mehr schreiben. BlockedByMe: ich habe blockiert (sonst das Gegenüber).
+	Blocked     bool `json:"blocked,omitempty"`
+	BlockedByMe bool `json:"blockedByMe,omitempty"`
 }
 
 // DMsOf liefert alle Unterhaltungen einer Person (neueste zuerst).
@@ -70,10 +73,17 @@ func (h *Hub) DMsOf(userID string) []DMInfo {
 		if other == userID && len(r.members) > 1 {
 			other = r.members[1]
 		}
-		d := DMInfo{Room: r.name, With: other, LastAt: r.last, Messages: len(r.history)}
+		floor := r.dmFloor(userID)
+		start, _ := r.find(floor + 1)
+		if floor > 0 && start >= len(r.history) {
+			continue // für mich gelöscht, seitdem nichts Neues
+		}
+		d := DMInfo{Room: r.name, With: other, LastAt: r.last, Messages: len(r.history) - start}
 		if n := len(r.history); n > 0 {
 			d.LastID = r.history[n-1].ID
 		}
+		d.BlockedByMe = h.blocks.Has(userID, other)
+		d.Blocked = d.BlockedByMe || h.blocks.Has(other, userID)
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastAt.After(out[j].LastAt) })
@@ -145,6 +155,10 @@ func (s *Server) handleDMOpen(w http.ResponseWriter, r *http.Request) {
 	other, found := s.users.Get(in.UserID)
 	if !found {
 		fail(w, ErrNoUser)
+		return
+	}
+	if s.hub.Blocks().Either(me.ID, other.ID) {
+		writeErr(w, http.StatusForbidden, ErrDMBlocked.Error())
 		return
 	}
 	if err := s.hub.checkSanction(s.posterOf(me, ip)); err != nil {

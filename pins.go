@@ -33,7 +33,19 @@ func (h *Hub) Pinned(roomName string, a *Access) ([]Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	return h.pinnedLocked(r), nil
+	list := h.pinnedLocked(r)
+	if a != nil {
+		if floor := r.dmFloor(a.ID); floor > 0 {
+			keep := list[:0]
+			for _, m := range list {
+				if m.ID > floor {
+					keep = append(keep, m)
+				}
+			}
+			list = keep
+		}
+	}
+	return list, nil
 }
 
 // PinnedAll ohne Zugriffsprüfung (Admin-Bereich).

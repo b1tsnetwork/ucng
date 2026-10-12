@@ -253,6 +253,26 @@ func TestFederatedDM(t *testing.T) {
 		t.Fatalf("Wiederholung: %d", c)
 	}
 
+	// Bob blockiert Anna: ihre Nachrichten werden angenommen, aber verworfen.
+	expect(t, post(t, B.ts.URL+"/api/blocks", tb, `{"userId":"fed:Anna@`+A.domain()+`","block":true}`), 200, "Bob blockiert").Body.Close()
+	expect(t, post(t, B.ts.URL+"/api/rooms/"+bdm.Room+"/messages", tb, jsonBody(map[string]string{"e2e": e2eMsg(kb.PubKey, ka.PubKey)})), 403, "Bob schreibt").Body.Close()
+	nb := len(history(t, B, tb, bdm.Room))
+	res = post(t, A.ts.URL+"/api/rooms/"+dm.Room+"/messages", ta, jsonBody(map[string]string{"e2e": e2eMsg(ka.PubKey, kb.PubKey)}))
+	var blocked Message
+	json.NewDecoder(res.Body).Decode(&blocked)
+	waitFor(t, "blockiert zugestellt", func() bool {
+		for _, m := range history(t, A, ta, dm.Room) {
+			if m.ID == blocked.ID {
+				return m.Fed != nil && m.Fed.State == "sent"
+			}
+		}
+		return false
+	})
+	if len(history(t, B, tb, bdm.Room)) != nb {
+		t.Fatal("Nachricht trotz Blockierung angekommen")
+	}
+	expect(t, post(t, B.ts.URL+"/api/blocks", tb, `{"userId":"fed:anna@`+A.domain()+`","block":false}`), 200, "aufheben").Body.Close()
+
 	// Bob nimmt keine Nachrichten von anderen Instanzen mehr an
 	post(t, B.ts.URL+"/api/account/federation", tb, `{"allow":false}`)
 	B.hub.Fed().mu.Lock()

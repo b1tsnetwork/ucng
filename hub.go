@@ -174,6 +174,8 @@ type room struct {
 	writeRoles  []string                 // nur diese Rollen (und das Team) schreiben (leer = alle, die lesen)
 	kind        string                   // "" oder RoomDM
 	members     []string                 // Direktnachrichten: die beiden Nutzer-IDs
+	blocks      *Blocks                  // Direktnachrichten: Blockierungen (geteilt mit dem Hub)
+	cleared     map[string]int64         // Direktnachrichten: bis zu welcher ID jemand die Unterhaltung gelöscht hat
 	pins        []int64                  // angepinnte Nachrichten (neueste zuletzt)
 	group       string                   // Gruppe in der Seitenleiste (leer = ohne)
 	pos         int                      // Position in der Kanalliste
@@ -201,6 +203,18 @@ func (r *room) page(before int64, limit int) ([]Message, bool) {
 		start = 0
 	}
 	return append([]Message(nil), r.history[start:end]...), start > 0
+}
+
+// trimFloor entfernt Nachrichten bis floor (für sich gelöschte Direktnachrichten).
+func (r *room) trimFloor(msgs []Message, more bool, floor int64) ([]Message, bool) {
+	if floor <= 0 {
+		return msgs, more
+	}
+	i := sort.Search(len(msgs), func(i int) bool { return msgs[i].ID > floor })
+	if i > 0 {
+		return msgs[i:], false
+	}
+	return msgs, more
 }
 
 func (r *room) info() RoomInfo {
@@ -313,6 +327,7 @@ type Hub struct {
 	media     *MediaLib
 	commands  *Commands
 	roles     *Roles
+	blocks    *Blocks
 	reports   *Reports
 	schedules *Schedules
 	hosted    *Hosted
@@ -413,7 +428,7 @@ func NewHub(maxRooms int) *Hub {
 	h := &Hub{
 		rooms: make(map[string]*room), settings: defaultSettings, maxRooms: maxRooms,
 		automod: NewAutomod(), filter: NewAutomod(), pending: map[int64]string{}, bots: NewBots(), mod: NewModeration(),
-		audit: NewAudit(), accounts: NewAccounts(""), widgets: NewWidgets(), media: NewMediaLib(), commands: NewCommands(), roles: NewRoles(), reports: NewReports(), schedules: NewSchedules(), hosted: NewHosted(), groups: NewGroups(), beacon: NewBeaconStore(), fed: NewFedStore(), i18n: newCatalog(),
+		audit: NewAudit(), accounts: NewAccounts(""), widgets: NewWidgets(), media: NewMediaLib(), commands: NewCommands(), roles: NewRoles(), blocks: NewBlocks(), reports: NewReports(), schedules: NewSchedules(), hosted: NewHosted(), groups: NewGroups(), beacon: NewBeaconStore(), fed: NewFedStore(), i18n: newCatalog(),
 		bus: map[chan BusEvent]struct{}{}, docs: map[string]docSpec{},
 	}
 	h.loc.Store(loadLocation(defaultSettings.Timezone))
@@ -511,6 +526,15 @@ func NewHub(maxRooms int) *Hub {
 		h.Notify("roles")
 	}
 	h.reports.changed = func() { h.touchDoc("reports.json") }
+	h.blocks.changed = func() { h.touchDoc("blocks.json") }
+	h.RegisterDoc("blocks.json", func() any { return h.blocks.export() }, func(b []byte) error {
+		var m map[string]map[string]time.Time
+		if err := jsonUnmarshal(b, &m); err != nil {
+			return err
+		}
+		h.blocks.restore(m)
+		return nil
+	})
 	h.hosted.changed = func() { h.touchDoc("hosted.json") }
 	h.beacon.changed = func() { h.touchDoc("beacon.json") }
 	h.i18n.OnChange(func() { h.touchDoc("i18n.json") })
@@ -1139,6 +1163,9 @@ func (h *Hub) SendFull(roomName string, p Poster, in SendInput) (Message, error)
 			return Message{}, ErrNoRoom
 		}
 		if !r.canWrite(accessOf(p)) {
+			if r.dmBlocked() {
+				return Message{}, ErrDMBlocked
+			}
 			return Message{}, ErrReadOnly
 		}
 	}
@@ -1158,7 +1185,11 @@ func (h *Hub) SendFull(roomName string, p Poster, in SendInput) (Message, error)
 			return Message{}, ErrThreadNested
 		}
 	}
-	if err := h.checkRoomRules(r, p, text, false); err != nil {
+	spamText := text
+	if in.E2E != "" { // verschlüsselt: der Platzhalter wäre immer gleich – keine falschen Wiederholungen
+		spamText = in.E2E
+	}
+	if err := h.checkRoomRules(r, p, spamText, false); err != nil {
 		return Message{}, err
 	}
 	msg := Message{ID: h.nextID.Add(1), Room: roomName, UserID: p.ID, Bot: p.Bot, Team: p.Team && !p.Bot,
@@ -1219,6 +1250,9 @@ func (h *Hub) subscribe(roomName string, viewer *Viewer, admin bool) (c chan Eve
 	c = make(chan Event, 64)
 	r.clients[c] = viewer
 	hist, more = r.page(0, DefaultPage)
+	if !admin && viewer != nil {
+		hist, more = r.trimFloor(hist, more, r.dmFloor(viewer.ID))
+	}
 	h.broadcast(r, presenceLocked(r))
 	info = r.info()
 	info.CanWrite = r.canWrite(viewer.access())
@@ -1681,27 +1715,28 @@ func (h *Hub) SetAutomod(cfg AutomodConfig) (AutomodConfig, error) {
 
 // roomMeta ist der Inhalt der Kanal-Datei rooms/<name>.json.
 type roomMeta struct {
-	Name        string       `json:"name"`
-	Description string       `json:"description,omitempty"`
-	Created     time.Time    `json:"created"`
-	SlowMode    int          `json:"slowMode,omitempty"`
-	Links       string       `json:"links,omitempty"`
-	BotSlowMode int          `json:"botSlowMode,omitempty"`
-	BotLinks    string       `json:"botLinks,omitempty"`
-	Automod     *RoomAutomod `json:"automod,omitempty"`
-	ReadRoles   []string     `json:"readRoles,omitempty"`
-	WriteRoles  []string     `json:"writeRoles,omitempty"`
-	Kind        string       `json:"kind,omitempty"`
-	Members     []string     `json:"members,omitempty"`
-	Pins        []int64      `json:"pins,omitempty"`
-	Group       string       `json:"group,omitempty"`
-	Pos         int          `json:"pos,omitempty"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Created     time.Time        `json:"created"`
+	SlowMode    int              `json:"slowMode,omitempty"`
+	Links       string           `json:"links,omitempty"`
+	BotSlowMode int              `json:"botSlowMode,omitempty"`
+	BotLinks    string           `json:"botLinks,omitempty"`
+	Automod     *RoomAutomod     `json:"automod,omitempty"`
+	ReadRoles   []string         `json:"readRoles,omitempty"`
+	WriteRoles  []string         `json:"writeRoles,omitempty"`
+	Kind        string           `json:"kind,omitempty"`
+	Members     []string         `json:"members,omitempty"`
+	Cleared     map[string]int64 `json:"cleared,omitempty"` // Direktnachrichten: gelöscht bis (je Person)
+	Pins        []int64          `json:"pins,omitempty"`
+	Group       string           `json:"group,omitempty"`
+	Pos         int              `json:"pos,omitempty"`
 }
 
 func metaOfRoom(r *room) roomMeta {
 	m := roomMeta{Name: r.name, Description: r.description, Created: r.created, SlowMode: r.slowMode, Links: r.links,
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, ReadRoles: r.readRoles, WriteRoles: r.writeRoles,
-		Kind: r.kind, Members: r.members, Pins: r.pins, Group: r.group, Pos: r.pos}
+		Kind: r.kind, Members: r.members, Cleared: r.cleared, Pins: r.pins, Group: r.group, Pos: r.pos}
 	if a := r.automodLocked(); a.Mode != AutomodGlobal || len(a.Patterns) > 0 {
 		m.Automod = &a
 	}
@@ -1746,7 +1781,7 @@ func (h *Hub) putRoom(meta roomMeta, msgs []Message) {
 	r := &room{name: meta.Name, description: meta.Description, created: meta.Created, slowMode: meta.SlowMode,
 		links: links, botSlow: meta.BotSlowMode, botLinks: botLinks, amMode: AutomodGlobal,
 		history: msgs, clients: make(map[chan Event]*Viewer),
-		readRoles: meta.ReadRoles, writeRoles: meta.WriteRoles, kind: meta.Kind, members: meta.Members, pins: meta.Pins,
+		readRoles: meta.ReadRoles, writeRoles: meta.WriteRoles, kind: meta.Kind, members: meta.Members, cleared: meta.Cleared, blocks: h.blocks, pins: meta.Pins,
 		group: meta.Group, pos: meta.Pos}
 	if meta.Automod != nil {
 		if mode, am, err := compileRoomAutomod(*meta.Automod); err == nil {

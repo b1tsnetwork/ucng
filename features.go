@@ -59,6 +59,12 @@ func (h *Hub) React(roomName string, id int64, p Poster, emoji string) (Message,
 	if err != nil {
 		return Message{}, err
 	}
+	if !r.canRead(accessOf(p)) { // private Kanäle und fremde Direktnachrichten: wie nicht vorhanden
+		return Message{}, ErrNoMessage
+	}
+	if r.dmBlocked() {
+		return Message{}, ErrDMBlocked
+	}
 	if m.Deleted {
 		return Message{}, ErrMsgDeleted
 	}
@@ -471,11 +477,17 @@ func (h *Hub) Unread(since map[string]int64, a *Access, userID, name string, rol
 			continue
 		}
 		var info UnreadInfo
+		if f := r.dmFloor(userID); f > last {
+			last = f
+		}
 		start, _ := r.find(last + 1)
 		for i := start; i < len(r.history); i++ {
 			m := r.history[i]
 			if m.Deleted || (userID != "" && m.UserID == userID) {
 				continue
+			}
+			if userID != "" && m.UserID != "" && h.blocks.Has(userID, m.UserID) {
+				continue // blockierte Personen zählen nicht
 			}
 			info.Unread++
 			if Mentions(m.Text, name) || MentionsAny(m.Text, roleNames) {
