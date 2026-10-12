@@ -1,0 +1,232 @@
+# Baut und veröffentlicht UCNG und den Beacon:
+#   - Container-Images in der GitHub Container Registry (ghcr.io), amd64 + arm64
+#   - Programmdateien für Linux, Windows und macOS (Tags: als GitHub Release)
+#
+#   push auf main -> :latest, :<git describe>, :sha-<kurz>
+#   Tag v1.2.3    -> :1.2.3, :1.2, :<git describe> + GitHub Release mit Programmdateien
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # UCNG wird mit allen Speicher-Treibern gebaut (Dateien, SQLite, MySQL).
+  UCNG_TAGS: "sqlite mysql"
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  images:
+    name: Image ${{ matrix.image }}
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ucng
+            file: ./Dockerfile
+          - image: ucng-beacon
+            file: ./Dockerfile.beacon
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # git describe braucht die Tags.
+          fetch-depth: 0
+
+      - name: Meta
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GHCR-Namen müssen klein geschrieben sein.
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          echo "version=$(git describe --tags --always | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+          # Quellcode genau dieser Fassung (AGPL § 13) – erscheint in der Oberfläche und im Beacon.
+          echo "source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      # Kompiliert wird nativ (BUILDPLATFORM); QEMU braucht es nur für die
+      # wenigen RUN-Befehle im arm64-Laufzeit-Image.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags
+        id: tags
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.meta.outputs.version }}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            SOURCE_URL=${{ steps.meta.outputs.source }}
+            TAGS=${{ env.UCNG_TAGS }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.tags.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+          # Lieferketten-Metadaten neben dem Image in GHCR.
+          provenance: mode=max
+          sbom: true
+
+  binaries:
+    name: Programm ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Treiber holen
+        shell: bash
+        run: |
+          set -euo pipefail
+          go get modernc.org/sqlite
+          go get github.com/go-sql-driver/mysql
+
+      - name: Bauen und packen
+        id: pack
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          version="$(git describe --tags --always | sed 's/^v//')"
+          ext=""; [ "$GOOS" = windows ] && ext=".exe"
+          name="ucng_${version}_${GOOS}_${GOARCH}"
+          out="dist/$name"
+          mkdir -p "$out"
+          ldflags="-s -w -X main.version=$version -X main.sourceURL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}"
+          go build -tags "$UCNG_TAGS" -trimpath -ldflags="$ldflags" -o "$out/ucng$ext" .
+          go build -trimpath -ldflags="$ldflags" -o "$out/ucng-beacon$ext" ./cmd/ucng-beacon
+          cp README.md "$out/"
+          cp LICENSE "$out/LICENSE.txt"
+          cp web/flags/LICENSE.txt "$out/LICENSE-flags.txt"
+          cd dist
+          if [ "$GOOS" = windows ]; then
+            zip -qr "$name.zip" "$name"
+            echo "file=dist/$name.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar -czf "$name.tar.gz" "$name"
+            echo "file=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ucng-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ steps.pack.outputs.file }}
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Release
+    needs: [images, binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Nur nötig, um bei Tags das Release anzulegen.
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: ucng-*
+          merge-multiple: true
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "UCNG $TAG" --generate-notes \
+              --notes "Container-Images: \`ghcr.io/${OWNER}/ucng:${TAG#v}\` und \`ghcr.io/${OWNER}/ucng-beacon:${TAG#v}\`"
+          fi
+          gh release upload "$TAG" --clobber dist/*
+
+      - name: Summary
+        shell: bash
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "### UCNG"
+            echo
+            echo "- \`ghcr.io/${OWNER}/ucng\`"
+            echo "- \`ghcr.io/${OWNER}/ucng-beacon\`"
+            echo
+            echo "| Datei | SHA256 |"
+            echo "|-------|--------|"
+            while read -r sum file; do echo "| \`$file\` | \`$sum\` |"; done < dist/SHA256SUMS.txt
+          } >> "$GITHUB_STEP_SUMMARY"

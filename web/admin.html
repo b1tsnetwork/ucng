@@ -1,0 +1,1587 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+     SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Verwaltung – UCNG</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/admin.css">
+  <link rel="stylesheet" href="/i18n-editor.css">
+  <link rel="stylesheet" href="/theme.css" id="themeCSS">
+</head>
+<body>
+  <!-- Anmeldung -->
+  <main class="login" id="loginView" hidden>
+    <form class="login-card" id="loginForm">
+      <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
+          <rect width="64" height="64" rx="15" fill="currentColor"/>
+          <path fill="#fff" d="M22 12h20a10 10 0 0 1 10 10v14a10 10 0 0 1-10 10H27l-8 6.5c-1 .8-2.5.1-2.5-1.2V45.2A10 10 0 0 1 12 36V22a10 10 0 0 1 10-10z"/>
+          <path d="M21 35a11 11 0 0 1 22 0" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/>
+          <circle cx="21" cy="35" r="4.2" fill="currentColor"/><circle cx="32" cy="24" r="4.2" fill="currentColor"/><circle cx="43" cy="35" r="4.2" fill="currentColor"/>
+        </svg>
+      <h1 data-i18n="admin.verwaltung">Verwaltung</h1>
+      <p data-i18n="admin.melde_dich_mit_deinem_konto_an">Melde dich mit deinem Konto an.</p>
+      <label class="field">
+        <span data-i18n="admin.anmeldename_2">Anmeldename</span>
+        <input id="loginUser" autocomplete="username" placeholder="admin" autocapitalize="off" spellcheck="false">
+        <small data-i18n="admin.fuer_den_haupt_admin_passwort_aus_admin">Für den Haupt-Admin (Passwort aus ADMIN_PASSWORD) leer lassen oder „admin“.</small>
+      </label>
+      <label class="field">
+        <span data-i18n="admin.passwort">Passwort</span>
+        <input type="password" id="loginPassword" autocomplete="current-password" required>
+      </label>
+      <p class="form-error" id="loginError" role="alert"></p>
+      <button type="submit" class="btn-primary wide" id="loginSubmit" data-i18n="admin.anmelden">Anmelden</button>
+      <a class="back-link" href="/" data-i18n="admin.zurueck_zum_chat">Zurück zum Chat</a>
+      <label class="side-lang login-lang" id="loginLang" data-i18n-langs hidden><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2.8 10h14.4M10 2.8c2 2.1 2.9 4.5 2.9 7.2s-.9 5.1-2.9 7.2c-2-2.1-2.9-4.5-2.9-7.2s.9-5.1 2.9-7.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="sr-only" data-i18n="common.language">Sprache</span></label>
+    </form>
+  </main>
+
+  <!-- Verwaltung -->
+  <div class="app admin" id="adminView" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
+          <rect width="64" height="64" rx="15" fill="currentColor"/>
+          <path fill="#fff" d="M22 12h20a10 10 0 0 1 10 10v14a10 10 0 0 1-10 10H27l-8 6.5c-1 .8-2.5.1-2.5-1.2V45.2A10 10 0 0 1 12 36V22a10 10 0 0 1 10-10z"/>
+          <path d="M21 35a11 11 0 0 1 22 0" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/>
+          <circle cx="21" cy="35" r="4.2" fill="currentColor"/><circle cx="32" cy="24" r="4.2" fill="currentColor"/><circle cx="43" cy="35" r="4.2" fill="currentColor"/>
+        </svg>
+        <span id="brandTitle">UCNG</span>
+      </div>
+
+      <nav class="admin-nav" aria-label="Verwaltung" data-i18n-aria-label="admin.verwaltung">
+        <a href="#uebersicht" data-view="uebersicht">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16V9M8.5 16V4M13 16v-5M17 16H3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.uebersicht">Übersicht</span>
+        </a>
+        <a href="#moderation" data-view="moderation">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 3.5 5v4.6c0 3.9 2.7 6.8 6.5 7.9 3.8-1.1 6.5-4 6.5-7.9V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          <span data-i18n="admin.moderation">Moderation</span>
+        </a>
+        <a href="#automod" data-view="automod">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5.5h12M4 10h7M4 14.5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="14.5" cy="13" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m16.6 15.1 1.6 1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.automod">Automod</span>
+          <span class="nav-count" id="queueCount" hidden></span>
+        </a>
+        <a href="#meldungen" data-view="meldungen">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 17.5V3M5 3.5h9.5l-2 3.5 2 3.5H5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span data-i18n="admin.meldungen">Meldungen</span>
+          <span class="nav-count" id="reportCount" hidden></span>
+        </a>
+        <a href="#nutzer" data-view="nutzer">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.5 16.5c.6-3 2.8-4.5 5.5-4.5s4.9 1.5 5.5 4.5M13.5 4.2a3 3 0 0 1 0 5.6M15.5 12.4c1.2.7 2 1.9 2.3 4.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.personen">Personen</span>
+          <span class="nav-count soft" id="sanctionCount" hidden></span>
+        </a>
+        <a href="#protokoll" data-view="protokoll">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h7l3 3v12H5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 9h4.5M8 12h4.5M8 15h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.protokoll">Protokoll</span>
+        </a>
+        <span class="nav-sep admin-only" aria-hidden="true" data-i18n="admin.einrichtung">Einrichtung</span>
+        <a href="#kanaele" data-view="kanaele" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 3 6 17M14 3l-1.5 14M3.5 7.5h14M2.5 12.5h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.kanaele">Kanäle</span>
+        </a>
+        <a href="#allgemein" data-view="allgemein" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.allgemein">Allgemein</span>
+        </a>
+        <a href="#medien" data-view="medien" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7.5" cy="8.5" r="1.4" fill="currentColor"/><path d="m4 14 4-3.5 3 2.5 2.5-2 3 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          <span data-i18n="admin.emotes_gifs">Emotes &amp; GIFs</span>
+        </a>
+        <a href="#befehle" data-view="befehle" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m6 8 2.5 2L6 12M10.5 12.5h3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span data-i18n="admin.befehle">Befehle</span>
+        </a>
+        <a href="#ankuendigungen" data-view="ankuendigungen" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 6.5v4l2.5 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span data-i18n="admin.ankuendigungen">Ankündigungen</span>
+        </a>
+        <a href="#widgets" data-view="widgets" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 6 3 10l4 4M13 6l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span data-i18n="admin.widgets">Widgets</span>
+        </a>
+        <a href="#bots" data-view="bots" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.5" y="6" width="13" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 6V3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="3" r="1.2" fill="currentColor"/><circle cx="7.5" cy="11" r="1.3" fill="currentColor"/><circle cx="12.5" cy="11" r="1.3" fill="currentColor"/></svg>
+          <span data-i18n="admin.bots">Bots</span>
+        </a>
+        <a href="#konten" data-view="konten" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="9" width="12" height="8.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+          <span data-i18n="admin.team_zugaenge">Team-Zugänge</span>
+        </a>
+        <a href="#hosting" data-view="hosting" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 10h14M10 3c2 2.2 3 4.5 3 7s-1 4.8-3 7c-2-2.2-3-4.5-3-7s1-4.8 3-7z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+          <span data-i18n="admin.hosting">Hosting</span>
+        </a>
+        <a href="#beacon" data-view="beacon" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="currentColor"/><path d="M5.8 5.8a6 6 0 0 0 0 8.4M14.2 5.8a6 6 0 0 1 0 8.4M3.3 3.3a9.5 9.5 0 0 0 0 13.4M16.7 3.3a9.5 9.5 0 0 1 0 13.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.beacon">Beacon</span>
+        </a>
+        <a href="#vorlagen" data-view="vorlagen" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.5" y="3.5" width="13" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.5 8h13M8 8v8.5" stroke="currentColor" stroke-width="1.7"/></svg>
+          <span data-i18n="admin.vorlagen">Vorlagen</span>
+        </a>
+        <a href="#sprachen" data-view="sprachen" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h8M7 3v2M9.5 5c-.6 3.2-2.8 6-6 7.5M5.5 8.2c1 1.6 2.4 2.8 4 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 17l3-7.5 3 7.5M11.6 14.4h3.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span data-i18n="admin.sprachen">Sprachen</span>
+        </a>
+        <a href="#backups" data-view="backups" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><ellipse cx="10" cy="5" rx="6" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4 5v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+          <span data-i18n="admin.backups">Backups</span>
+        </a>
+      </nav>
+
+      <div class="admin-foot">
+        <div class="whoami" id="whoami"></div>
+        <label class="side-lang" id="adminLang" data-i18n-langs hidden><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2.8 10h14.4M10 2.8c2 2.1 2.9 4.5 2.9 7.2s-.9 5.1-2.9 7.2c-2-2.1-2.9-4.5-2.9-7.2s.9-5.1 2.9-7.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="sr-only" data-i18n="common.language">Sprache</span></label>
+        <a class="nav-quiet" href="/" target="_blank" rel="noopener" data-i18n="admin.chat_oeffnen">Chat öffnen</a>
+        <button class="nav-quiet" id="logoutBtn" type="button" data-i18n="admin.abmelden">Abmelden</button>
+        <div class="about-line" id="aboutLine"></div>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <main class="admin-main">
+      <header class="admin-head">
+        <button class="icon-btn menu" id="menuBtn" type="button" aria-label="Menü" data-i18n-aria-label="admin.menue">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <h1 id="viewTitle" data-i18n="admin.uebersicht">Übersicht</h1>
+      </header>
+
+      <!-- Übersicht -->
+      <section class="view" id="view-uebersicht">
+        <div class="kpis" id="kpis"></div>
+        <div class="panel chart-panel">
+          <div class="chart-head">
+            <div>
+              <h2 data-i18n="admin.aktivitaet">Aktivität</h2>
+              <p id="chartSub" data-i18n="admin.nachrichten_pro_tag">Nachrichten pro Tag</p>
+            </div>
+            <div class="seg" role="tablist" aria-label="Kennzahl" data-i18n-aria-label="admin.kennzahl">
+              <button type="button" role="tab" data-metric="messages" aria-selected="true" data-i18n="admin.nachrichten_2">Nachrichten</button>
+              <button type="button" role="tab" data-metric="users" aria-selected="false" data-i18n="admin.personen">Personen</button>
+              <button type="button" role="tab" data-metric="automod" aria-selected="false" data-i18n="admin.automod">Automod</button>
+            </div>
+          </div>
+          <div class="chart" id="chart"></div>
+        </div>
+        <div class="panel">
+          <h2 class="panel-title" data-i18n-html="admin.aktivste_kanaele_letzte_30_tage">Aktivste Kanäle <small>letzte 30 Tage</small></h2>
+          <ul class="top-rooms" id="topRooms"></ul>
+        </div>
+      </section>
+
+      <!-- Allgemein -->
+      <section class="view" id="view-allgemein" hidden>
+        <form class="panel" id="settingsForm">
+          <label class="field">
+            <span data-i18n="admin.titel_der_anwendung">Titel der Anwendung</span>
+            <input id="setTitle" maxlength="60" required>
+            <small data-i18n="admin.erscheint_oben_in_der_seitenleiste_und">Erscheint oben in der Seitenleiste und im Browser-Tab.</small>
+          </label>
+
+          <label class="switch-row">
+            <span class="switch-text">
+              <strong data-i18n="admin.nutzer_duerfen_kanaele_erstellen">Nutzer dürfen Kanäle erstellen</strong>
+              <small data-i18n="admin.wenn_aus_koennen_besucher_nur_die">Wenn aus, können Besucher nur die Kanäle nutzen, die du hier anlegst.</small>
+            </span>
+            <input type="checkbox" class="switch" id="setAllowRooms">
+          </label>
+          <label class="switch-row">
+            <span class="switch-text">
+              <strong data-i18n="admin.direktnachrichten_erlauben">Direktnachrichten erlauben</strong>
+              <small data-i18n="admin.personen_mit_namen_koennen_einander">Personen mit Namen können einander privat schreiben (Briefumschlag in der Online-Liste oder am Namen). Im Modus „simple“ nicht verschlüsselt (Admins sehen gemeldete Direktnachrichten). Im Modus „hosted“ sind Direktnachrichten zwischen Konten Ende-zu-Ende-verschlüsselt.</small>
+            </span>
+            <input type="checkbox" class="switch" id="setDMs">
+          </label>
+
+          <fieldset class="theme-set">
+            <legend data-i18n="admin.farbgestaltung">Farbgestaltung</legend>
+            <p class="set-hint" data-i18n="admin.gilt_fuer_chat_und_verwaltung">Gilt für Chat und Verwaltung. Änderungen siehst du hier sofort als Vorschau; für alle anderen gelten sie nach dem Speichern.</p>
+
+            <div class="field">
+              <span data-i18n="admin.akzentfarbe">Akzentfarbe</span>
+              <div class="swatches" id="accentSwatches" role="radiogroup" aria-label="Vorschläge für die Akzentfarbe" data-i18n-aria-label="admin.vorschlaege_fuer_die_akzentfarbe"></div>
+              <span class="color-input">
+                <input type="color" id="setAccent" value="#5848f4" aria-label="Eigene Akzentfarbe" data-i18n-aria-label="admin.eigene_akzentfarbe">
+                <code id="setAccentText">#5848f4</code>
+              </span>
+              <small data-i18n="admin.fuer_knoepfe_eigene_nachrichten_und_den">Für Knöpfe, eigene Nachrichten und den aktiven Kanal. Die Schrift darauf wird automatisch hell oder dunkel gewählt, damit sie lesbar bleibt.</small>
+            </div>
+
+            <div class="field">
+              <span data-i18n="admin.seitenleiste">Seitenleiste</span>
+              <div class="swatches" id="sidebarSwatches" role="radiogroup" aria-label="Vorschläge für die Seitenleiste" data-i18n-aria-label="admin.vorschlaege_fuer_die_seitenleiste"></div>
+              <span class="color-input">
+                <input type="color" id="setSidebar" value="#15172e" aria-label="Eigene Farbe der Seitenleiste" data-i18n-aria-label="admin.eigene_farbe_der_seitenleiste">
+                <code id="setSidebarText" data-i18n="admin.standard">Standard</code>
+              </span>
+            </div>
+
+            <label class="field">
+              <span data-i18n="admin.darstellung">Darstellung</span>
+              <select id="setMode">
+                <option value="auto" data-i18n="admin.wie_betriebssystem_hell_oder_dunkel">Wie Betriebssystem (hell oder dunkel)</option>
+                <option value="light" data-i18n="admin.immer_hell">Immer hell</option>
+                <option value="dark" data-i18n="admin.immer_dunkel">Immer dunkel</option>
+              </select>
+            </label>
+          </fieldset>
+
+          <fieldset class="theme-set">
+            <legend data-i18n="admin.datenschutz">Datenschutz</legend>
+            <p class="set-hint" data-i18n="admin.links_erscheinen_in_der_seitenleiste_des">Links erscheinen in der Seitenleiste des Chats. Die Aufbewahrungsfrist löscht ältere Nachrichten endgültig – auch aus Moderation und Backups der Folgetage.</p>
+            <div class="field-row">
+              <label class="field">
+                <span data-i18n-html="admin.datenschutzerklaerung_link">Datenschutzerklärung <em>(Link)</em></span>
+                <input id="setPrivacy" type="url" placeholder="https://example.com/datenschutz" autocomplete="off">
+              </label>
+              <label class="field">
+                <span data-i18n-html="admin.impressum_link">Impressum <em>(Link)</em></span>
+                <input id="setImprint" type="url" placeholder="https://example.com/impressum" autocomplete="off">
+              </label>
+            </div>
+            <label class="field">
+              <span data-i18n="admin.nachrichten_aufbewahren">Nachrichten aufbewahren</span>
+              <select id="setRetention">
+                <option value="0" data-i18n="admin.unbegrenzt">Unbegrenzt</option>
+                <option value="7" data-i18n="admin.7_tage">7 Tage</option>
+                <option value="30" data-i18n="admin.30_tage">30 Tage</option>
+                <option value="90" data-i18n="admin.90_tage">90 Tage</option>
+                <option value="180" data-i18n="admin.180_tage">180 Tage</option>
+                <option value="365" data-i18n="admin.1_jahr">1 Jahr</option>
+                <option value="730" data-i18n="admin.2_jahre">2 Jahre</option>
+                <option value="custom" data-i18n="admin.eigene_anzahl_tage">Eigene Anzahl Tage …</option>
+              </select>
+              <input id="setRetentionDays" type="number" min="1" max="3650" hidden aria-label="Tage" data-i18n-aria-label="admin.tage">
+              <small data-i18n="admin.aeltere_nachrichten_werden_stuendlich">Ältere Nachrichten werden stündlich endgültig gelöscht, ebenso ältere Einträge im Protokoll.</small>
+            </label>
+          </fieldset>
+
+          <fieldset class="theme-set">
+            <legend data-i18n="admin.zeitzone_und_oeffnungszeiten">Zeitzone und Öffnungszeiten</legend>
+            <p class="set-hint" data-i18n="admin.oeffnungszeiten_zeigt_das_widget_an_z_b">Öffnungszeiten zeigt das Widget an (z. B. für einen Support-Chat). Die Zeitzone gilt auch für Statistik und tägliche Backups.</p>
+            <label class="field">
+              <span data-i18n="admin.zeitzone_2">Zeitzone</span>
+              <input id="setTimezone" list="tzList" placeholder="Europe/Berlin" autocomplete="off" spellcheck="false">
+              <datalist id="tzList"></datalist>
+            </label>
+            <label class="switch-row">
+              <span class="switch-text">
+                <strong data-i18n="admin.oeffnungszeiten_verwenden">Öffnungszeiten verwenden</strong>
+                <small data-i18n="admin.ausserhalb_der_zeiten_zeigt_das_widget">Außerhalb der Zeiten zeigt das Widget einen Hinweis. Schreiben bleibt möglich.</small>
+              </span>
+              <input type="checkbox" class="switch" id="setHoursOn">
+            </label>
+            <div class="hours" id="hoursGrid"></div>
+            <label class="field">
+              <span data-i18n="admin.hinweis_ausserhalb_der_oeffnungszeiten">Hinweis außerhalb der Öffnungszeiten</span>
+              <input id="setClosed" maxlength="300">
+            </label>
+          </fieldset>
+
+          <div class="panel-actions">
+            <button type="button" class="btn-quiet" id="settingsReset" hidden data-i18n="admin.vorschau_verwerfen">Vorschau verwerfen</button>
+            <span class="saved" id="settingsSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.aenderungen_speichern">Änderungen speichern</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Kanäle -->
+      <section class="view" id="view-kanaele" hidden>
+        <div class="view-bar">
+          <p class="view-intro" id="roomsIntro"></p>
+          <div class="bar-buttons">
+            <button class="btn-quiet" id="newGroupBtn" type="button" data-i18n="admin.gruppe_anlegen">Gruppe anlegen</button>
+            <button class="btn-primary" id="newRoomBtn" type="button" data-i18n="admin.kanal_anlegen">Kanal anlegen</button>
+          </div>
+        </div>
+        <ul class="room-sections" id="roomTable"></ul>
+      </section>
+
+      <!-- Moderation -->
+      <section class="view" id="view-moderation" hidden>
+        <div class="view-bar">
+          <label class="field inline">
+            <span data-i18n="admin.kanal">Kanal</span>
+            <select id="modRoom"></select>
+          </label>
+          <span class="mod-status" id="modStatus"></span>
+          <label class="search-field">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m13.2 13.2 3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span class="sr-only" data-i18n="admin.suchen">Suchen</span>
+            <input id="modSearch" type="search" placeholder="Alle Kanäle durchsuchen – auch gelöschte" autocomplete="off" data-i18n-placeholder="admin.alle_kanaele_durchsuchen_auch_geloeschte">
+          </label>
+        </div>
+        <div class="panel flush">
+          <div class="search-head" id="modSearchHead" hidden></div>
+          <ul class="mod-list" id="modList"></ul>
+        </div>
+      </section>
+
+      <!-- Automod -->
+      <section class="view" id="view-automod" hidden>
+        <div class="panel flush queue-panel">
+          <div class="panel-head">
+            <h2 data-i18n="admin.zur_pruefung">Zur Prüfung</h2>
+            <p data-i18n="admin.automatisch_ausgeblendete_nachrichten">Automatisch ausgeblendete Nachrichten aus allen Kanälen. Andere sehen sie nicht, bis du sie freischaltest.</p>
+          </div>
+          <ul class="mod-list" id="queueList"></ul>
+        </div>
+
+        <div class="automod-grid">
+          <form class="panel" id="automodForm">
+            <label class="field scope-field">
+              <span data-i18n="admin.regeln_fuer">Regeln für</span>
+              <select id="amScope"></select>
+              <small id="amScopeHint" data-i18n="admin.die_globalen_regeln_gelten_in_allen">Die globalen Regeln gelten in allen Kanälen, die nichts anderes eingestellt haben.</small>
+            </label>
+            <label class="field" id="amRoomModeRow" hidden>
+              <span data-i18n="admin.automoderation_in_diesem_kanal">Automoderation in diesem Kanal</span>
+              <select id="amRoomMode">
+                <option value="global" data-i18n="admin.globale_regeln">Globale Regeln</option>
+                <option value="both" data-i18n="admin.globale_und_eigene_regeln">Globale und eigene Regeln</option>
+                <option value="own" data-i18n="admin.nur_eigene_regeln">Nur eigene Regeln</option>
+                <option value="off" data-i18n="admin.aus_keine_automoderation">Aus – keine Automoderation</option>
+              </select>
+            </label>
+            <label class="switch-row" id="amEnabledRow">
+              <span class="switch-text">
+                <strong data-i18n="admin.automoderation_aktiv">Automoderation aktiv</strong>
+                <small data-i18n="admin.nachrichten_mit_gesperrten_woertern">Nachrichten mit gesperrten Wörtern werden sofort ausgeblendet und landen oben in der Prüfliste.</small>
+              </span>
+              <input type="checkbox" class="switch" id="amEnabled">
+            </label>
+            <label class="field">
+              <span><span id="amPatternsLabel" data-i18n="admin.gesperrte_woerter_und_muster">Gesperrte Wörter und Muster</span> <em id="amCount"></em></span>
+              <textarea id="amPatterns" rows="10" spellcheck="false" autocomplete="off" placeholder="Arsch*&#10;*loch&#10;Arsc*och&#10;du idiot"></textarea>
+            </label>
+            <div class="pattern-help">
+              <p data-i18n="admin.ein_muster_pro_zeile_zeilen_mit_sind">Ein Muster pro Zeile. Zeilen mit # sind Kommentare.</p>
+              <dl>
+                <dt><code data-i18n="admin.arsch">arsch*</code></dt><dd data-i18n="admin.woerter_die_so_beginnen">Wörter, die so beginnen</dd>
+                <dt><code data-i18n="admin.loch">*loch</code></dt><dd data-i18n="admin.woerter_die_so_enden">Wörter, die so enden</dd>
+                <dt><code data-i18n="admin.arsc_och">arsc*och</code></dt><dd data-i18n="admin.anfang_und_ende_stimmen">Anfang und Ende stimmen</dd>
+                <dt><code data-i18n="admin.idiot">*idiot*</code></dt><dd data-i18n="admin.irgendwo_im_wort">irgendwo im Wort</dd>
+                <dt><code data-i18n="admin.du_opfer">du opfer</code></dt><dd data-i18n="admin.mehrere_woerter_hintereinander">mehrere Wörter hintereinander</dd>
+              </dl>
+              <p data-i18n="admin.erkannt_wird_unabhaengig_von_gross_und">Erkannt wird unabhängig von Groß- und Kleinschreibung, auch mit Ziffern und Zeichen statt Buchstaben (0=o, 1=i/l, 3=e, 4=a, 5=s, 7=t, @=a, $=s), Umlauten, Buchstabenwiederholungen („Arrrsch“) und Trennzeichen („A.r.s.c.h“, „a r s c h“, „Arsch-loch“).</p>
+            </div>
+            <ul class="form-error problems" id="amProblems"></ul>
+            <div class="panel-actions">
+              <span class="saved" id="amSaved" aria-live="polite"></span>
+              <button type="submit" class="btn-primary" data-i18n="admin.regeln_speichern">Regeln speichern</button>
+            </div>
+          </form>
+
+          <div class="panel test-panel">
+            <label class="field">
+              <span data-i18n="admin.regeln_testen">Regeln testen</span>
+              <input id="amTest" placeholder="Beispieltext eingeben" autocomplete="off" data-i18n-placeholder="admin.beispieltext_eingeben">
+              <small data-i18n="admin.prueft_gegen_die_gespeicherten_regeln">Prüft gegen die gespeicherten Regeln – auch wenn die Automoderation gerade aus ist.</small>
+            </label>
+            <div class="test-result" id="amResult" aria-live="polite"></div>
+          </div>
+        </div>
+
+        <form class="panel" id="filterForm">
+          <h2 class="panel-title" data-i18n="admin.wortfilter_ersetzen_statt_ausblenden">Wortfilter: ersetzen statt ausblenden</h2>
+          <p class="set-hint" data-i18n-html="admin.woerter_auf_dieser_liste_werden_in">Wörter auf dieser Liste werden in Nachrichten durch Sternchen ersetzt (<code>Mist</code> → <code>****</code>) – die Nachricht bleibt sichtbar. Gut für harmlose Wörter, für die Ausblenden zu streng wäre. Gleiche Muster wie oben (<code>doof*</code>), geprüft wird Wort für Wort. Gilt in allen Kanälen; das Original sehen nur Admins und Moderatoren.</p>
+          <textarea id="filterPatterns" rows="5" spellcheck="false" class="mono-area" placeholder="mist&#10;doof*&#10;# Kommentar"></textarea>
+          <ul class="form-error problems" id="filterProblems"></ul>
+          <div class="panel-actions">
+            <span class="saved" id="filterSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.wortfilter_speichern">Wortfilter speichern</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Meldungen -->
+      <section class="view" id="view-meldungen" hidden>
+        <div class="view-bar">
+          <p class="view-intro" data-i18n="admin.nachrichten_die_personen_gemeldet_haben">Nachrichten, die Personen gemeldet haben. Mehrere Meldungen zur selben Nachricht sind zusammengefasst.</p>
+          <div class="seg" role="radiogroup" aria-label="Anzeigen" data-i18n-aria-label="admin.anzeigen">
+            <label><input type="radio" name="repStatus" value="open" checked> <span data-i18n="admin.offen">Offen</span></label>
+            <label><input type="radio" name="repStatus" value="done"> <span data-i18n="admin.erledigt">Erledigt</span></label>
+          </div>
+        </div>
+        <div class="panel flush">
+          <ul class="mod-list" id="reportList"></ul>
+        </div>
+      </section>
+
+      <!-- Ankündigungen -->
+      <section class="view" id="view-ankuendigungen" hidden>
+        <div class="view-bar">
+          <p class="view-intro" data-i18n-html="admin.nachrichten_die_der_befehls_bot_zu">Nachrichten, die der Befehls-Bot zu festen Zeiten in einen Kanal schreibt – einmalig, täglich oder an bestimmten Wochentagen. Platzhalter: <code>{date}</code>, <code>{time}</code>.</p>
+          <button class="btn-primary" id="newSchedBtn" type="button" data-i18n="admin.ankuendigung_planen">Ankündigung planen</button>
+        </div>
+        <div class="panel flush">
+          <ul class="sched-list" id="schedList"></ul>
+        </div>
+      </section>
+
+      <!-- Personen -->
+      <section class="view" id="view-nutzer" hidden>
+        <div class="panel flush">
+          <div class="panel-head">
+            <h2 data-i18n="admin.aktive_sperren">Aktive Sperren</h2>
+            <p data-i18n="admin.stummgeschaltete_personen_koennen_lesen">Stummgeschaltete Personen können lesen, aber nicht schreiben oder reagieren. Ausgeschlossene ebenso – mit „auch Verbindung“ können sie sich zusätzlich keinen neuen Namen holen.</p>
+          </div>
+          <ul class="user-list" id="sanctionList"></ul>
+        </div>
+
+        <div class="panel flush">
+          <div class="panel-head row">
+            <div>
+              <h2 data-i18n="admin.namen">Namen</h2>
+              <p id="usersInfo" data-i18n="admin.reservierte_namen_zuletzt_aktive_zuerst">Reservierte Namen, zuletzt aktive zuerst.</p>
+            </div>
+            <label class="search-field">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m13.2 13.2 3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <span class="sr-only" data-i18n="admin.namen_suchen">Namen suchen</span>
+              <input id="userSearch" type="search" placeholder="Name suchen" autocomplete="off" data-i18n-placeholder="admin.name_suchen">
+            </label>
+          </div>
+          <ul class="user-list" id="userList"></ul>
+        </div>
+
+        <div class="panel flush">
+          <div class="panel-head row">
+            <div>
+              <h2 data-i18n="admin.rollen">Rollen</h2>
+              <p data-i18n="admin.abzeichen_wie_moderator_vip_oder">Abzeichen wie „Moderator“, „VIP“ oder „Entwickler“, die im Chat neben dem Namen stehen. Rollen sind reine Kennzeichnung – Rechte hat nur das Team-Abzeichen. Vergeben unter „Verwalten“ bei der Person.</p>
+            </div>
+            <button class="btn-primary admin-only" id="newRoleBtn" type="button" data-i18n="admin.rolle_anlegen">Rolle anlegen</button>
+          </div>
+          <ul class="role-list" id="roleList"></ul>
+        </div>
+
+        <form class="panel" id="protectedForm">
+          <h2 class="panel-title" data-i18n="admin.geschuetzte_namen_2">Geschützte Namen</h2>
+          <p class="set-hint" data-i18n-html="admin.diese_namen_kann_niemand_im_chat_waehlen">Diese Namen kann niemand im Chat wählen – so kann sich keiner als „Admin“ oder „Support“ ausgeben. Gleiche Muster wie bei der Automod (z. B. <code>support*</code>), auch mit Abwandlungen wie „Supp0rt“. Personen mit Team-Abzeichen dürfen solche Namen tragen.</p>
+          <textarea id="protectedNames" rows="7" spellcheck="false" class="mono-area"></textarea>
+          <ul class="form-error problems" id="protectedProblems"></ul>
+          <div class="panel-actions admin-only">
+            <span class="saved" id="protectedSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Protokoll -->
+      <section class="view" id="view-protokoll" hidden>
+        <div class="view-bar">
+          <p class="view-intro" data-i18n="admin.wer_hat_wann_was_getan_alle_aktionen_im">Wer hat wann was getan? Alle Aktionen im Verwaltungsbereich und von Moderations-Bots.</p>
+          <label class="search-field">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m13.2 13.2 3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span class="sr-only" data-i18n="admin.protokoll_durchsuchen">Protokoll durchsuchen</span>
+            <input id="auditSearch" type="search" placeholder="Filtern (Name, Aktion, Kanal)" autocomplete="off" data-i18n-placeholder="admin.filtern_name_aktion_kanal">
+          </label>
+        </div>
+        <div class="panel flush">
+          <ul class="audit-list" id="auditList"></ul>
+        </div>
+      </section>
+
+      <!-- Bots -->
+      <section class="view" id="view-bots" hidden>
+        <div class="view-bar">
+          <p class="view-intro" data-i18n="admin.bots_sind_programme_die_ueber_die_bot">Bots sind Programme, die über die Bot-Schnittstelle mitlesen und schreiben – z. B. für Begrüßungen, Hilfe-Befehle oder Benachrichtigungen.</p>
+          <button class="btn-primary" id="newBotBtn" type="button" data-i18n="admin.bot_anlegen">Bot anlegen</button>
+        </div>
+        <div class="panel flush">
+          <ul class="bot-list" id="botList"></ul>
+        </div>
+
+        <details class="panel api-help">
+          <summary data-i18n="admin.so_bindest_du_einen_bot_an">So bindest du einen Bot an</summary>
+          <p data-i18n-html="admin.jeder_bot_meldet_sich_mit_seinem_api">Jeder Bot meldet sich mit seinem API-Schlüssel an: <code>Authorization: Bearer gcb_…</code>. Es gibt zwei Wege, Nachrichten zu empfangen:</p>
+          <h3 data-i18n="admin.1_live_verbindung_empfohlen_funktioniert">1. Live-Verbindung (empfohlen, funktioniert auch hinter einer Firewall)</h3>
+          <p data-i18n-html="admin.x_bot_stream">Der Bot öffnet <code>GET /api/bot/events</code> und bekommt jede neue Nachricht aus seinen Kanälen sofort als Server-Sent Event. Antworten schickt er per <code>POST /api/bot/rooms/&lt;kanal&gt;/messages</code>.</p>
+          <pre id="helpStream"></pre>
+          <h3 data-i18n="admin.2_webhook_der_chat_ruft_deinen_bot_auf">2. Webhook (der Chat ruft deinen Bot auf)</h3>
+          <p data-i18n-html="admin.traegst_du_eine_webhook_url_ein_schickt">Trägst du eine Webhook-URL ein, schickt der Chat jede neue Nachricht per <code>POST</code> dorthin. Antwortet der Bot mit <code>{"text": "…"}</code>, erscheint das im selben Kanal. Prüfe die Signatur im Header <code>X-UCNG-Signature</code>: <code>sha256=</code> + HMAC-SHA256(Webhook-Geheimnis, <code>X-UCNG-Timestamp</code> + „.“ + Body).</p>
+          <h3 data-i18n="admin.was_ein_bot_darf">Was ein Bot darf</h3>
+          <p data-i18n-html="admin.jeder_aufruf_wird_gegen_die_rechte">Jeder Aufruf wird gegen die Rechte geprüft, die du beim Bot einstellst; <code>GET /api/bot/me</code> liefert sie unter <code>perms</code>.</p>
+          <table class="api-table">
+            <tr><td><code>POST /api/bot/rooms/&lt;kanal&gt;/messages</code></td><td>schreiben, optional <code>"replyTo": &lt;id&gt;</code></td><td data-i18n="admin.schreiben">Schreiben</td></tr>
+            <tr><td><code>PATCH …/messages/&lt;id&gt;</code></td><td data-i18n="admin.eigene_nachricht_bearbeiten">eigene Nachricht bearbeiten</td><td data-i18n="admin.eigene_bearbeiten">Eigene bearbeiten</td></tr>
+            <tr><td><code>DELETE …/messages/&lt;id&gt;</code></td><td data-i18n="admin.eigene_loeschen_bzw_fremde_moderativ">eigene löschen bzw. fremde moderativ löschen</td><td data-i18n="admin.eigene_bearbeiten_loeschen">Eigene bearbeiten / Löschen</td></tr>
+            <tr><td><code>POST …/messages/&lt;id&gt;/react</code></td><td><code data-i18n="admin.text_4">{"emoji":"👍"}</code></td><td data-i18n="admin.reagieren">Reagieren</td></tr>
+            <tr><td><code data-i18n="admin.get_messages">GET …/messages</code></td><td data-i18n="admin.verlauf">Verlauf</td><td data-i18n="admin.verlauf">Verlauf</td></tr>
+            <tr><td><code>GET /api/bot/rooms/&lt;kanal&gt;/presence</code></td><td data-i18n="admin.online_liste">Online-Liste</td><td data-i18n="admin.online_liste">Online-Liste</td></tr>
+            <tr><td><code>POST /api/bot/users/&lt;id&gt;/mute</code> bzw. <code>/ban</code></td><td><code data-i18n="admin.text_5">{"minutes":10,"reason":"…"}</code></td><td data-i18n="admin.stummschalten_ausschliessen">Stummschalten / Ausschließen</td></tr>
+            <tr><td><code>DELETE /api/bot/users/&lt;id&gt;/sanction</code></td><td data-i18n="admin.eigene_sperre_aufheben">eigene Sperre aufheben</td><td data-i18n="admin.stumm_ausschliessen">Stumm / Ausschließen</td></tr>
+          </table>
+          <p data-i18n-html="admin.fertige_beispiel_bots_in_go_liegen_im">Fertige Beispiel-Bots in Go liegen im Projekt unter <code>examples/</code>; alle Details stehen in der README.</p>
+        </details>
+      </section>
+
+      <!-- Widgets -->
+      <section class="view" id="view-widgets" hidden>
+        <div class="view-bar">
+          <p class="view-intro" data-i18n="admin.gespeicherte_widgets_behalten_ihre">Gespeicherte Widgets behalten ihre Einstellungen auf dem Server: Änderungen wirken sofort auf allen Webseiten, ohne den Code neu einzubauen.</p>
+          <button class="btn-primary" id="newWidgetBtn" type="button" data-i18n="admin.widget_anlegen">Widget anlegen</button>
+        </div>
+        <div class="panel flush">
+          <ul class="widget-list" id="widgetList"></ul>
+        </div>
+        <div class="panel policy-panel">
+          <h2 class="panel-title" data-i18n="admin.wo_darf_der_chat_eingebettet_werden">Wo darf der Chat eingebettet werden?</h2>
+          <label class="radio-row"><input type="radio" name="embedPolicy" value="any" id="policyAny"> <span><strong data-i18n="admin.auf_jeder_webseite">Auf jeder Webseite</strong><small data-i18n="admin.jeder_kann_den_code_auf_seiner_seite">Jeder kann den Code auf seiner Seite einbauen.</small></span></label>
+          <label class="radio-row"><input type="radio" name="embedPolicy" value="listed" id="policyListed"> <span><strong data-i18n="admin.nur_auf_eingetragenen_domains">Nur auf eingetragenen Domains</strong><small data-i18n="admin.ein_widget_funktioniert_nur_auf_den">Ein Widget funktioniert nur auf den Domains, die bei ihm eingetragen sind – und nur für seinen Kanal.</small></span></label>
+          <p class="saved" id="policySaved" aria-live="polite"></p>
+        </div>
+
+        <div class="embed-grid" id="widgetEditor" hidden>
+          <form class="panel" id="embedForm">
+            <div class="editor-head">
+              <h2 id="widgetEditorTitle" data-i18n="admin.neues_widget">Neues Widget</h2>
+              <button type="button" class="btn-quiet small" id="widgetCancel" data-i18n="admin.schliessen">Schließen</button>
+            </div>
+            <label class="field">
+              <span data-i18n-html="admin.bezeichnung_nur_hier_sichtbar">Bezeichnung <em>(nur hier sichtbar)</em></span>
+              <input id="embName" maxlength="60" placeholder="z. B. Shop – Support" required data-i18n-placeholder="admin.z_b_shop_support">
+            </label>
+            <div class="field-row">
+              <label class="field">
+                <span data-i18n="admin.kanal">Kanal</span>
+                <select id="embRoom"></select>
+              </label>
+              <label class="field">
+                <span data-i18n="admin.ueberschrift_im_widget">Überschrift im Widget</span>
+                <input id="embTitle" value="Chat" maxlength="60">
+              </label>
+            </div>
+            <div class="field-row">
+              <label class="field">
+                <span data-i18n="admin.darstellung">Darstellung</span>
+                <select id="embMode">
+                  <option value="floating" data-i18n="admin.schwebender_button">Schwebender Button</option>
+                  <option value="inline" data-i18n="admin.fest_im_seiteninhalt">Fest im Seiteninhalt</option>
+                </select>
+              </label>
+              <label class="field" id="embPositionField">
+                <span data-i18n="admin.position">Position</span>
+                <select id="embPosition">
+                  <option value="right" data-i18n="admin.unten_rechts">Unten rechts</option>
+                  <option value="left" data-i18n="admin.unten_links">Unten links</option>
+                </select>
+              </label>
+            </div>
+            <div class="field-row">
+              <label class="field">
+                <span data-i18n="admin.design">Design</span>
+                <select id="embTheme">
+                  <option value="light" data-i18n="admin.hell">Hell</option>
+                  <option value="dark" data-i18n="admin.dunkel">Dunkel</option>
+                  <option value="auto" data-i18n="admin.wie_betriebssystem">Wie Betriebssystem</option>
+                </select>
+              </label>
+              <div class="field">
+                <span data-i18n="admin.akzentfarbe">Akzentfarbe</span>
+                <span class="color-input">
+                  <input type="color" id="embColor" value="#5848f4" aria-label="Akzentfarbe" data-i18n-aria-label="admin.akzentfarbe">
+                  <code id="embColorText" data-i18n="admin.wie_anwendung">wie Anwendung</code>
+                  <button type="button" class="text-btn small" id="embColorReset" hidden data-i18n="admin.zuruecksetzen">zurücksetzen</button>
+                </span>
+              </div>
+            </div>
+            <label class="field">
+              <span data-i18n-html="admin.begruessung_optional">Begrüßung <em>(optional)</em></span>
+              <textarea id="embGreeting" rows="2" maxlength="300" placeholder="Hallo! Wie können wir dir helfen?" data-i18n-placeholder="admin.x_greeting_ph"></textarea>
+              <small data-i18n="admin.erscheint_als_erste_sprechblase_bevor">Erscheint als erste Sprechblase, bevor jemand schreibt – beim schwebenden Button auch als kleiner Hinweis daneben.</small>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" id="embHours">
+              <span><strong data-i18n="admin.oeffnungszeiten_anzeigen">Öffnungszeiten anzeigen</strong>
+                <small id="embHoursHint" data-i18n="admin.einstellen_unter_allgemein">Einstellen unter „Allgemein“.</small></span>
+            </label>
+            <label class="field">
+              <span data-i18n="admin.erlaubte_domains">Erlaubte Domains</span>
+              <textarea id="embDomains" rows="3" spellcheck="false" class="mono-area" placeholder="example.com&#10;*.example.com"></textarea>
+              <small id="embDomainsHint"></small>
+            </label>
+            <p class="form-error" id="widgetError" role="alert"></p>
+            <div class="panel-actions">
+              <button type="button" class="btn-quiet" id="widgetDelete" hidden data-i18n="admin.loeschen">Löschen</button>
+              <span class="saved" id="widgetSaved" aria-live="polite"></span>
+              <button type="submit" class="btn-primary" id="widgetSubmit" data-i18n="admin.widget_speichern">Widget speichern</button>
+            </div>
+
+            <div class="code-block">
+              <div class="code-head">
+                <span data-i18n="admin.code_fuer_deine_webseite">Code für deine Webseite</span>
+                <button type="button" class="btn-quiet small" id="copyEmbed" data-i18n="admin.code_kopieren">Code kopieren</button>
+              </div>
+              <pre id="embedCode"></pre>
+              <small id="embedHint"></small>
+            </div>
+          </form>
+
+          <div class="preview">
+            <div class="preview-head" data-i18n="admin.vorschau">Vorschau</div>
+            <iframe id="embedPreview" title="Vorschau des Widgets" sandbox="allow-scripts allow-same-origin" data-i18n-title="admin.vorschau_des_widgets"></iframe>
+          </div>
+        </div>
+      </section>
+
+      <!-- Emotes & GIFs -->
+      <section class="view" id="view-medien" hidden>
+        <form class="panel" id="uploadsForm">
+          <h2 class="panel-title" data-i18n="admin.bilder_und_profilbilder">Bilder und Profilbilder</h2>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.bilder_im_chat_hochladen">Bilder im Chat hochladen</span>
+              <select id="upMode">
+                <option value="off" data-i18n="admin.niemand">Niemand</option>
+                <option value="known" data-i18n="admin.alle_deren_name_aelter_als_24_stunden">Alle, deren Name älter als 24 Stunden ist</option>
+                <option value="all" data-i18n="admin.alle_mit_namen">Alle mit Namen</option>
+                <option value="roles" data-i18n="admin.nur_team_und_rollen_mit_diesem_recht">Nur Team und Rollen mit diesem Recht</option>
+              </select>
+              <small data-i18n="admin.fotos_werden_verkleinert_und_als_jpeg">Fotos werden verkleinert und als JPEG gespeichert; animierte GIFs bleiben animiert. Nicht mehr benutzte Bilder löscht der Server nach einer Stunde.</small>
+            </label>
+            <label class="field">
+              <span data-i18n="admin.groesse">Größe</span>
+              <select id="upSize">
+                <option value="320">320 px</option>
+                <option value="480">480 px</option>
+                <option value="640">640 px</option>
+                <option value="800">800 px</option>
+              </select>
+              <small data-i18n="admin.laengste_seite_kleinere_bilder_werden">Längste Seite. Kleinere Bilder werden nie vergrößert.</small>
+            </label>
+          </div>
+          <label class="switch-row">
+            <span class="switch-text"><strong data-i18n="admin.profilbilder_erlauben">Profilbilder erlauben</strong><small data-i18n="admin.personen_koennen_ein_eigenes_bild_statt">Personen können ein eigenes Bild statt des Buchstabens zeigen (128 × 128 px, mittig zugeschnitten). Unpassende Bilder entfernst du unter Personen → Verwalten.</small></span>
+            <input type="checkbox" class="switch" id="upAvatars">
+          </label>
+          <div class="panel-actions">
+            <span class="saved" id="upSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
+        <form class="panel" id="mediaSettingsForm">
+          <h2 class="panel-title" data-i18n="admin.einstellungen">Einstellungen</h2>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.groesse_neuer_emotes">Größe neuer Emotes</span>
+              <select id="msEmoteSize">
+                <option value="32" data-i18n="admin.32_32_pixel">32 × 32 Pixel</option>
+                <option value="64" data-i18n="admin.64_64_pixel">64 × 64 Pixel</option>
+              </select>
+              <small data-i18n="admin.jedes_emote_wird_beim_hochladen_fest_auf">Jedes Emote wird beim Hochladen fest auf diese Größe skaliert (quadratisch, mit transparentem Rand). Pro Emote änderbar.</small>
+            </label>
+            <label class="field">
+              <span data-i18n="admin.groesse_von_gifs">Größe von GIFs</span>
+              <select id="msGifWidth">
+                <option value="200" data-i18n="admin.hoechstens_200_200_pixel">höchstens 200 × 200 Pixel</option>
+                <option value="250" data-i18n="admin.hoechstens_250_250_pixel">höchstens 250 × 250 Pixel</option>
+                <option value="300" data-i18n="admin.hoechstens_300_300_pixel">höchstens 300 × 300 Pixel</option>
+                <option value="400" data-i18n="admin.hoechstens_400_400_pixel">höchstens 400 × 400 Pixel</option>
+              </select>
+              <small data-i18n="admin.gifs_werden_in_diesen_rahmen_eingepasst">GIFs werden in diesen Rahmen eingepasst, Animationen bleiben erhalten. Eine Änderung skaliert die Bibliothek neu.</small>
+            </label>
+          </div>
+          <label class="switch-row">
+            <span class="switch-text"><strong data-i18n="admin.gifs_im_chat_erlauben">GIFs im Chat erlauben</strong><small data-i18n="admin.zeigt_im_chat_den_knopf_gif_mit">Zeigt im Chat den Knopf „GIF“ mit Bibliothek und – falls eingerichtet – Web-Suche.</small></span>
+            <input type="checkbox" class="switch" id="msGifs">
+          </label>
+          <fieldset class="sub-set">
+            <legend data-i18n="admin.gif_suche_im_web_optional">GIF-Suche im Web (optional)</legend>
+            <div class="field-row">
+              <label class="field">
+                <span data-i18n="admin.anbieter">Anbieter</span>
+                <select id="msProvider">
+                  <option value="" data-i18n="admin.keine_nur_die_eigene_bibliothek">Keine – nur die eigene Bibliothek</option>
+                  <option value="giphy">GIPHY</option>
+                  <option value="tenor" data-i18n="admin.tenor_google">Tenor (Google)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="admin.jugendschutz">Jugendschutz</span>
+                <select id="msRating">
+                  <option value="g" data-i18n="admin.fuer_alle_g">Für alle (G)</option>
+                  <option value="pg" data-i18n="admin.ab_6_pg">Ab 6 (PG)</option>
+                  <option value="pg-13" data-i18n="admin.ab_13_pg_13">Ab 13 (PG-13)</option>
+                  <option value="r" data-i18n="admin.ab_17_r">Ab 17 (R)</option>
+                </select>
+              </label>
+            </div>
+            <label class="field">
+              <span data-i18n="admin.api_schluessel">API-Schlüssel</span>
+              <input id="msKey" type="password" autocomplete="off" spellcheck="false">
+              <small id="msKeyHint"><span data-i18n="admin.kostenlos_erhaeltlich_bei">Kostenlos erhältlich bei</span> <a href="https://developers.giphy.com/" target="_blank" rel="noopener">developers.giphy.com</a> <span data-i18n="admin.bzw_in_der_google_cloud_console_tenor">bzw. in der Google Cloud Console (Tenor API). Der Schlüssel bleibt auf dem Server; Suche, Vorschauen und gesendete GIFs laufen über diesen Server, Besucher verbinden sich nicht mit dem Anbieter.</span></small>
+            </label>
+          </fieldset>
+          <div class="panel-actions">
+            <span class="saved" id="msSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
+
+        <div class="panel">
+          <div class="editor-head">
+            <h2 class="panel-title"><span data-i18n="admin.emotes">Emotes</span> <small id="emoteCount"></small></h2>
+          </div>
+          <p class="set-hint" data-i18n-html="admin.im_chat_mit_name_einfuegen_oder_ueber">Im Chat mit <code>:name:</code> einfügen – oder über den Smiley-Knopf. Eine Nachricht nur aus Emotes zeigt sie in voller Größe.</p>
+          <div class="upload-row">
+            <label class="btn-quiet file-btn">
+              <input type="file" id="emoteFiles" accept="image/png,image/gif,image/jpeg" multiple hidden>
+              <span data-i18n="admin.bilder_hochladen">Bilder hochladen …</span>
+            </label>
+            <label class="inline-input">
+              <span class="sr-only" data-i18n="admin.name">Name</span>
+              <input id="emoteName" placeholder="Name (sonst aus dem Dateinamen)" maxlength="32" autocomplete="off" spellcheck="false" data-i18n-placeholder="admin.name_sonst_aus_dem_dateinamen">
+            </label>
+            <select id="emoteSize" aria-label="Größe" data-i18n-aria-label="admin.groesse">
+              <option value="0" data-i18n="admin.standardgroesse">Standardgröße</option>
+              <option value="32">32 px</option>
+              <option value="64">64 px</option>
+            </select>
+          </div>
+          <form class="upload-row" id="emoteImportForm">
+            <input id="emoteURL" type="url" placeholder="… oder Adresse eines Bildes (https://…)" autocomplete="off" data-i18n-placeholder="admin.oder_adresse_eines_bildes_https">
+            <button type="submit" class="btn-quiet" data-i18n="admin.importieren">Importieren</button>
+          </form>
+          <p class="upload-status" id="emoteStatus" aria-live="polite"></p>
+          <ul class="emote-admin" id="emoteList"></ul>
+        </div>
+
+        <form class="panel" id="reactForm">
+          <h2 class="panel-title" data-i18n="admin.reaktionen">Reaktionen</h2>
+          <p class="set-hint" data-i18n="admin.diese_auswahl_erscheint_wenn_jemand_auf">Diese Auswahl erscheint, wenn jemand auf eine Nachricht reagiert – Emojis und eigene Emotes, höchstens 12. Reihenfolge per Ziehen oder mit den Pfeilen ändern.</p>
+          <ul class="react-chips" id="reactChips" aria-label="Schnellauswahl" data-i18n-aria-label="admin.schnellauswahl"></ul>
+          <div class="upload-row">
+            <label class="inline-input">
+              <span class="sr-only" data-i18n="admin.emoji">Emoji</span>
+              <input id="reactAdd" placeholder="Emoji einfügen, z. B. 🎉" maxlength="16" autocomplete="off" data-i18n-placeholder="admin.emoji_einfuegen_z_b">
+            </label>
+            <button type="button" class="btn-quiet" id="reactAddBtn" data-i18n="admin.hinzufuegen_3">Hinzufügen</button>
+          </div>
+          <div class="react-suggest">
+            <span data-i18n="admin.vorschlaege">Vorschläge</span>
+            <div id="reactSuggest"></div>
+          </div>
+          <div class="react-suggest" id="reactEmoteRow">
+            <span data-i18n="admin.emotes">Emotes</span>
+            <div id="reactEmoteSuggest"></div>
+          </div>
+          <label class="switch-row">
+            <span class="switch-text"><strong data-i18n="admin.alle_emotes_als_reaktion_erlauben">Alle Emotes als Reaktion erlauben</strong><small data-i18n="admin.im_chat_oeffnet_in_der_auswahl_alle">Im Chat öffnet „+“ in der Auswahl alle Emotes. Aus: nur die Schnellauswahl.</small></span>
+            <input type="checkbox" class="switch" id="reactEmotes">
+          </label>
+          <p class="form-error" id="reactError" aria-live="polite"></p>
+          <div class="panel-actions">
+            <span class="saved" id="reactSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
+
+        <div class="panel">
+          <div class="editor-head">
+            <h2 class="panel-title"><span data-i18n="admin.gif_bibliothek">GIF-Bibliothek</span> <small id="gifCount"></small></h2>
+          </div>
+          <p class="set-hint" data-i18n="admin.eigene_gifs_die_im_chat_unter_gif">Eigene GIFs, die im Chat unter „GIF“ erscheinen. Titel und Schlagwörter helfen bei der Suche.</p>
+          <div class="upload-row">
+            <label class="btn-quiet file-btn">
+              <input type="file" id="gifFiles" accept="image/gif" multiple hidden>
+              <span data-i18n="admin.gifs_hochladen">GIFs hochladen …</span>
+            </label>
+            <label class="inline-input grow">
+              <span class="sr-only" data-i18n="admin.schlagwoerter">Schlagwörter</span>
+              <input id="gifTags" placeholder="Schlagwörter für den Upload, z. B. freude, danke" autocomplete="off" data-i18n-placeholder="admin.schlagwoerter_fuer_den_upload_z_b_freude">
+            </label>
+          </div>
+          <form class="upload-row" id="gifImportForm">
+            <input id="gifURL" type="url" placeholder="… oder Adresse eines GIFs aus dem Web (https://…)" autocomplete="off" data-i18n-placeholder="admin.oder_adresse_eines_gifs_aus_dem_web">
+            <button type="submit" class="btn-quiet" data-i18n="admin.importieren">Importieren</button>
+          </form>
+          <p class="upload-status" id="gifStatus" aria-live="polite"></p>
+          <ul class="gif-admin" id="gifList"></ul>
+        </div>
+      </section>
+
+      <!-- Befehle -->
+      <section class="view" id="view-befehle" hidden>
+        <form class="panel" id="cmdSettingsForm">
+          <label class="switch-row first">
+            <span class="switch-text"><strong data-i18n="admin.befehls_bot_aktiv">Befehls-Bot aktiv</strong><small data-i18n-html="admin.der_eingebaute_bot_antwortet_im_chat_auf">Der eingebaute Bot antwortet im Chat auf Befehle wie <code>!hilfe</code> oder <code>!würfel</code>. Er braucht keinen API-Schlüssel und läuft im Server mit.</small></span>
+            <input type="checkbox" class="switch" id="cmdEnabled">
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.name_des_bots">Name des Bots</span>
+              <input id="cmdBotName" maxlength="32" autocomplete="off">
+              <small data-i18n="admin.ist_reserviert_niemand_sonst_kann_ihn">Ist reserviert – niemand sonst kann ihn wählen.</small>
+            </label>
+            <label class="field">
+              <span data-i18n="admin.zeichen_fuer_befehle">Zeichen für Befehle</span>
+              <select id="cmdPrefix">
+                <option value="!" data-i18n="admin.z_b_hilfe">! (z. B. !hilfe)</option>
+                <option value="/">/ (z. B. /hilfe)</option>
+                <option value=".">. (z. B. .hilfe)</option>
+                <option value="?" data-i18n="admin.z_b_hilfe_2">? (z. B. ?hilfe)</option>
+                <option value="$" data-i18n="admin.z_b_hilfe_3">$ (z. B. $hilfe)</option>
+                <option value="#"># (z. B. #hilfe)</option>
+              </select>
+            </label>
+          </div>
+          <div class="panel-actions">
+            <span class="saved" id="cmdSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
+
+        <div class="view-bar">
+          <p class="view-intro" data-i18n="admin.fertige_befehle_kannst_du_anpassen_oder">Fertige Befehle kannst du anpassen oder abschalten; eigene Befehle antworten mit einem Text deiner Wahl.</p>
+          <button class="btn-primary" id="newCmdBtn" type="button" data-i18n="admin.befehl_anlegen">Befehl anlegen</button>
+        </div>
+        <div class="panel flush">
+          <ul class="cmd-list" id="cmdList"></ul>
+        </div>
+
+        <div class="panel">
+          <h2 class="panel-title" data-i18n="admin.ausprobieren">Ausprobieren</h2>
+          <form class="upload-row" id="cmdTestForm">
+            <input id="cmdTestText" placeholder="!würfel 20" autocomplete="off" data-i18n-placeholder="admin.wuerfel_20">
+            <select id="cmdTestRoom" aria-label="Kanal" data-i18n-aria-label="admin.kanal"></select>
+            <label class="check-row inline"><input type="checkbox" id="cmdTestTeam"> <span data-i18n="admin.als_team">als Team</span></label>
+            <button type="submit" class="btn-quiet" data-i18n="admin.testen">Testen</button>
+          </form>
+          <div class="cmd-preview" id="cmdPreview" hidden></div>
+        </div>
+      </section>
+
+      <!-- Konten -->
+      <section class="view" id="view-konten" hidden>
+        <div class="view-bar">
+          <p class="view-intro" data-i18n-html="admin.eigene_zugaenge_fuer_dein_team">Eigene Zugänge für dein Team. <strong>Moderatoren</strong> moderieren Nachrichten, sperren Personen und sehen Übersicht und Protokoll. <strong>Admins</strong> dürfen zusätzlich alles einrichten.</p>
+          <button class="btn-primary" id="newAccountBtn" type="button" data-i18n="admin.konto_anlegen">Konto anlegen</button>
+        </div>
+        <div class="panel flush">
+          <ul class="user-list" id="accountList"></ul>
+        </div>
+      </section>
+
+      <!-- Hosting: Nutzerkonten, E-Mail, Föderation -->
+      <section class="view" id="view-hosting" hidden>
+        <div class="panel hosting-status" id="hostStatus"></div>
+
+        <form class="panel" id="hostForm">
+          <h2 class="panel-title" data-i18n="admin.nutzerkonten_und_gaeste">Nutzerkonten und Gäste</h2>
+          <div class="field">
+            <span data-i18n="admin.wer_ohne_konto_kommt_darf">Wer ohne Konto kommt, darf …</span>
+            <div class="seg wide" role="radiogroup" aria-label="Gäste" data-i18n-aria-label="admin.gaeste">
+              <label><input type="radio" name="hostGuests" value="none"> <span data-i18n="admin.x_guests_none">nichts sehen</span></label>
+              <label><input type="radio" name="hostGuests" value="read"> <span data-i18n="admin.x_guests_read">mitlesen</span></label>
+              <label><input type="radio" name="hostGuests" value="write"> <span data-i18n="admin.mit_gastnamen_schreiben">mit Gastnamen schreiben</span></label>
+            </div>
+            <small data-i18n="admin.mitglieder_mit_konto_duerfen_immer">Mitglieder mit Konto dürfen immer schreiben (nach den Regeln der Kanäle). Gäste können nie verschlüsselte Direktnachrichten nutzen.</small>
+          </div>
+          <label class="switch-row">
+            <span class="switch-text"><strong data-i18n="admin.registrierung_offen">Registrierung offen</strong><small data-i18n="admin.x_reg_hint">Jede:r kann ein Konto anlegen. Wenn aus, nur mit Einladungslink (unten).</small></span>
+            <input type="checkbox" class="switch" id="hostReg">
+          </label>
+          <label class="switch-row">
+            <span class="switch-text"><strong data-i18n="admin.e_mail_adresse_bestaetigen_lassen">E-Mail-Adresse bestätigen lassen</strong><small data-i18n="admin.neue_konten_muessen_einen_link_in_einer">Neue Konten müssen einen Link in einer E-Mail öffnen, bevor sie sich anmelden können. Braucht den E-Mail-Versand.</small></span>
+            <input type="checkbox" class="switch" id="hostVerify">
+          </label>
+
+          <fieldset class="theme-set">
+            <legend data-i18n="admin.e_mail_versand_smtp">E-Mail-Versand (SMTP)</legend>
+            <p class="set-hint" data-i18n="admin.fuer_bestaetigungslinks_und_passwort">Für Bestätigungslinks und „Passwort vergessen“. Ohne E-Mail-Versand helfen die Wiederherstellungscodes, die jede:r bei der Registrierung bekommt.</p>
+            <div class="field-row">
+              <label class="field"><span data-i18n="admin.server">Server</span><input id="smtpHost" maxlength="200" placeholder="smtp.example.org" autocomplete="off"></label>
+              <label class="field narrow"><span data-i18n="admin.port">Port</span><input id="smtpPort" type="number" min="1" max="65535" value="587"></label>
+              <label class="field"><span data-i18n="admin.verschluesselung">Verschlüsselung</span>
+                <select id="smtpSec">
+                  <option value="starttls" data-i18n="admin.starttls_meist_port_587">STARTTLS (meist Port 587)</option>
+                  <option value="tls" data-i18n="admin.tls_meist_port_465">TLS (meist Port 465)</option>
+                  <option value="none" data-i18n="admin.keine_nur_lokal">keine (nur lokal)</option>
+                </select>
+              </label>
+            </div>
+            <div class="field-row">
+              <label class="field"><span data-i18n="admin.benutzername">Benutzername</span><input id="smtpUser" maxlength="200" autocomplete="off"></label>
+              <label class="field"><span data-i18n="admin.passwort">Passwort</span><input id="smtpPass" type="password" maxlength="200" autocomplete="new-password"></label>
+            </div>
+            <label class="field"><span data-i18n="admin.absender">Absender</span><input id="smtpFrom" maxlength="200" placeholder="UCNG &lt;chat@example.org&gt;" data-i18n-placeholder="admin.gochat"></label>
+            <div class="inline-row">
+              <input id="smtpTestTo" type="email" placeholder="Test-E-Mail an …" aria-label="Test-E-Mail an" data-i18n-aria-label="admin.test_e_mail_an_2" data-i18n-placeholder="admin.test_e_mail_an">
+              <button type="button" class="btn-quiet" id="smtpTest" data-i18n="admin.test_e_mail_senden">Test-E-Mail senden</button>
+            </div>
+          </fieldset>
+
+          <fieldset class="theme-set">
+            <legend data-i18n="admin.foederation">Föderation</legend>
+            <p class="set-hint" id="fedHint" data-i18n-html="admin.mitglieder_koennen_mitgliedern_auf">Mitglieder können Mitgliedern auf anderen UCNG-Instanzen verschlüsselte Direktnachrichten schreiben (<code>name@instanz.example</code>). Kanäle bleiben auf dieser Instanz.</p>
+            <label class="switch-row">
+              <span class="switch-text"><strong data-i18n="admin.foederation_einschalten">Föderation einschalten</strong><small data-i18n-html="admin.braucht_public_url_mit_https">Braucht <code>PUBLIC_URL</code> mit https://.</small></span>
+              <input type="checkbox" class="switch" id="fedOn">
+            </label>
+            <div class="field-row">
+              <label class="field"><span data-i18n-html="admin.nur_diese_instanzen_leer_alle">Nur diese Instanzen <em>(leer = alle)</em></span><textarea id="fedAllow" rows="3" class="mono-area" spellcheck="false" placeholder="chat.example.org&#10;*.example.net"></textarea></label>
+              <label class="field"><span data-i18n="admin.gesperrte_instanzen">Gesperrte Instanzen</span><textarea id="fedDeny" rows="3" class="mono-area" spellcheck="false" placeholder="spam.example"></textarea></label>
+            </div>
+          </fieldset>
+
+          <p class="form-error" id="hostError" role="alert"></p>
+          <div class="panel-actions">
+            <span class="saved" id="hostSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
+
+        <div class="panel" id="invitePanel">
+          <h2 class="panel-title" data-i18n="admin.einladungslink">Einladungslink</h2>
+          <p class="set-hint" data-i18n="admin.gilt_sieben_tage_fuer_genau_ein_neues">Gilt sieben Tage für genau ein neues Konto – auch wenn die Registrierung geschlossen ist.</p>
+          <div class="inline-row">
+            <input id="inviteNote" maxlength="100" placeholder="Notiz (z. B. für wen)" aria-label="Notiz" data-i18n-aria-label="admin.notiz" data-i18n-placeholder="admin.notiz_z_b_fuer_wen">
+            <button type="button" class="btn-primary" id="inviteBtn" data-i18n="admin.link_erzeugen">Link erzeugen</button>
+          </div>
+          <div class="invite-out" id="inviteOut" hidden>
+            <code id="inviteLink"></code>
+            <button type="button" class="btn-quiet" id="inviteCopy" data-i18n="admin.kopieren_2">Kopieren</button>
+          </div>
+        </div>
+
+        <div class="panel flush" id="fedPanel">
+          <div class="panel-head"><h2 class="panel-title" data-i18n="admin.bekannte_instanzen">Bekannte Instanzen</h2></div>
+          <ul class="user-list" id="fedPeers"></ul>
+        </div>
+      </section>
+
+      <!-- Beacon: Verzeichnis und GIF-Sammlungen -->
+      <section class="view" id="view-beacon" hidden>
+        <p class="view-intro" data-i18n-html="admin.ein_beacon_ist_ein_verzeichnis_von">Ein <strong>Beacon</strong> ist ein Verzeichnis von UCNG-Instanzen und ein gemeinsamer GIF-Hub (eigenes Programm <code>gochat-beacon</code>). Hier meldest du diese Instanz an und abonnierst GIF-Sammlungen.</p>
+        <form class="panel" id="beaconForm">
+          <h2 class="panel-title" data-i18n="admin.im_verzeichnis_eintragen">Im Verzeichnis eintragen</h2>
+          <p class="set-hint" id="beaconHint"></p>
+          <label class="field"><span data-i18n="admin.adresse_des_beacons">Adresse des Beacons</span><input id="bcUrl" type="url" placeholder="https://beacon.example.org" autocomplete="off"></label>
+          <label class="switch-row">
+            <span class="switch-text"><strong data-i18n="admin.im_verzeichnis_anzeigen">Im Verzeichnis anzeigen</strong><small data-i18n="admin.die_instanz_meldet_sich_sofort_und_dann">Die Instanz meldet sich sofort und dann alle 6 Stunden mit aktuellen Angaben. Ausschalten trägt sie wieder aus.</small></span>
+            <input type="checkbox" class="switch" id="bcListed">
+          </label>
+          <div class="field-row">
+            <label class="field"><span data-i18n="admin.bevorzugte_sprache">Bevorzugte Sprache</span><select id="bcLang"></select></label>
+            <label class="field"><span data-i18n="admin.land">Land</span><select id="bcCountry"></select></label>
+          </div>
+          <label class="field"><span data-i18n-html="admin.kurzbeschreibung_optional">Kurzbeschreibung <em>(optional)</em></span><input id="bcDesc" maxlength="280" placeholder="Worum geht es auf dieser Instanz?" data-i18n-placeholder="admin.worum_geht_es_auf_dieser_instanz"></label>
+          <div class="beacon-preview" id="bcPreview"></div>
+          <p class="beacon-status" id="bcStatus"></p>
+          <p class="form-error" id="bcError" role="alert"></p>
+          <div class="panel-actions">
+            <button type="button" class="btn-quiet" id="bcSync" data-i18n="admin.jetzt_melden">Jetzt melden</button>
+            <span class="saved" id="bcSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
+
+        <div class="panel">
+          <h2 class="panel-title" data-i18n="admin.gif_sammlungen_abonnieren">GIF-Sammlungen abonnieren</h2>
+          <p class="set-hint" data-i18n-html="admin.fuege_die_adresse_eines_beacons_ein_oder">Füge die Adresse eines Beacons ein (oder die Abo-Adresse einer Sammlung aus seiner GIF-Ansicht, z. B. <code>https://beacon.example.org#c_12ab34cd</code>). Die GIFs erscheinen im Chat im GIF-Fenster unter „Sammlungen“. Beim Senden lädt dieser Server das GIF einmal und speichert es – Besucher verbinden sich nicht mit dem Beacon.</p>
+          <form class="inline-row" id="subAddForm">
+            <input id="subAddUrl" placeholder="https://beacon.example.org" aria-label="Adresse des Beacons" autocomplete="off" data-i18n-aria-label="admin.adresse_des_beacons">
+            <button type="submit" class="btn-quiet" data-i18n="admin.hinzufuegen_3">Hinzufügen</button>
+          </form>
+          <ul class="sub-list" id="subList"></ul>
+          <p class="form-error" id="subError" role="alert"></p>
+        </div>
+      </section>
+
+      <!-- Vorlagen: Grundkonfiguration exportieren und importieren -->
+      <section class="view" id="view-vorlagen" hidden>
+        <p class="view-intro" data-i18n-html="admin.eine_vorlage_enthaelt_teile_der">Eine <strong>Vorlage</strong> enthält Teile der Grundkonfiguration – zum Sichern, zum Weitergeben oder um eine neue Instanz schnell einzurichten. Nachrichten, Personen, Konten und Schlüssel sind nie enthalten.</p>
+        <div class="panel">
+          <h2 class="panel-title" data-i18n="admin.exportieren">Exportieren</h2>
+          <div class="tpl-parts" id="tplExportParts"></div>
+          <div class="panel-actions">
+            <button type="button" class="btn-quiet" id="tplAll" data-i18n="admin.alle_auswaehlen">Alle auswählen</button>
+            <button type="button" class="btn-primary" id="tplExport" data-i18n="admin.vorlage_herunterladen">Vorlage herunterladen</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h2 class="panel-title" data-i18n="admin.importieren">Importieren</h2>
+          <div class="inline-row">
+            <input type="file" id="tplFile" accept=".zip,application/zip" aria-label="Vorlage (.zip)" data-i18n-aria-label="admin.vorlage_zip">
+            <button type="button" class="btn-quiet" id="tplInspect" data-i18n="admin.pruefen">Prüfen</button>
+          </div>
+          <div id="tplImportBox" hidden>
+            <p class="set-hint" id="tplInfo"></p>
+            <div class="tpl-parts" id="tplImportParts"></div>
+            <div class="field">
+              <span data-i18n="admin.vorhandenes">Vorhandenes …</span>
+              <div class="seg wide" role="radiogroup" aria-label="Vorgehen" data-i18n-aria-label="admin.vorgehen">
+                <label><input type="radio" name="tplMode" value="merge" checked> <span data-i18n="admin.ergaenzen_gleichnamiges_bleibt">ergänzen (Gleichnamiges bleibt)</span></label>
+                <label><input type="radio" name="tplMode" value="replace"> <span data-i18n="admin.ersetzen_kanaele_bleiben">ersetzen (Kanäle bleiben)</span></label>
+              </div>
+            </div>
+            <div class="panel-actions">
+              <button type="button" class="btn-primary" id="tplApply" data-i18n="admin.importieren">Importieren</button>
+            </div>
+          </div>
+          <div class="tpl-result" id="tplResult" hidden></div>
+          <p class="form-error" id="tplError" role="alert"></p>
+        </div>
+      </section>
+
+      <!-- Sprachen -->
+      <section class="view" id="view-sprachen" hidden>
+        <p class="view-intro" data-i18n-html="admin.i18n_intro">Alle Texte von Chat, Widget, Verwaltung und Server-Meldungen stammen aus <strong>Sprachdateien</strong>. Deine Änderungen werden getrennt davon gespeichert – Updates bringen neue offizielle Texte mit, deine Anpassungen bleiben erhalten. Hat sich ein Original seit deiner Änderung geändert, wird sie als <em>veraltet</em> markiert.</p>
+        <div id="i18nRoot"></div>
+        <div class="panel i18n-packs">
+          <h2 class="panel-title" data-i18n="admin.lp_titel">Sprachpakete vom Beacon</h2>
+          <p class="set-hint" data-i18n-html="admin.lp_hint">Ein Beacon kann Übersetzungen für UCNG bereitstellen. <b>Installieren</b> legt die Sprache an (falls nötig) und übernimmt die Texte wie ein Import: Texte des Pakets ersetzen deine Änderungen an denselben Texten, alles andere bleibt. Ist beim Beacon eine neuere Fassung verfügbar, steht hier „Update verfügbar“.</p>
+          <form class="inline-row" id="lpForm">
+            <input id="lpUrl" type="url" list="lpUrls" placeholder="https://beacon.example.org" aria-label="Adresse des Beacons" data-i18n-aria-label="admin.lp_url" autocomplete="off">
+            <datalist id="lpUrls"></datalist>
+            <button type="submit" class="btn-quiet" id="lpLoad" data-i18n="admin.lp_anzeigen">Anzeigen</button>
+          </form>
+          <p class="form-error" id="lpError" role="alert"></p>
+          <ul class="user-list lp-list" id="lpList"></ul>
+        </div>
+      </section>
+
+      <!-- Backups -->
+      <section class="view" id="view-backups" hidden>
+        <div class="view-bar">
+          <p class="view-intro" id="backupIntro"></p>
+          <button class="btn-primary" id="backupNow" type="button" data-i18n="admin.jetzt_sichern">Jetzt sichern</button>
+        </div>
+        <div class="panel flush">
+          <ul class="user-list" id="backupList"></ul>
+        </div>
+        <details class="panel api-help">
+          <summary data-i18n="admin.so_stellst_du_ein_backup_wieder_her">So stellst du ein Backup wieder her</summary>
+          <ol class="steps">
+            <li data-i18n="admin.server_stoppen">Server stoppen.</li>
+            <li data-i18n-html="admin.den_datenordner_umbenennen_z_b_data_data">Den Datenordner umbenennen (z. B. <code>data</code> → <code>data-alt</code>) und einen leeren <code>data</code> anlegen.</li>
+            <li data-i18n-html="admin.das_archiv_darin_entpacken_tar_xzf">Das Archiv darin entpacken: <code>tar -xzf gochat-….tar.gz -C data</code></li>
+            <li data-i18n-html="admin.server_starten_klappt_alles_kann_data">Server starten. Klappt alles, kann <code>data-alt</code> weg.</li>
+          </ol>
+        </details>
+      </section>
+    </main>
+  </div>
+
+  <!-- Kanal anlegen/bearbeiten -->
+  <dialog id="roomDialog">
+    <form id="roomForm">
+      <h2 id="roomDialogTitle" data-i18n="admin.kanal_anlegen">Kanal anlegen</h2>
+      <label class="field">
+        <span data-i18n="admin.name">Name</span>
+        <span class="prefixed"><span aria-hidden="true">#</span><input id="roomName" maxlength="32" required autocomplete="off"></span>
+        <small data-i18n="admin.kleinbuchstaben_ziffern_und_der_name">Kleinbuchstaben, Ziffern, - und _. Der Name steht in Links und im Einbettungscode.</small>
+      </label>
+      <label class="field">
+        <span data-i18n-html="admin.beschreibung_optional">Beschreibung <em>(optional)</em></span>
+        <input id="roomDesc" maxlength="140" autocomplete="off">
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span data-i18n="admin.langsam_modus">Langsam-Modus</span>
+          <select id="roomSlow">
+            <option value="0" data-i18n="admin.aus">Aus</option>
+            <option value="5" data-i18n="admin.5_sekunden">5 Sekunden</option>
+            <option value="10" data-i18n="admin.10_sekunden">10 Sekunden</option>
+            <option value="30" data-i18n="admin.30_sekunden">30 Sekunden</option>
+            <option value="60" data-i18n="admin.1_minute">1 Minute</option>
+            <option value="300" data-i18n="admin.5_minuten">5 Minuten</option>
+            <option value="900" data-i18n="admin.15_minuten">15 Minuten</option>
+          </select>
+          <small data-i18n="admin.mindestabstand_zwischen_zwei_nachrichten">Mindestabstand zwischen zwei Nachrichten einer Person.</small>
+        </label>
+        <label class="field">
+          <span data-i18n="admin.links_erlaubt">Links erlaubt</span>
+          <select id="roomLinks">
+            <option value="all" data-i18n="admin.fuer_alle">Für alle</option>
+            <option value="known" data-i18n="admin.erst_nach_24_stunden">Erst nach 24 Stunden</option>
+            <option value="team" data-i18n="admin.nur_fuer_das_team">Nur für das Team</option>
+          </select>
+          <small data-i18n="admin.bremst_spam_von_frisch_gewaehlten_namen">Bremst Spam von frisch gewählten Namen.</small>
+        </label>
+      </div>
+      <fieldset class="sub-set" id="roomAccess">
+        <legend data-i18n="admin.wer_darf_hier_lesen_und_schreiben">Wer darf hier lesen und schreiben?</legend>
+        <div class="field">
+          <span data-i18n-html="admin.lesen_leer_alle">Lesen <em>(leer = alle)</em></span>
+          <div class="role-picks" id="roomReadRoles"></div>
+          <small data-i18n="admin.privater_kanal_nur_diese_rollen_sehen">Privater Kanal: nur diese Rollen sehen ihn überhaupt. Das Team sieht alle Kanäle.</small>
+        </div>
+        <div class="field">
+          <span data-i18n-html="admin.schreiben_leer_alle_die_lesen_duerfen">Schreiben <em>(leer = alle, die lesen dürfen)</em></span>
+          <div class="role-picks" id="roomWriteRoles"></div>
+          <small data-i18n="admin.z_b_ein_ankuendigungskanal_alle_lesen">Z. B. ein Ankündigungskanal: alle lesen und reagieren, nur die Redaktion schreibt.</small>
+        </div>
+      </fieldset>
+      <fieldset class="sub-set">
+        <legend data-i18n="admin.fuer_bots_in_diesem_kanal">Für Bots in diesem Kanal</legend>
+        <div class="field-row">
+          <label class="field">
+            <span data-i18n="admin.langsam_modus_fuer_bots">Langsam-Modus für Bots</span>
+            <select id="roomBotSlow">
+              <option value="0" data-i18n="admin.aus">Aus</option>
+              <option value="1" data-i18n="admin.1_sekunde">1 Sekunde</option>
+              <option value="2" data-i18n="admin.2_sekunden">2 Sekunden</option>
+              <option value="5" data-i18n="admin.5_sekunden">5 Sekunden</option>
+              <option value="10" data-i18n="admin.10_sekunden">10 Sekunden</option>
+              <option value="30" data-i18n="admin.30_sekunden">30 Sekunden</option>
+              <option value="60" data-i18n="admin.1_minute">1 Minute</option>
+              <option value="300" data-i18n="admin.5_minuten">5 Minuten</option>
+            </select>
+            <small data-i18n="admin.abstand_zwischen_zwei_nachrichten">Abstand zwischen zwei Nachrichten desselben Bots.</small>
+          </label>
+          <label class="field">
+            <span data-i18n="admin.links_von_bots">Links von Bots</span>
+            <select id="roomBotLinks">
+              <option value="all" data-i18n="admin.erlaubt">Erlaubt</option>
+              <option value="none" data-i18n="admin.nicht_erlaubt">Nicht erlaubt</option>
+            </select>
+            <small data-i18n="admin.die_regeln_fuer_personen_gelten_fuer">Die Regeln für Personen gelten für Bots nicht.</small>
+          </label>
+        </div>
+      </fieldset>
+      <p class="sub-note" id="roomAutomodNote" hidden></p>
+      <p class="form-error" id="roomError" role="alert"></p>
+      <p class="warn" id="renameWarn" hidden data-i18n="admin.beim_umbenennen_funktionieren_bisherige">Beim Umbenennen funktionieren bisherige Links und eingebettete Widgets mit dem alten Namen nicht mehr.</p>
+      <div class="actions">
+        <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+        <button type="submit" class="btn-primary" id="roomSubmit" data-i18n="admin.kanal_anlegen">Kanal anlegen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Kanal löschen -->
+  <dialog id="deleteDialog">
+    <form id="deleteForm">
+      <h2 data-i18n="admin.kanal_loeschen">Kanal löschen?</h2>
+      <p id="deleteText"></p>
+      <p class="form-error" id="deleteError" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+        <button type="submit" class="btn-danger" data-i18n="admin.kanal_loeschen_2">Kanal löschen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Bot anlegen/bearbeiten -->
+  <dialog id="botDialog" class="wide-dialog">
+    <form id="botForm">
+      <h2 id="botDialogTitle" data-i18n="admin.bot_anlegen">Bot anlegen</h2>
+      <label class="field">
+        <span data-i18n="admin.name">Name</span>
+        <input id="botName" maxlength="32" required autocomplete="off" placeholder="z. B. Hilfe-Bot" data-i18n-placeholder="admin.z_b_hilfe_bot">
+        <small data-i18n="admin.erscheint_mit_dem_abzeichen_bot_an_jeder">Erscheint mit dem Abzeichen „Bot“ an jeder Nachricht. Niemand sonst kann diesen Namen wählen.</small>
+      </label>
+      <label class="field">
+        <span data-i18n-html="admin.beschreibung_optional_nur_hier_sichtbar">Beschreibung <em>(optional, nur hier sichtbar)</em></span>
+        <input id="botDesc" maxlength="140" autocomplete="off">
+      </label>
+
+      <div class="field">
+        <span data-i18n="admin.kanaele">Kanäle</span>
+        <label class="radio-row"><input type="radio" name="botScope" value="all" id="botAll"> <span data-i18n="admin.alle_kanaele_auch_kuenftige">Alle Kanäle, auch künftige</span></label>
+        <label class="radio-row"><input type="radio" name="botScope" value="some" id="botSome"> <span data-i18n="admin.nur_ausgewaehlte">Nur ausgewählte</span></label>
+        <div class="room-checks" id="botRooms"></div>
+      </div>
+
+      <label class="field">
+        <span data-i18n-html="admin.webhook_url_optional">Webhook-URL <em>(optional)</em></span>
+        <input id="botWebhook" type="url" placeholder="https://mein-bot.example.com/hook" autocomplete="off">
+        <small data-i18n="admin.nur_noetig_wenn_der_chat_deinen_bot">Nur nötig, wenn der Chat deinen Bot aufrufen soll. Für die Live-Verbindung leer lassen.</small>
+      </label>
+
+      <fieldset class="sub-set">
+        <legend data-i18n="admin.empfangen">Empfangen</legend>
+        <label class="radio-row"><input type="radio" name="botReceive" value="all" id="botRecvAll">
+          <span><strong data-i18n="admin.alle_nachrichten">Alle Nachrichten</strong><small data-i18n="admin.der_bot_sieht_alles_was_in_seinen">Der Bot sieht alles, was in seinen Kanälen geschrieben wird.</small></span></label>
+        <label class="radio-row"><input type="radio" name="botReceive" value="commands" id="botRecvCmd">
+          <span><strong data-i18n="admin.nur_befehle_und_ansprache">Nur Befehle und Ansprache</strong><small data-i18n-html="admin.nur_nachrichten_die_mit_oder_beginnen">Nur Nachrichten, die mit <code>!</code> oder <code>/</code> beginnen, den Bot mit @Name erwähnen oder ihm antworten. Spart Datenverkehr und schützt die Privatsphäre.</small></span></label>
+        <label class="check-row"><input type="checkbox" id="botReceiveBots">
+          <span><strong data-i18n="admin.auch_nachrichten_anderer_bots">Auch Nachrichten anderer Bots</strong><small data-i18n="admin.aus_lassen_wenn_moeglich_zwei_bots_die">Aus lassen, wenn möglich: Zwei Bots, die aufeinander antworten, können sich gegenseitig hochschaukeln.</small></span></label>
+      </fieldset>
+
+      <fieldset class="sub-set">
+        <legend data-i18n="admin.lesen_und_schreiben">Lesen und schreiben</legend>
+        <div class="perm-grid">
+          <label class="check-row"><input type="checkbox" id="permWrite"><span data-i18n="admin.nachrichten_schreiben">Nachrichten schreiben</span></label>
+          <label class="check-row"><input type="checkbox" id="permReact"><span data-i18n="admin.reagieren_2">Reagieren (👍 …)</span></label>
+          <label class="check-row"><input type="checkbox" id="permEdit"><span data-i18n="admin.eigene_nachrichten_bearbeiten_und">Eigene Nachrichten bearbeiten und löschen</span></label>
+          <label class="check-row"><input type="checkbox" id="permAutomod"><span data-i18n="admin.von_der_automoderation_ausgenommen">Von der Automoderation ausgenommen</span></label>
+          <label class="check-row"><input type="checkbox" id="permHistory"><span data-i18n="admin.verlauf_abrufen">Verlauf abrufen</span></label>
+          <label class="check-row"><input type="checkbox" id="permPresence"><span data-i18n="admin.online_liste_abrufen">Online-Liste abrufen</span></label>
+        </div>
+        <label class="field inline-field">
+          <span data-i18n="admin.hoechstens">Höchstens</span>
+          <input type="number" id="botRate" min="0" max="600" step="1" aria-label="Nachrichten pro 10 Sekunden" data-i18n-aria-label="admin.nachrichten_pro_10_sekunden">
+          <span data-i18n="admin.nachrichten_pro_10_sekunden">Nachrichten pro 10 Sekunden</span>
+        </label>
+        <small class="set-note" data-i18n-html="admin.0_standard_des_servers_bot_rate">0 = Standard des Servers (<code>BOT_RATE</code>).</small>
+      </fieldset>
+
+      <fieldset class="sub-set">
+        <legend data-i18n="admin.moderieren">Moderieren</legend>
+        <div class="perm-grid">
+          <label class="check-row"><input type="checkbox" id="permDelete"><span data-i18n="admin.nachrichten_moderativ_loeschen">Nachrichten moderativ löschen</span></label>
+          <label class="check-row"><input type="checkbox" id="permMute"><span data-i18n="admin.personen_stummschalten">Personen stummschalten</span></label>
+          <label class="check-row"><input type="checkbox" id="permBan"><span data-i18n="admin.personen_zeitlich_ausschliessen">Personen zeitlich ausschließen</span></label>
+        </div>
+        <label class="field inline-field" id="botMaxRow">
+          <span data-i18n="admin.sperren_hoechstens">Sperren höchstens</span>
+          <select id="botMax">
+            <option value="10" data-i18n="admin.10_minuten">10 Minuten</option>
+            <option value="30" data-i18n="admin.30_minuten">30 Minuten</option>
+            <option value="60" data-i18n="admin.1_stunde">1 Stunde</option>
+            <option value="360" data-i18n="admin.6_stunden">6 Stunden</option>
+            <option value="1440" data-i18n="admin.1_tag">1 Tag</option>
+            <option value="4320" data-i18n="admin.3_tage">3 Tage</option>
+            <option value="10080" data-i18n="admin.7_tage">7 Tage</option>
+          </select>
+        </label>
+        <small class="set-note" data-i18n="admin.jede_aktion_steht_im_protokoll_bots">Jede Aktion steht im Protokoll. Bots können Team-Mitglieder nicht sperren, heben nur eigene Sperren auf und – wenn sie nicht alle Kanäle sehen – sperren nur Personen, die in ihren Kanälen geschrieben haben.</small>
+      </fieldset>
+
+      <label class="switch-row" id="botEnabledRow">
+        <span class="switch-text"><strong data-i18n="admin.bot_aktiv">Bot aktiv</strong><small data-i18n="admin.deaktivierte_bots_koennen_sich_nicht">Deaktivierte Bots können sich nicht anmelden; offene Verbindungen werden getrennt.</small></span>
+        <input type="checkbox" class="switch" id="botEnabled">
+      </label>
+
+      <div class="cred-box" id="botCreds" hidden>
+        <div class="cred-row">
+          <span data-i18n="admin.webhook_geheimnis">Webhook-Geheimnis</span>
+          <code id="botSecret" class="masked">••••••••••••••••</code>
+          <button type="button" class="btn-quiet small" id="botSecretShow" data-i18n="admin.anzeigen">Anzeigen</button>
+          <button type="button" class="btn-quiet small" id="botSecretCopy" data-i18n="admin.kopieren_2">Kopieren</button>
+        </div>
+        <div class="cred-actions">
+          <button type="button" class="btn-quiet small" id="botTest" data-i18n="admin.webhook_testen">Webhook testen</button>
+          <button type="button" class="btn-quiet small" id="botRenew" data-i18n="admin.neuen_api_schluessel_erzeugen">Neuen API-Schlüssel erzeugen</button>
+        </div>
+        <p class="test-line" id="botTestResult" aria-live="polite"></p>
+      </div>
+
+      <p class="form-error" id="botError" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+        <button type="submit" class="btn-primary" id="botSubmit" data-i18n="admin.bot_anlegen">Bot anlegen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Schlüssel anzeigen (nur einmal) -->
+  <dialog id="tokenDialog" class="wide-dialog">
+    <form method="dialog">
+      <h2 id="tokenTitle" data-i18n="admin.api_schluessel">API-Schlüssel</h2>
+      <p class="warn-box" data-i18n="admin.der_schluessel_wird_nur_jetzt_angezeigt">Der Schlüssel wird nur jetzt angezeigt. Bewahre ihn sicher auf – geht er verloren, erzeugst du einfach einen neuen.</p>
+      <div class="cred-row big">
+        <span data-i18n="admin.api_schluessel">API-Schlüssel</span>
+        <code id="tokenValue"></code>
+        <button type="button" class="btn-quiet small" data-copy="tokenValue" data-i18n="admin.kopieren_2">Kopieren</button>
+      </div>
+      <div class="cred-row big" id="tokenSecretRow">
+        <span data-i18n="admin.webhook_geheimnis">Webhook-Geheimnis</span>
+        <code id="tokenSecret"></code>
+        <button type="button" class="btn-quiet small" data-copy="tokenSecret" data-i18n="admin.kopieren_2">Kopieren</button>
+      </div>
+      <p class="sub-label" data-i18n="admin.gleich_ausprobieren_schreibt_hallo_in">Gleich ausprobieren – schreibt „Hallo!“ in den ersten erlaubten Kanal:</p>
+      <pre id="tokenExample"></pre>
+      <div class="actions">
+        <button type="button" class="btn-quiet small" data-copy="tokenExample" data-i18n="admin.befehl_kopieren">Befehl kopieren</button>
+        <button type="submit" class="btn-primary" data-i18n="admin.fertig">Fertig</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Person: Sperren, Team, endgültig löschen -->
+  <dialog id="userDialog" class="wide-dialog">
+    <form id="sanctionForm">
+      <div class="user-head">
+        <span class="avatar" id="udAvatar"></span>
+        <div>
+          <h2 id="udName"></h2>
+          <p id="udMeta"></p>
+        </div>
+        <button type="button" class="icon-btn close-x" data-close aria-label="Schließen" data-i18n-aria-label="admin.schliessen">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <p class="warn-box" id="udCurrent" hidden></p>
+      <div id="udSanctionFields">
+        <div class="seg wide" role="radiogroup" aria-label="Art" data-i18n-aria-label="admin.art">
+          <label><input type="radio" name="udKind" value="mute" checked> <span data-i18n="admin.stummschalten">Stummschalten</span></label>
+          <label><input type="radio" name="udKind" value="ban"> <span data-i18n="admin.ausschliessen_2">Ausschließen</span></label>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span data-i18n="admin.dauer">Dauer</span>
+            <select id="udMinutes">
+              <option value="10" data-i18n="admin.10_minuten">10 Minuten</option>
+              <option value="60" selected data-i18n="admin.1_stunde">1 Stunde</option>
+              <option value="1440" data-i18n="admin.1_tag">1 Tag</option>
+              <option value="10080" data-i18n="admin.1_woche">1 Woche</option>
+              <option value="43200" data-i18n="admin.30_tage">30 Tage</option>
+              <option value="0" data-i18n="admin.dauerhaft_2">Dauerhaft</option>
+            </select>
+          </label>
+          <label class="field">
+            <span data-i18n-html="admin.grund_sieht_die_person">Grund <em>(sieht die Person)</em></span>
+            <input id="udReason" maxlength="200" autocomplete="off" placeholder="z. B. Werbung" data-i18n-placeholder="admin.z_b_werbung">
+          </label>
+        </div>
+        <label class="check-row" id="udIPRow">
+          <input type="checkbox" id="udIP">
+          <span><strong data-i18n="admin.auch_die_verbindung_sperren">Auch die Verbindung sperren</strong>
+            <small data-i18n="admin.verhindert_dass_sich_die_person_einfach">Verhindert, dass sich die Person einfach einen neuen Namen holt. Gespeichert wird nur ein nicht umkehrbarer Schlüssel, keine IP-Adresse.</small></span>
+        </label>
+      </div>
+      <div class="ud-profile" id="udProfile" hidden>
+        <span id="udStatus"></span>
+        <button type="button" class="btn-quiet small" id="udAvatarRemove" data-i18n="admin.profilbild_und_statustext_entfernen">Profilbild und Statustext entfernen</button>
+      </div>
+      <div class="ud-profile acct-box" id="udAccount" hidden>
+        <div class="acct-flags" id="udAcctFlags"></div>
+        <div class="btn-row">
+          <button type="button" class="btn-quiet small" data-acct="disable" id="udAcctDisable" data-i18n="admin.konto_sperren">Konto sperren</button>
+          <button type="button" class="btn-quiet small" data-acct="enable" id="udAcctEnable" data-i18n="admin.konto_entsperren">Konto entsperren</button>
+          <button type="button" class="btn-quiet small" data-acct="reset2fa" id="udAcct2fa" data-i18n="admin.2fa_zuruecksetzen">2FA zurücksetzen</button>
+          <button type="button" class="btn-quiet small" data-acct="verify" id="udAcctVerify" data-i18n="admin.e_mail_als_bestaetigt_markieren">E-Mail als bestätigt markieren</button>
+          <button type="button" class="btn-quiet small" data-acct="resetmail" id="udAcctMail" data-i18n="admin.link_passwort_zuruecksetzen_senden">Link „Passwort zurücksetzen“ senden</button>
+          <button type="button" class="btn-quiet small" data-acct="logout" data-i18n="admin.ueberall_abmelden">Überall abmelden</button>
+        </div>
+      </div>
+      <div class="ud-roles admin-only" id="udRolesBox">
+        <span class="ud-roles-label" data-i18n="admin.rollen">Rollen</span>
+        <div class="ud-roles-list" id="udRoles" role="group" aria-label="Rollen" data-i18n-aria-label="admin.rollen"></div>
+      </div>
+      <p class="form-error" id="udError" role="alert"></p>
+      <div class="actions spread">
+        <div class="admin-only ud-more">
+          <button type="button" class="btn-quiet small" id="udTeam"></button>
+          <button type="button" class="btn-quiet small danger-text" id="udPurge" data-i18n="admin.alle_nachrichten_endgueltig_loeschen">Alle Nachrichten endgültig löschen …</button>
+        </div>
+        <div class="actions-right">
+          <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+          <button type="button" class="btn-quiet" id="udLift" hidden data-i18n="admin.sperre_aufheben">Sperre aufheben</button>
+          <button type="submit" class="btn-danger" id="udSubmit" data-i18n="admin.stummschalten">Stummschalten</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Rolle -->
+  <dialog id="schedDialog" class="wide-dialog">
+    <form id="schedForm">
+      <h2 id="schedTitle" data-i18n="admin.ankuendigung_planen">Ankündigung planen</h2>
+      <label class="field">
+        <span data-i18n="admin.kanal">Kanal</span>
+        <select id="schedRoom"></select>
+      </label>
+      <label class="field">
+        <span data-i18n="admin.nachricht">Nachricht</span>
+        <textarea id="schedText" rows="3" maxlength="2000" required placeholder="📢 Heute um 20 Uhr: Community-Stream!" data-i18n-placeholder="admin.x_sched_ph"></textarea>
+        <small data-i18n-html="admin.formatierung_links_und_emotes_gehen_und">Formatierung, Links und <code>:emotes:</code> gehen. <code>{date}</code> und <code>{time}</code> werden beim Senden ersetzt.</small>
+      </label>
+      <div class="seg wide" role="radiogroup" aria-label="Wann" data-i18n-aria-label="admin.wann">
+        <label><input type="radio" name="schedMode" value="once" checked> <span data-i18n="admin.einmalig">Einmalig</span></label>
+        <label><input type="radio" name="schedMode" value="daily"> <span data-i18n="admin.taeglich">Täglich</span></label>
+        <label><input type="radio" name="schedMode" value="weekly"> <span data-i18n="admin.woechentlich">Wöchentlich</span></label>
+      </div>
+      <div class="field-row sched-when">
+        <label class="field" id="schedAtField">
+          <span data-i18n="admin.datum_und_uhrzeit">Datum und Uhrzeit</span>
+          <input type="datetime-local" id="schedAt">
+        </label>
+        <label class="field" id="schedTimeField">
+          <span data-i18n="admin.uhrzeit">Uhrzeit</span>
+          <input type="time" id="schedTime" value="09:00">
+        </label>
+      </div>
+      <div class="field" id="schedDaysField">
+        <span data-i18n="admin.wochentage">Wochentage</span>
+        <div class="day-picks" id="schedDays"></div>
+      </div>
+      <label class="check-row"><input type="checkbox" id="schedPin"><span><strong data-i18n="admin.anpinnen">Anpinnen</strong><small data-i18n="admin.die_nachricht_wird_angepinnt_die_vorige">Die Nachricht wird angepinnt; die vorige Ankündigung dieses Plans wird dabei gelöst.</small></span></label>
+      <label class="check-row"><input type="checkbox" id="schedOn" checked><span data-i18n="admin.aktiv">Aktiv</span></label>
+      <p class="form-error" id="schedError" role="alert"></p>
+      <div class="actions spread">
+        <button type="button" class="btn-quiet danger-text" id="schedDelete" data-i18n="admin.loeschen">Löschen</button>
+        <div class="actions-right">
+          <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+          <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="roleDialog">
+    <form id="roleForm">
+      <h2 id="roleDialogTitle" data-i18n="admin.rolle_anlegen">Rolle anlegen</h2>
+      <label class="field">
+        <span data-i18n="admin.name">Name</span>
+        <input id="roleName" maxlength="24" required autocomplete="off" placeholder="z. B. Moderator, VIP, Entwickler" data-i18n-placeholder="admin.z_b_moderator_vip_entwickler">
+      </label>
+      <div class="field">
+        <span data-i18n="admin.farbe_2">Farbe</span>
+        <div class="role-colors" id="roleColors"></div>
+      </div>
+      <label class="check-row"><input type="checkbox" id="roleColorName"><span><strong data-i18n="admin.namen_in_dieser_farbe_zeigen">Namen in dieser Farbe zeigen</strong><small data-i18n="admin.hat_jemand_mehrere_solche_rollen_gilt">Hat jemand mehrere solche Rollen, gilt die oberste in der Liste.</small></span></label>
+      <label class="check-row"><input type="checkbox" id="roleMention"><span><strong data-i18n="admin.per_rollenname_erwaehnbar">Per @Rollenname erwähnbar</strong><small data-i18n-html="admin.alle_mit_dieser_rolle_werden">Alle mit dieser Rolle werden benachrichtigt, z. B. <code>@Moderator</code> für Hilferufe.</small></span></label>
+      <fieldset class="sub-set">
+        <legend data-i18n="admin.rechte">Rechte</legend>
+        <div class="perm-grid">
+          <label class="check-row"><input type="checkbox" id="rpLinks"><span data-i18n="admin.links_immer_erlaubt">Links immer erlaubt</span></label>
+          <label class="check-row"><input type="checkbox" id="rpNoSlow"><span data-i18n="admin.kein_langsam_modus">Kein Langsam-Modus</span></label>
+          <label class="check-row"><input type="checkbox" id="rpProtected"><span data-i18n="admin.geschuetzte_namen_tragen">Geschützte Namen tragen</span></label>
+          <label class="check-row"><input type="checkbox" id="rpPin"><span data-i18n="admin.nachrichten_anpinnen">Nachrichten anpinnen</span></label>
+          <label class="check-row"><input type="checkbox" id="rpUpload"><span data-i18n="admin.bilder_hochladen_2">Bilder hochladen</span></label>
+          <label class="check-row"><input type="checkbox" id="rpDelete"><span data-i18n="admin.nachrichten_im_chat_loeschen">Nachrichten im Chat löschen</span></label>
+          <label class="check-row"><input type="checkbox" id="rpMute"><span data-i18n="admin.im_chat_stummschalten_bis_1_std">Im Chat stummschalten (bis 1 Std.)</span></label>
+        </div>
+        <small class="perm-note" data-i18n="admin.zugang_zu_privaten_kanaelen_stellst_du">Zugang zu privaten Kanälen stellst du am Kanal ein. Das Team hat immer alle Rechte.</small>
+      </fieldset>
+      <div class="role-preview" aria-hidden="true">
+        <span class="role-preview-label" data-i18n="admin.vorschau">Vorschau</span>
+        <div class="role-preview-msg" id="rolePreview"></div>
+      </div>
+      <p class="form-error" id="roleError" role="alert"></p>
+      <div class="actions spread">
+        <button type="button" class="btn-quiet danger-text" id="roleDelete" data-i18n="admin.loeschen">Löschen</button>
+        <div class="actions-right">
+          <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+          <button type="submit" class="btn-primary" id="roleSubmit" data-i18n="admin.speichern">Speichern</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Befehl -->
+  <dialog id="cmdDialog" class="wide-dialog">
+    <form id="cmdForm">
+      <h2 id="cmdDialogTitle" data-i18n="admin.befehl_anlegen">Befehl anlegen</h2>
+      <div class="field-row">
+        <label class="field">
+          <span data-i18n="admin.befehl">Befehl</span>
+          <span class="prefixed"><span aria-hidden="true" id="cmdPrefixShow">!</span><input id="cmdTrigger" maxlength="24" required autocomplete="off" spellcheck="false" placeholder="regeln"></span>
+        </label>
+        <label class="field">
+          <span data-i18n-html="admin.weitere_namen_aliase_mit_komma">Weitere Namen <em>(Aliase, mit Komma)</em></span>
+          <input id="cmdAliases" autocomplete="off" spellcheck="false" placeholder="rules, r" data-i18n-placeholder="admin.rules_r">
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span data-i18n="admin.art">Art</span>
+          <select id="cmdKind">
+            <option value="text" data-i18n="admin.text_antwort">Text-Antwort</option>
+            <option value="help" data-i18n="admin.hilfe_liste_aller_befehle">Hilfe (Liste aller Befehle)</option>
+            <option value="dice" data-i18n="admin.wuerfel">Würfel</option>
+            <option value="coin" data-i18n="admin.muenzwurf">Münzwurf</option>
+            <option value="time" data-i18n="admin.uhrzeit">Uhrzeit</option>
+            <option value="online" data-i18n="admin.wer_ist_online">Wer ist online</option>
+            <option value="choose" data-i18n="admin.zufaellige_auswahl">Zufällige Auswahl</option>
+          </select>
+        </label>
+        <label class="field">
+          <span data-i18n-html="admin.beschreibung_fuer_hilfe">Beschreibung <em>(für !hilfe)</em></span>
+          <input id="cmdDesc" maxlength="100" autocomplete="off">
+        </label>
+      </div>
+      <label class="field">
+        <span data-i18n="admin.antwort">Antwort</span>
+        <textarea id="cmdResponse" rows="3" maxlength="1000"></textarea>
+        <small data-i18n-html="admin.platzhalter_name_text_nach_dem_befehl">Platzhalter: <code>{user}</code> Name · <code>{args}</code> Text nach dem Befehl · <code>{result}</code> Ergebnis (Würfelzahl, Liste …) · <code>{room}</code> · <code>{time}</code> · <code>{date}</code> · <code>{online}</code>. Formatierung und <code>:emotes:</code> gehen auch.</small>
+      </label>
+      <label class="check-row eph-row"><input type="checkbox" id="cmdEphemeral"><span><strong data-i18n="admin.nur_fuer_die_person_sichtbar">Nur für die Person sichtbar</strong><small data-i18n="admin.befehl_und_antwort_sieht_nur_wer_ihn">Befehl und Antwort sieht nur, wer ihn eingibt – im Kanal erscheint nichts, gespeichert wird nichts. Gut für Hilfe, Regeln und Infos, damit der Chat nicht vollläuft.</small></span></label>
+      <div class="perm-grid">
+        <label class="check-row"><input type="checkbox" id="cmdReply"><span data-i18n="admin.als_antwort_mit_zitat">Als Antwort mit Zitat</span></label>
+        <label class="check-row"><input type="checkbox" id="cmdTeam"><span data-i18n="admin.nur_fuer_das_team">Nur für das Team</span></label>
+        <label class="check-row"><input type="checkbox" id="cmdOn"><span data-i18n="admin.aktiv">Aktiv</span></label>
+      </div>
+      <label class="field inline-field">
+        <span data-i18n="admin.abklingzeit">Abklingzeit</span>
+        <input type="number" id="cmdCooldown" min="0" max="3600" aria-label="Sekunden" data-i18n-aria-label="admin.sekunden">
+        <span id="cmdCooldownUnit" data-i18n="admin.sekunden_je_kanal">Sekunden je Kanal</span>
+      </label>
+      <div class="field">
+        <span data-i18n="admin.kanaele">Kanäle</span>
+        <label class="radio-row"><input type="radio" name="cmdScope" value="all" id="cmdAll"> <span data-i18n="admin.alle_kanaele">Alle Kanäle</span></label>
+        <label class="radio-row"><input type="radio" name="cmdScope" value="some" id="cmdSome"> <span data-i18n="admin.nur_ausgewaehlte">Nur ausgewählte</span></label>
+        <div class="room-checks" id="cmdRooms"></div>
+      </div>
+      <p class="form-error" id="cmdError" role="alert"></p>
+      <div class="actions spread">
+        <button type="button" class="btn-quiet danger-text" id="cmdDelete" data-i18n="admin.loeschen">Löschen</button>
+        <div class="actions-right">
+          <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+          <button type="submit" class="btn-primary" id="cmdSubmit" data-i18n="admin.speichern">Speichern</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Konto -->
+  <dialog id="accountDialog">
+    <form id="accountForm">
+      <h2 id="accountTitle" data-i18n="admin.konto_anlegen">Konto anlegen</h2>
+      <label class="field">
+        <span data-i18n="admin.anmeldename_2">Anmeldename</span>
+        <input id="accName" maxlength="32" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="z. B. mia" data-i18n-placeholder="admin.z_b_mia">
+      </label>
+      <label class="field">
+        <span data-i18n-html="admin.anzeigename_erscheint_im_protokoll_und">Anzeigename <em>(erscheint im Protokoll und bei Löschungen)</em></span>
+        <input id="accDisplay" maxlength="32" autocomplete="off" placeholder="z. B. Mia" data-i18n-placeholder="admin.z_b_mia_2">
+      </label>
+      <label class="field">
+        <span data-i18n="admin.rolle">Rolle</span>
+        <select id="accRole">
+          <option value="moderator" data-i18n="admin.moderator_moderieren_sperren_protokoll">Moderator – moderieren, sperren, Protokoll</option>
+          <option value="admin" data-i18n="admin.admin_zusaetzlich_alles_einrichten">Admin – zusätzlich alles einrichten</option>
+        </select>
+      </label>
+      <label class="field">
+        <span id="accPwLabel" data-i18n="admin.passwort">Passwort</span>
+        <input id="accPassword" type="text" minlength="10" autocomplete="new-password" spellcheck="false">
+        <small><button type="button" class="text-btn small" id="accGenerate" data-i18n="admin.sicheres_passwort_erzeugen">Sicheres Passwort erzeugen</button> <span data-i18n="admin.mindestens_10_zeichen">· mindestens 10 Zeichen</span></small>
+      </label>
+      <label class="switch-row" id="accDisabledRow">
+        <span class="switch-text"><strong data-i18n="admin.deaktiviert">Deaktiviert</strong><small data-i18n="admin.das_konto_kann_sich_nicht_anmelden">Das Konto kann sich nicht anmelden; offene Sitzungen enden sofort.</small></span>
+        <input type="checkbox" class="switch" id="accDisabled">
+      </label>
+      <p class="form-error" id="accError" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+        <button type="submit" class="btn-primary" id="accSubmit" data-i18n="admin.konto_anlegen">Konto anlegen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Bestätigen -->
+  <dialog id="confirmDialog">
+    <form id="confirmForm">
+      <h2 id="confirmTitle"></h2>
+      <p id="confirmText"></p>
+      <label class="check-row" id="confirmOptRow" hidden><input type="checkbox" id="confirmOpt"> <span id="confirmOptText"></span></label>
+      <div class="actions">
+        <button type="button" class="btn-quiet" data-close data-i18n="admin.abbrechen">Abbrechen</button>
+        <button type="submit" class="btn-danger" id="confirmOk"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/api/i18n/boot.js?scope=admin"></script>
+  <script src="/i18n.js"></script>
+  <script src="/i18n-editor.js"></script>
+  <script src="/embed/format.js"></script>
+  <script src="/admin.js"></script>
+</body>
+</html>

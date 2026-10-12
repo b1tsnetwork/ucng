@@ -1,0 +1,47 @@
+# Dependabot: wöchentliche Update-PRs für GitHub Actions, Docker-Basis-Images
+# und Go-Module. Kleine Updates werden je Bereich in einem PR gebündelt.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Berlin
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Dockerfile und Dockerfile.beacon (golang- und alpine-Images).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Berlin
+    commit-message:
+      prefix: docker
+    groups:
+      base-images:
+        patterns: ["*"]
+
+  # UCNG kommt ohne externe Go-Module aus; die optionalen Datenbank-Treiber
+  # werden erst beim Bauen geholt. Dieser Eintrag greift, sobald go.mod
+  # Abhängigkeiten bekommt, und hält dann auch die go-Direktive aktuell.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Berlin
+    commit-message:
+      prefix: deps
+    groups:
+      go-minor:
+        update-types: [minor, patch]

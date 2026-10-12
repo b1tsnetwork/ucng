@@ -1,0 +1,28 @@
+UCNG – Unified Chat Network Gateway
+Copyright (C) 2026 B1tK1ll3r and the UCNG contributors
+
+Project Owner (licensor under CLA.md): B1tK1ll3r
+Contact: jbergner@send.nrw
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version (SPDX: AGPL-3.0-or-later). See the file LICENSE.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+Network use (AGPL-3.0, section 13): if you run a modified version of UCNG or of
+the UCNG Beacon for users over a network, you must offer them the corresponding
+source code. Set SOURCE_URL to the public repository of your version; it is shown
+in the web interface, in /.well-known/ucng and in beacon directories.
+
+Contributions are accepted under the terms of CLA.md.
+
+The name "UCNG" and the UCNG logo are not licensed under the AGPL
+(AGPL-3.0, section 7(e)); see TRADEMARKS.md.
+
+Third-party material:
+  web/flags/, cmd/ucng-beacon/web/flags/  flag-icons 7.2.3, MIT License
+                                          (see LICENSE.txt in those folders)

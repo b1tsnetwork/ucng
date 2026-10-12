@@ -1,0 +1,120 @@
+# Prüft UCNG und den Beacon: Formatierung, go vet, Tests (mit Race-Detector),
+# JavaScript-Syntax und Builds mit allen Speicher-Varianten.
+#
+# Läuft bei Pull Requests und wird von release.yml vor dem Veröffentlichen
+# aufgerufen (also bei jedem Push auf main und jedem Tag).
+name: ci
+
+on:
+  # Pushes auf main und Tags prüft release.yml (ruft diesen Workflow auf),
+  # daher hier kein eigener push-Trigger – sonst liefen die Tests doppelt.
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Bei release.yml-Aufrufen (workflow_call) nicht mit dem eigenen Lauf kollidieren.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::Nicht mit gofmt formatiert:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test (race)
+        run: go test -race -count=1 ./...
+
+      - name: JavaScript-Syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in web/*.js web/embed/*.js cmd/ucng-beacon/web/*.js; do
+            node --check "$f"
+          done
+
+  build:
+    name: Build (${{ matrix.tags || 'Dateien' }})
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Die Datenbank-Treiber sind optional und stehen nicht in go.mod
+        # (Standard-Build ohne Abhängigkeiten); hier wird jede Variante gebaut.
+        tags: ["", "sqlite", "mysql", "sqlite mysql"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Treiber holen
+        if: matrix.tags != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          for t in ${{ matrix.tags }}; do
+            case "$t" in
+              sqlite) go get modernc.org/sqlite ;;
+              mysql)  go get github.com/go-sql-driver/mysql ;;
+            esac
+          done
+
+      - name: Build UCNG
+        run: CGO_ENABLED=0 go build -tags "${{ matrix.tags }}" -trimpath -o /tmp/ucng .
+
+      - name: Build Beacon
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/ucng-beacon ./cmd/ucng-beacon
+
+      - name: Speicher-Tests mit Treiber
+        if: contains(matrix.tags, 'sqlite')
+        run: go test -tags "${{ matrix.tags }}" -count=1 -run 'SQL|Storage|Persist' .
+
+      - name: Rauchtest
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage=files
+          case "${{ matrix.tags }}" in *sqlite*) storage=sqlite ;; esac
+          ADDR=127.0.0.1:18080 DATA_DIR="$RUNNER_TEMP/data" STORAGE=$storage ADMIN_PASSWORD=ci-passwort-123 /tmp/ucng &
+          ADDR=127.0.0.1:18090 DATA_DIR="$RUNNER_TEMP/beacon" ADMIN_PASSWORD=ci-passwort-123 /tmp/ucng-beacon &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/api/settings >/dev/null && curl -fsS http://127.0.0.1:18090/healthz >/dev/null; then
+              echo "Beide Programme antworten."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Programme antworten nicht"
+          exit 1

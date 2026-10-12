@@ -1,0 +1,22 @@
+/ucng
+/ucng-beacon
+cmd/ucng-beacon/ucng-beacon
+# Binärdateien
+*.exe
+/dist/
+
+# Laufzeitdaten (enthalten Schlüssel und Nachrichten – nie einchecken!)
+.env
+data/
+data-backups/
+beacon-data/
+*.json.tmp
+*.db
+*.db-wal
+*.db-shm
+
+# Editor/OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

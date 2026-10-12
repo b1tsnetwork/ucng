@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+     SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UCNG – Embed-Demo</title>
+  <style>
+    body { font: 16px/1.6 Georgia, serif; max-width: 760px; margin: 40px auto; padding: 0 16px; color: #222; background: #fbfaf7; }
+    h1 { font-weight: 400; }
+    code, pre { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+    pre { background: #f0eee8; padding: 12px; border-radius: 8px; overflow-x: auto; }
+    #support-chat { height: 420px; margin: 24px 0; }
+  </style>
+</head>
+<body>
+  <h1>Beispiel: eine fremde Webseite</h1>
+  <p>Diese Seite simuliert eine beliebige Website, in die UCNG eingebettet ist.
+     Unten rechts siehst du das <strong>schwebende Widget</strong> (Raum <code>lobby</code>),
+     darunter eine <strong>Inline-Variante</strong> für den Raum <code>support</code>.</p>
+
+  <h2>Schwebendes Widget</h2>
+  <pre>&lt;script src="https://DEIN-SERVER/embed/chat.js"
+        data-room="lobby" data-title="Fragen? Schreib uns!" defer&gt;&lt;/script&gt;</pre>
+
+  <h2>Inline in einem Element</h2>
+  <pre>&lt;div id="support-chat"&gt;&lt;/div&gt;
+&lt;script&gt;
+  UCNG.init({ room: "support", title: "Support", target: "#support-chat", color: "#0fa37f", theme: "auto" });
+&lt;/script&gt;</pre>
+
+  <div id="support-chat"></div>
+
+  <!-- Schwebendes Widget per data-Attributen -->
+  <script src="/embed/chat.js" data-room="lobby" data-title="Fragen? Schreib uns!"></script>
+
+  <!-- Zweite Instanz per JavaScript-API -->
+  <script>
+    UCNG.init({ room: "support", title: "Support", target: "#support-chat", color: "#0fa37f", theme: "auto" });
+  </script>
+</body>
+</html>

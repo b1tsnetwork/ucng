@@ -1,0 +1,358 @@
+/* SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+   SPDX-License-Identifier: AGPL-3.0-or-later */
+/* UCNG Embed-Widget
+   Alle Klassen beginnen mit "gochat-", damit nichts mit der Host-Seite kollidiert.
+   Anpassen über CSS-Variablen auf .gochat-root, z. B.:
+     .gochat-root { --gochat-accent: #0a7d5a; --gochat-font: "Inter", sans-serif; } */
+
+.gochat-root {
+  --gochat-accent: #5848f4;
+  --gochat-on-accent: #ffffff;
+  --gochat-surface: #ffffff;
+  --gochat-canvas: #f4f5f9;
+  --gochat-text: #171927;
+  --gochat-muted: #6e7287;
+  --gochat-line: #e4e6ee;
+  --gochat-bubble: #ffffff;
+  --gochat-bubble-line: #e4e6ee;
+  --gochat-online: #16b67a;
+  --gochat-danger: #d93f4c;
+  --gochat-radius: 22px;
+  --gochat-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --gochat-z: 2147483000;
+  --gochat-shadow: 0 2px 6px rgba(21, 23, 46, .08), 0 24px 56px -12px rgba(21, 23, 46, .28);
+
+  font: 14.5px/1.45 var(--gochat-font);
+  color: var(--gochat-text);
+  text-align: left;
+  letter-spacing: normal;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dunkles Design: data-theme="dark" oder "auto" (folgt dem System) */
+.gochat-root.gochat-dark {
+  --gochat-surface: #161929;
+  --gochat-canvas: #0f1120;
+  --gochat-text: #e8e9f2;
+  --gochat-muted: #8a8ea6;
+  --gochat-line: #262a40;
+  --gochat-bubble: #1d2034;
+  --gochat-bubble-line: transparent;
+  --gochat-shadow: 0 2px 6px rgba(0, 0, 0, .35), 0 24px 56px -12px rgba(0, 0, 0, .7);
+}
+@media (prefers-color-scheme: dark) {
+  .gochat-root.gochat-auto {
+    --gochat-surface: #161929;
+    --gochat-canvas: #0f1120;
+    --gochat-text: #e8e9f2;
+    --gochat-muted: #8a8ea6;
+    --gochat-line: #262a40;
+    --gochat-bubble: #1d2034;
+    --gochat-bubble-line: transparent;
+    --gochat-shadow: 0 2px 6px rgba(0, 0, 0, .35), 0 24px 56px -12px rgba(0, 0, 0, .7);
+  }
+}
+
+/* Resets mit :where() – Spezifität 0, damit die Komponenten-Klassen unten immer gewinnen */
+:where(.gochat-root) *, :where(.gochat-root) *::before, :where(.gochat-root) *::after { box-sizing: border-box; }
+:where(.gochat-root) :where(button, input, textarea) {
+  font: inherit; color: inherit; margin: 0; text-transform: none; letter-spacing: normal;
+  -webkit-appearance: none; appearance: none;
+}
+:where(.gochat-root) button { cursor: pointer; }
+:where(.gochat-root) svg { display: block; }
+:where(.gochat-root) :focus-visible { outline: 2px solid var(--gochat-accent); outline-offset: 2px; }
+
+/* ---------- Schwebender Modus ---------- */
+
+.gochat-floating {
+  position: fixed; bottom: 24px; right: 24px; z-index: var(--gochat-z);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 14px;
+}
+.gochat-floating.gochat-left { right: auto; left: 24px; align-items: flex-start; }
+
+.gochat-launcher {
+  width: 58px; height: 58px; border: 0; border-radius: 50%;
+  background: var(--gochat-accent); color: var(--gochat-on-accent);
+  box-shadow: 0 6px 18px -4px color-mix(in srgb, var(--gochat-accent) 55%, transparent), 0 2px 4px rgba(0, 0, 0, .12);
+  display: grid; place-items: center; position: relative;
+  transition: transform .15s ease;
+}
+.gochat-launcher:hover { transform: scale(1.05); }
+.gochat-launcher svg { width: 26px; height: 26px; grid-area: 1 / 1; transition: transform .2s ease, opacity .2s ease; }
+.gochat-launcher .gochat-icon-close { opacity: 0; transform: rotate(-90deg); }
+.gochat-open .gochat-launcher .gochat-icon-chat { opacity: 0; transform: rotate(90deg); }
+.gochat-open .gochat-launcher .gochat-icon-close { opacity: 1; transform: none; }
+
+.gochat-badge {
+  position: absolute; top: -3px; right: -3px;
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
+  background: var(--gochat-danger); color: #fff;
+  border: 2px solid #fff;
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+  display: none;
+}
+.gochat-badge.gochat-show { display: block; }
+
+.gochat-panel {
+  width: 380px; height: 580px;
+  max-width: calc(100vw - 32px); max-height: calc(100vh - 120px);
+  background: var(--gochat-canvas);
+  border-radius: var(--gochat-radius);
+  box-shadow: var(--gochat-shadow);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.gochat-floating .gochat-panel { display: none; transform-origin: bottom right; }
+.gochat-floating.gochat-left .gochat-panel { transform-origin: bottom left; }
+.gochat-floating.gochat-open .gochat-panel { display: flex; animation: gochat-in .18s ease-out; }
+@keyframes gochat-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+
+/* ---------- Inline-Modus (data-target) ---------- */
+
+.gochat-inline { height: 100%; }
+.gochat-inline .gochat-panel {
+  width: 100%; height: 100%; min-height: 380px;
+  max-width: none; max-height: none;
+  box-shadow: none; border: 1px solid var(--gochat-line);
+}
+
+/* ---------- Kopf ---------- */
+
+.gochat-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 14px 14px 16px;
+  background: var(--gochat-surface);
+  border-bottom: 1px solid var(--gochat-line);
+}
+.gochat-mark {
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px;
+  background: var(--gochat-accent); color: var(--gochat-on-accent);
+  display: grid; place-items: center;
+}
+.gochat-mark svg { width: 20px; height: 20px; }
+.gochat-heading { flex: 1; min-width: 0; }
+.gochat-title {
+  font-weight: 700; font-size: 16px; line-height: 1.2; letter-spacing: -.015em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gochat-status {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 2px; font-size: 12.5px; color: var(--gochat-muted);
+}
+.gochat-status::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: #e2a400;
+}
+.gochat-status.gochat-ok::before { background: var(--gochat-online); }
+.gochat-status.gochat-err::before { background: var(--gochat-danger); }
+.gochat-close {
+  width: 34px; height: 34px; border: 0; border-radius: 10px; background: none;
+  color: var(--gochat-muted); display: grid; place-items: center;
+}
+.gochat-close:hover { background: var(--gochat-canvas); color: var(--gochat-text); }
+.gochat-close svg { width: 18px; height: 18px; }
+.gochat-inline .gochat-close { display: none; }
+
+/* ---------- Nachrichten ---------- */
+
+.gochat-messages {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px 14px 16px;
+  display: flex; flex-direction: column;
+}
+.gochat-older {
+  align-self: center; margin: 4px 0 6px; height: 28px; padding: 0 12px;
+  border: 1px solid var(--gochat-line); border-radius: 14px;
+  background: var(--gochat-surface); color: var(--gochat-muted); font-size: 12.5px; font-weight: 550;
+}
+.gochat-older:hover { color: var(--gochat-accent); border-color: var(--gochat-accent); }
+.gochat-empty {
+  margin: auto; padding: 0 24px; text-align: center; color: var(--gochat-muted); font-size: 13.5px;
+}
+.gochat-empty strong { display: block; color: var(--gochat-text); font-size: 15px; margin-bottom: 4px; }
+
+/* Nachrichten im „Zitat-Stil“: eckige Blöcke mit farbiger Kante links; eigene mit Akzentkante */
+.gochat-msg {
+  --gochat-bar: color-mix(in srgb, var(--gochat-muted) 38%, var(--gochat-line));
+  --gochat-block: var(--gochat-bubble);
+  max-width: 100%; align-self: stretch;
+  display: flex; flex-direction: column; align-items: flex-start;
+  margin-top: 12px;
+}
+.gochat-msg.gochat-cont { margin-top: 3px; }
+.gochat-meta { margin: 0 2px 3px; font-size: 12px; color: var(--gochat-muted); }
+.gochat-meta b { color: var(--gochat-text); font-weight: 650; margin-right: 6px; }
+.gochat-cont .gochat-meta { display: none; }
+
+.gochat-bubble {
+  max-width: 100%;
+  padding: 6px 11px;
+  background: var(--gochat-block);
+  border: 0; border-left: 3px solid var(--gochat-bar);
+  border-radius: 4px 9px 9px 4px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.gochat-bubble a { color: var(--gochat-accent); text-underline-offset: 2px; }
+.gochat-bubble.gochat-deleted {
+  background: transparent; color: var(--gochat-muted); border-left-style: dashed;
+  font-style: italic; font-size: 13.5px;
+}
+
+.gochat-own { --gochat-bar: var(--gochat-accent); --gochat-block: color-mix(in srgb, var(--gochat-accent) 8%, var(--gochat-bubble)); }
+.gochat-bot {
+  display: inline-block; margin-right: 6px; padding: 1px 5px; border-radius: 4px;
+  background: color-mix(in srgb, var(--gochat-accent) 14%, transparent); color: var(--gochat-text);
+  font-size: 10px; font-weight: 700; vertical-align: 1px;
+}
+
+.gochat-team { background: color-mix(in srgb, var(--gochat-online) 18%, transparent); }
+.gochat-edited { margin-left: 6px; font-size: 11px; opacity: .7; font-style: normal; white-space: nowrap; }
+.gochat-reply {
+  display: grid; max-width: 100%; margin: 0 0 3px; padding: 3px 9px;
+  border-left: 3px solid var(--gochat-accent); border-radius: 3px 9px 9px 3px;
+  background: color-mix(in srgb, var(--gochat-accent) 9%, var(--gochat-surface)); font-size: 12px; line-height: 1.35;
+}
+.gochat-reply b { font-weight: 650; }
+.gochat-reply span { color: var(--gochat-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gochat-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.gochat-reaction {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 7px; border-radius: 11px;
+  border: 1px solid var(--gochat-line); background: var(--gochat-surface); font-size: 12px; color: var(--gochat-muted);
+}
+.gochat-reaction.gochat-mine { border-color: var(--gochat-accent); }
+.gochat-code {
+  font: .88em/1.4 ui-monospace, Menlo, Consolas, monospace; padding: 1px 4px; border-radius: 5px;
+  background: color-mix(in srgb, var(--gochat-text) 8%, transparent);
+}
+.gochat-pre {
+  margin: 4px 0; padding: 8px 10px; border-radius: 9px; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 12.5px/1.5 ui-monospace, Menlo, Consolas, monospace; background: color-mix(in srgb, var(--gochat-text) 8%, transparent);
+}
+
+.gochat-mention { font-weight: 650; }
+.gochat-mention-me { background: color-mix(in srgb, var(--gochat-accent) 16%, transparent); border-radius: 4px; padding: 0 2px; }
+.gochat-bubble strong { font-weight: 700; }
+
+/* Emotes und GIFs */
+.gochat-emote { display: inline-block; vertical-align: -0.35em; object-fit: contain; margin: 0 1px; }
+.gochat-emote-line { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.gochat-bubble:has(> .gochat-emote-line) { background: transparent; border-left-color: transparent; padding-left: 0; }
+.gochat-gif { display: block; max-width: 100%; height: auto; border-radius: 7px; margin-top: 5px; }
+.gochat-media-only { padding: 5px; }
+.gochat-media-only .gochat-gif { margin-top: 0; }
+
+/* Begrüßung */
+.gochat-greeting { --gochat-bar: var(--gochat-accent); }
+.gochat-teaser {
+  position: relative; max-width: 260px; display: flex; align-items: flex-start;
+  background: var(--gochat-surface); color: var(--gochat-text);
+  border-radius: 16px 16px 4px 16px; box-shadow: var(--gochat-shadow);
+  animation: gochat-in .25s ease-out;
+}
+.gochat-left .gochat-teaser { border-radius: 16px 16px 16px 4px; }
+.gochat-open .gochat-teaser { display: none !important; }
+.gochat-teaser-text {
+  flex: 1; border: 0; background: none; text-align: left; padding: 11px 4px 11px 14px; font-size: 13.5px; line-height: 1.4;
+}
+.gochat-teaser-x {
+  width: 30px; height: 30px; margin: 4px 4px 0 0; flex-shrink: 0; border: 0; border-radius: 8px; background: none;
+  color: var(--gochat-muted); display: grid; place-items: center;
+}
+.gochat-teaser-x:hover { background: var(--gochat-canvas); }
+.gochat-teaser-x svg { width: 14px; height: 14px; }
+
+/* Öffnungszeiten */
+.gochat-hours { padding: 8px 16px; font-size: 12.5px; border-bottom: 1px solid var(--gochat-line); background: var(--gochat-surface); }
+.gochat-hours-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gochat-hours-line b { font-weight: 650; display: inline-flex; align-items: center; gap: 6px; }
+.gochat-hours-line b::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--gochat-online); }
+.gochat-hours-closed .gochat-hours-line b::before { background: #e2a400; }
+.gochat-hours-line span { color: var(--gochat-muted); }
+.gochat-hours-msg { margin-top: 3px; color: var(--gochat-muted); }
+
+/* ---------- Eingabe ---------- */
+
+.gochat-error { color: var(--gochat-danger); font-size: 12.5px; padding: 0 18px 8px; }
+.gochat-error:empty { display: none; }
+
+.gochat-name-hint { padding: 0 18px 8px; font-size: 13px; color: var(--gochat-muted); }
+.gochat-link {
+  background: none; border: 0; padding: 0; font: inherit; font-weight: 600; cursor: pointer;
+  color: var(--gochat-text); text-decoration: underline; text-underline-offset: 2px;
+}
+
+.gochat-form {
+  display: flex; align-items: flex-end; gap: 6px;
+  margin: 0 12px 12px;
+  padding: 5px 5px 5px 16px;
+  background: var(--gochat-surface);
+  border: 1px solid var(--gochat-line);
+  border-radius: 22px;
+}
+.gochat-form:focus-within { border-color: color-mix(in srgb, var(--gochat-accent) 55%, var(--gochat-line)); }
+.gochat-input {
+  flex: 1; min-width: 0; resize: none;
+  border: 0; outline: none; background: none;
+  padding: 7px 0; height: 34px; max-height: 120px; line-height: 1.45;
+}
+.gochat-input:focus-visible { outline: none; }
+.gochat-input::placeholder { color: var(--gochat-muted); opacity: 1; }
+.gochat-send {
+  height: 34px; min-width: 34px; flex-shrink: 0; border: 0; border-radius: 17px;
+  background: var(--gochat-accent); color: var(--gochat-on-accent);
+  display: grid; place-items: center; padding: 0;
+}
+.gochat-send svg { width: 18px; height: 18px; }
+.gochat-send.gochat-text-btn { padding: 0 14px; font-weight: 600; font-size: 13.5px; }
+.gochat-send:disabled { opacity: .5; cursor: default; }
+
+/* ---------- Kleine Bildschirme ---------- */
+
+@media (max-width: 480px) {
+  .gochat-floating { bottom: 16px; right: 16px; }
+  .gochat-floating.gochat-left { left: 16px; }
+  .gochat-floating.gochat-open { inset: 0; }
+  .gochat-floating.gochat-open .gochat-launcher { display: none; }
+  .gochat-teaser { max-width: calc(100vw - 100px); }
+  .gochat-floating.gochat-open .gochat-panel {
+    width: 100vw; height: 100vh; height: 100dvh; max-width: none; max-height: none; border-radius: 0;
+  }
+  .gochat-input { font-size: 16px; } /* verhindert Zoom auf iOS */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gochat-root *, .gochat-root *::before, .gochat-root *::after { animation: none !important; transition: none !important; }
+}
+.gochat-emote.gochat-emote-mini { width: 16px; height: 16px; vertical-align: -3px; margin: 0 1px; }
+.gochat-eph .gochat-bubble { border-left-style: dashed; }
+.gochat-eph-notice .gochat-bubble { color: var(--gochat-muted); font-style: italic; }
+.gochat-eph-hide {
+  display: block; margin: 2px 2px 0; padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 11.5px; color: var(--gochat-muted); text-decoration: underline;
+}
+.gochat-eph-hide:hover { color: var(--gochat-accent); }
+.gochat-role {
+  background: color-mix(in srgb, var(--gochat-role) 16%, transparent);
+  color: color-mix(in srgb, var(--gochat-role) 68%, var(--gochat-text));
+}
+.gochat-meta b.gochat-role-name { color: color-mix(in srgb, var(--gochat-role) 75%, var(--gochat-text)); }
+.gochat-img-link { display: block; margin-top: 6px; }
+.gochat-media-only .gochat-img-link { margin-top: 0; }
+.gochat-thread { display: inline-block; margin: 3px 2px 0; font-size: 12px; color: var(--gochat-accent); text-decoration: none; }
+.gochat-thread:hover { text-decoration: underline; }
+.gochat-poll { display: grid; gap: 5px; white-space: normal; min-width: min(240px, 100%); }
+.gochat-poll-q { font-weight: 650; }
+.gochat-poll-opt {
+  position: relative; display: flex; justify-content: space-between; gap: 8px; width: 100%;
+  padding: 6px 9px; border: 1px solid var(--gochat-line, rgba(0,0,0,.12)); border-radius: 8px; overflow: hidden;
+  background: transparent; color: inherit; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; isolation: isolate;
+}
+.gochat-poll-opt::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: var(--gochat-pct, 0%); z-index: -1;
+  background: color-mix(in srgb, var(--gochat-accent) 16%, transparent);
+}
+.gochat-poll-opt.gochat-mine { border-color: var(--gochat-accent); }
+.gochat-poll-opt:disabled { cursor: default; }
+.gochat-poll-num { font-size: 11.5px; opacity: .7; white-space: nowrap; }
+.gochat-poll-foot { font-size: 11.5px; opacity: .7; }
+.gochat-img-link .gochat-gif { margin-top: 0; }
+.gochat-input[type=password] { border-left: 1px solid var(--gochat-line); padding-left: 10px; }

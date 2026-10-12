@@ -1,0 +1,9 @@
+.git
+.github
+ucng
+ucng-beacon
+*.exe
+dist/
+data/
+data-backups/
+beacon-data/

@@ -1,0 +1,21 @@
+# Beacon (Instanz-Verzeichnis und GIF-Hub):  docker build -f Dockerfile.beacon -t ucng-beacon .
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+ARG VERSION=dev
+ARG SOURCE_URL=""
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+      go build -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.sourceURL=$SOURCE_URL" -o /ucng-beacon ./cmd/ucng-beacon
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates && \
+    adduser -D -H beacon && mkdir /data && chown beacon /data
+USER beacon
+COPY --from=build /ucng-beacon /usr/local/bin/ucng-beacon
+COPY --from=build /src/LICENSE /src/cmd/ucng-beacon/web/flags/LICENSE.txt /usr/share/licenses/ucng-beacon/
+ENV ADDR=:8090 DATA_DIR=/data
+EXPOSE 8090
+VOLUME /data
+ENTRYPOINT ["ucng-beacon"]

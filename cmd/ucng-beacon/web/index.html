@@ -1,0 +1,269 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+     SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UCNG Beacon</title>
+  <meta name="description" content="Verzeichnis von UCNG-Instanzen und gemeinsamer GIF-Hub">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/beacon.css">
+  <link rel="stylesheet" href="/i18n-editor.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="#instanzen">
+        <img src="/logo.svg" alt="" width="28" height="28">
+        <span id="brandName">UCNG Beacon</span>
+      </a>
+      <nav class="tabs" aria-label="Bereiche" data-i18n-aria-label="beacon.bereiche">
+        <a href="#instanzen" data-tab="instanzen" data-i18n="beacon.instanzen">Instanzen</a>
+        <a href="#gifs" data-tab="gifs" data-i18n="beacon.gifs">GIFs</a>
+        <a href="#sprachpakete" data-tab="sprachpakete" data-i18n="beacon.lp_tab">Sprachen</a>
+        <a href="#verwaltung" data-tab="verwaltung" data-i18n="beacon.verwaltung">Verwaltung</a>
+      </nav>
+      <label class="top-lang" data-i18n-langs hidden><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2.8 10h14.4M10 2.8c2 2.1 2.9 4.5 2.9 7.2s-.9 5.1-2.9 7.2c-2-2.1-2.9-4.5-2.9-7.2s.9-5.1 2.9-7.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="sr-only" data-i18n="common.language">Sprache</span></label>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero" id="hero">
+      <h1 id="heroTitle" data-i18n="beacon.finde_eine_gochat_instanz">Finde eine UCNG-Instanz</h1>
+      <p id="heroText" data-i18n="beacon.instanzen_melden_sich_hier_selbst_an_und">Instanzen melden sich hier selbst an und halten ihre Angaben aktuell. Mit Konto kannst du Mitgliedern auf anderen Instanzen verschlüsselt schreiben.</p>
+      <dl class="stats" id="stats"></dl>
+    </section>
+
+    <!-- Instanzen -->
+    <section class="tab" id="tab-instanzen">
+      <div class="trust-bar">
+        <div class="chips" id="trustChips" role="tablist" aria-label="Vertrauensstufe" data-i18n-aria-label="beacon.vertrauensstufe"></div>
+        <details class="trust-help">
+          <summary data-i18n="beacon.was_bedeuten_die_stufen">Was bedeuten die Stufen?</summary>
+          <dl>
+            <div><dt><span class="trust official" data-i18n="beacon.offiziell">Offiziell</span></dt><dd data-i18n="beacon.vom_team_dieses_beacons_bzw_vom_projekt_2">Vom Team dieses Beacons bzw. vom Projekt selbst betrieben.</dd></div>
+            <div><dt><span class="trust recommended" data-i18n="beacon.empfohlen">Empfohlen</span></dt><dd data-i18n="beacon.vom_team_geprueft_und_fuer_gut_befunden">Vom Team geprüft und für gut befunden – Moderation und Betrieb machen einen verlässlichen Eindruck.</dd></div>
+            <div><dt><span class="trust standard" data-i18n="beacon.standard">Standard</span></dt><dd data-i18n="beacon.vom_team_gesichtet_und_unauffaellig_2">Vom Team gesichtet und unauffällig – keine besondere Empfehlung, aber auch kein Grund zur Sorge.</dd></div>
+            <div><dt><span class="trust community" data-i18n="beacon.community">Community</span></dt><dd data-i18n="beacon.hat_sich_selbst_eingetragen_niemand_hat">Hat sich selbst eingetragen, niemand hat sie geprüft. Kann großartig sein – oder auch nicht. Sei vorsichtig mit persönlichen Daten und Passwörtern.</dd></div>
+          </dl>
+          <p data-i18n="beacon.eine_stufe_gilt_fuer_den">Eine Stufe gilt für den Serverschlüssel der Instanz. Wechselt der Schlüssel (etwa weil die Domain den Besitzer gewechselt hat), fällt sie automatisch auf „Community“ zurück.</p>
+        </details>
+      </div>
+      <form class="filters" id="instFilters" role="search">
+        <label class="sr-only" for="instQ" data-i18n="beacon.suchen">Suchen</label>
+        <input id="instQ" type="search" placeholder="Name, Adresse oder Beschreibung …" autocomplete="off" data-i18n-placeholder="beacon.name_adresse_oder_beschreibung">
+        <label class="sr-only" for="instLang" data-i18n="beacon.sprache">Sprache</label>
+        <select id="instLang"><option value="" data-i18n="beacon.alle_sprachen">Alle Sprachen</option></select>
+        <label class="sr-only" for="instCountry" data-i18n="beacon.land">Land</label>
+        <select id="instCountry"><option value="" data-i18n="beacon.alle_laender">Alle Länder</option></select>
+        <label class="sr-only" for="instSort" data-i18n="beacon.sortierung">Sortierung</label>
+        <select id="instSort">
+          <option value="users" data-i18n="beacon.meiste_nutzer">Meiste Nutzer</option>
+          <option value="active" data-i18n="beacon.zuletzt_gemeldet">Zuletzt gemeldet</option>
+          <option value="new" data-i18n="beacon.neueste">Neueste</option>
+          <option value="name" data-i18n="beacon.name_az">Name A–Z</option>
+        </select>
+      </form>
+      <p class="count" id="instCount" aria-live="polite"></p>
+      <ul class="instances" id="instList"></ul>
+      <details class="howto">
+        <summary data-i18n="beacon.eigene_instanz_eintragen">Eigene Instanz eintragen</summary>
+        <ol>
+          <li data-i18n-html="beacon.setze_bei_deiner_gochat_instanz_public">Setze bei deiner UCNG-Instanz <code>PUBLIC_URL</code> (z. B. <code>https://chat.example.org</code>).</li>
+          <li><span data-i18n-html="beacon.im_admin_bereich_unter_beacon_diese">Im Admin-Bereich unter <b>Beacon</b> diese Adresse eintragen:</span> <code class="copyable" id="beaconUrl"></code></li>
+          <li data-i18n="beacon.sprache_land_und_beschreibung_waehlen_im">Sprache, Land und Beschreibung wählen, „Im Verzeichnis anzeigen“ einschalten – fertig. Die Angaben werden alle 6 Stunden aktualisiert.</li>
+        </ol>
+      </details>
+    </section>
+
+    <!-- GIFs -->
+    <section class="tab" id="tab-gifs" hidden>
+      <div class="gif-head">
+        <div class="chips" id="collChips" role="tablist" aria-label="Sammlungen" data-i18n-aria-label="beacon.sammlungen"></div>
+        <label class="sr-only" for="gifQ" data-i18n="beacon.gifs_suchen">GIFs suchen</label>
+        <input id="gifQ" type="search" placeholder="GIFs suchen …" autocomplete="off" data-i18n-placeholder="beacon.gifs_suchen_2">
+      </div>
+      <aside class="subscribe" id="subscribeBox" hidden>
+        <div>
+          <b id="subTitle"></b>
+          <p id="subText"></p>
+        </div>
+        <div class="sub-copy">
+          <code id="subAddr"></code>
+          <button type="button" class="btn" id="subCopy" data-i18n="beacon.adresse_kopieren">Adresse kopieren</button>
+        </div>
+      </aside>
+      <p class="count" id="gifCount" aria-live="polite"></p>
+      <div class="gif-grid" id="gifGrid"></div>
+      <div class="more"><button type="button" class="btn" id="gifMore" hidden data-i18n="beacon.mehr_laden">Mehr laden</button></div>
+    </section>
+
+    <!-- Sprachpakete für Chat-Server -->
+    <section class="tab" id="tab-sprachpakete" hidden>
+      <div class="lp-head">
+        <h1 data-i18n="beacon.lp_titel">Sprachpakete für UCNG</h1>
+        <p data-i18n-html="beacon.lp_intro">Übersetzungen der Chat-Oberfläche. Instanzen installieren sie im Admin-Bereich unter <b>Sprachen → Sprachpakete vom Beacon</b> – dort die Adresse dieses Beacons eintragen. Deutsch und Englisch sind im Chat eingebaut; ein Paket für sie ergänzt oder ändert einzelne Texte.</p>
+      </div>
+      <p class="count" id="lpCount" aria-live="polite"></p>
+      <ul class="lp-list" id="lpList"></ul>
+      <section class="card lp-new">
+        <h2 data-i18n="beacon.lp_neu_titel">Eine Sprache übersetzen – auch mit KI</h2>
+        <p class="hint" data-i18n-html="beacon.lp_neu_text">Das <b>Übersetzungspaket</b> enthält eine Anleitung, alle deutschen Ausgangstexte, die englische Fassung zum Vergleich, die Platzhalter und den Zustand jedes Textes. Eine KI kann es direkt ausfüllen (nur die Felder <code>text</code>). Das Ergebnis lässt sich im Chat unter Admin → Sprachen importieren – oder schick es dem Team dieses Beacons, damit alle Instanzen es nutzen können. Für vorhandene Sprachen gibt es das Paket oben an jeder Sprache, auf Wunsch nur mit den fehlenden und veralteten Texten.</p>
+        <form class="inline lp-new-form" id="lpNewForm">
+          <input id="lpNewCode" maxlength="12" required autocomplete="off" spellcheck="false" placeholder="Kürzel, z. B. fr" aria-label="Kürzel" data-i18n-placeholder="beacon.lp_code_ph" data-i18n-aria-label="beacon.lp_code">
+          <input id="lpNewName" maxlength="40" required autocomplete="off" placeholder="Name, z. B. Français" aria-label="Name" data-i18n-placeholder="beacon.lp_name_ph" data-i18n-aria-label="beacon.lp_name">
+          <input id="lpNewLocale" maxlength="20" autocomplete="off" spellcheck="false" placeholder="Format, z. B. fr-FR" aria-label="Format" data-i18n-placeholder="beacon.lp_locale_ph" data-i18n-aria-label="beacon.lp_locale">
+          <button class="btn primary" type="submit" data-i18n="beacon.lp_paket_laden">Übersetzungspaket herunterladen</button>
+        </form>
+        <p class="error" id="lpNewErr" role="alert"></p>
+      </section>
+    </section>
+
+    <!-- Verwaltung -->
+    <section class="tab" id="tab-verwaltung" hidden>
+      <form class="card login" id="loginForm">
+        <h2 data-i18n="beacon.verwaltung">Verwaltung</h2>
+        <p data-i18n="beacon.fuer_das_team_dieses_beacons">Für das Team dieses Beacons.</p>
+        <label class="field"><span data-i18n="beacon.passwort">Passwort</span><input id="loginPw" type="password" autocomplete="current-password" required></label>
+        <p class="error" id="loginErr" role="alert"></p>
+        <button class="btn primary" type="submit" data-i18n="beacon.anmelden">Anmelden</button>
+      </form>
+
+      <div id="adminArea" hidden>
+        <div class="admin-bar"><span data-i18n="beacon.angemeldet">Angemeldet.</span><button class="btn small" type="button" id="logoutBtn" data-i18n="beacon.abmelden">Abmelden</button></div>
+
+        <form class="card" id="cfgForm">
+          <h2 data-i18n="beacon.einstellungen">Einstellungen</h2>
+          <div class="grid2">
+            <label class="field"><span data-i18n="beacon.name_des_beacons">Name des Beacons</span><input id="cfgName" maxlength="60"></label>
+            <label class="field"><span data-i18n="beacon.gif_anbieter_zum_uebernehmen">GIF-Anbieter (zum Übernehmen)</span>
+              <select id="cfgProvider"><option value="" data-i18n="beacon.keiner">keiner</option><option value="giphy">GIPHY</option><option value="tenor">Tenor</option></select></label>
+          </div>
+          <label class="field"><span data-i18n="beacon.beschreibung_2">Beschreibung</span><input id="cfgDesc" maxlength="400"></label>
+          <label class="field"><span data-i18n="beacon.quellenangabe_an_gifs_im_chat">Quellenangabe an GIFs im Chat</span><input id="cfgCredit" maxlength="40" placeholder="z. B. „via Beacon Alpenraum“ – leer: „via“ + Name des Beacons" data-i18n-placeholder="beacon.z_b_via_beacon_alpenraum_leer_via_name"></label>
+          <div class="grid2">
+            <label class="field"><span data-i18n="beacon.api_schluessel_des_anbieters">API-Schlüssel des Anbieters</span><input id="cfgKey" autocomplete="off"></label>
+            <label class="field"><span data-i18n="beacon.jugendschutz">Jugendschutz</span>
+              <select id="cfgRating"><option value="g" data-i18n="beacon.g_fuer_alle">G – für alle</option><option value="pg">PG</option><option value="pg-13">PG-13</option><option value="r">R</option></select></label>
+          </div>
+          <div class="row-end"><span class="saved" id="cfgSaved"></span><button class="btn primary" type="submit" data-i18n="beacon.speichern">Speichern</button></div>
+        </form>
+
+        <section class="card">
+          <h2 data-i18n="beacon.sammlungen">Sammlungen</h2>
+          <p class="hint" data-i18n="beacon.instanzen_abonnieren_ganze_sammlungen">Instanzen abonnieren ganze Sammlungen. Ein GIF kann in mehreren Sammlungen stehen.</p>
+          <form class="inline" id="collForm">
+            <input id="collName" maxlength="50" placeholder="Neue Sammlung, z. B. „Reaktionen“" required data-i18n-placeholder="beacon.neue_sammlung_z_b_reaktionen">
+            <input id="collDesc" maxlength="200" placeholder="Beschreibung (optional)" data-i18n-placeholder="beacon.beschreibung_optional">
+            <button class="btn primary" type="submit" data-i18n="beacon.anlegen">Anlegen</button>
+          </form>
+          <ul class="coll-list" id="collList"></ul>
+        </section>
+
+        <section class="card">
+          <h2 data-i18n="beacon.gifs_hinzufuegen">GIFs hinzufügen</h2>
+          <div class="add-coll"><span data-i18n="beacon.in_sammlungen">In Sammlungen:</span><div class="checks" id="addColls"></div></div>
+          <div class="add-grid">
+            <form class="add-box" id="upForm">
+              <b data-i18n="beacon.hochladen">Hochladen</b>
+              <input type="file" id="upFile" accept="image/gif" required>
+              <input id="upTitle" maxlength="80" placeholder="Titel" data-i18n-placeholder="beacon.titel">
+              <input id="upTags" maxlength="200" placeholder="Schlagwörter, mit Komma" data-i18n-placeholder="beacon.schlagwoerter_mit_komma">
+              <button class="btn primary" type="submit" data-i18n="beacon.hochladen">Hochladen</button>
+            </form>
+            <form class="add-box" id="urlForm">
+              <b data-i18n="beacon.aus_dem_web">Aus dem Web</b>
+              <input id="urlUrl" type="url" placeholder="https://…/bild.gif" required>
+              <input id="urlTitle" maxlength="80" placeholder="Titel" data-i18n-placeholder="beacon.titel">
+              <input id="urlTags" maxlength="200" placeholder="Schlagwörter, mit Komma" data-i18n-placeholder="beacon.schlagwoerter_mit_komma">
+              <button class="btn primary" type="submit" data-i18n="beacon.laden">Laden</button>
+            </form>
+          </div>
+          <form class="inline web-search" id="webForm">
+            <input id="webQ" type="search" placeholder="Bei GIPHY/Tenor suchen und übernehmen …" data-i18n-placeholder="beacon.bei_giphy_tenor_suchen_und_uebernehmen">
+            <button class="btn" type="submit" data-i18n="beacon.suchen">Suchen</button>
+          </form>
+          <div class="gif-grid small" id="webGrid"></div>
+          <p class="error" id="addErr" role="alert"></p>
+        </section>
+
+        <section class="card">
+          <h2 data-i18n="beacon.alle_gifs">Alle GIFs</h2>
+          <div class="gif-grid small" id="adminGifs"></div>
+        </section>
+
+        <section class="card">
+          <h2 data-i18n="beacon.gemeldete_instanzen">Gemeldete Instanzen</h2>
+          <p class="hint" data-i18n-html="beacon.stufe_waehlen_und_uebernehmen_offiziell">Stufe wählen und „Übernehmen“: <b>Offiziell</b>, <b>Empfohlen</b> und <b>Standard</b> stehen in dieser Reihenfolge oben; alle anderen gelten als <b>Community</b> (ungeprüft, mit Warnhinweis). Instanzen, die sich 3 Tage nicht gemeldet haben, sind nicht mehr öffentlich gelistet; nach 30 Tagen werden sie entfernt – ihre Stufe bleibt erhalten.</p>
+          <ul class="admin-inst" id="adminInst"></ul>
+          <h3 class="sub-h" data-i18n="beacon.stufe_vorab_vergeben">Stufe vorab vergeben</h3>
+          <p class="hint" data-i18n="beacon.fuer_domains_die_sich_noch_nicht">Für Domains, die sich noch nicht gemeldet haben (z. B. eigene Instanzen). Die Stufe bindet sich an den Schlüssel, mit dem sich die Instanz zum ersten Mal meldet.</p>
+          <form class="inline" id="trustForm">
+            <input id="trustDomain" placeholder="chat.example.org" required autocomplete="off" aria-label="Domain" data-i18n-aria-label="beacon.domain">
+            <select id="trustLevel" aria-label="Stufe" data-i18n-aria-label="beacon.stufe"><option value="official" data-i18n="beacon.offiziell">Offiziell</option><option value="recommended" data-i18n="beacon.empfohlen">Empfohlen</option><option value="standard" data-i18n="beacon.standard">Standard</option></select>
+            <input id="trustNote" maxlength="80" placeholder="Hinweis (optional)" aria-label="Hinweis" data-i18n-aria-label="beacon.hinweis" data-i18n-placeholder="beacon.hinweis_optional">
+            <button class="btn primary" type="submit" data-i18n="beacon.vergeben">Vergeben</button>
+          </form>
+          <ul class="admin-inst" id="trustPending"></ul>
+        </section>
+
+        <section class="card">
+          <h2 data-i18n="beacon.lp_admin_titel">Sprachpakete für Chat-Server</h2>
+          <p class="hint" data-i18n-html="beacon.lp_admin_hint">Sprachdatei oder ausgefülltes Übersetzungspaket hochladen. Die Texte werden gegen die aktuellen deutschen Ausgangstexte geprüft (Platzhalter, Klammern); unbekannte und fehlerhafte Texte werden übersprungen. <b>Ergänzen</b> behält vorhandene Texte, <b>Ersetzen</b> verwirft sie.</p>
+          <form class="lp-up" id="lpUpForm">
+            <div class="grid2">
+              <label class="field"><span data-i18n="beacon.lp_code">Kürzel</span><input id="lpCode" maxlength="12" required autocomplete="off" spellcheck="false" placeholder="fr"></label>
+              <label class="field"><span data-i18n="beacon.lp_name">Name</span><input id="lpName" maxlength="40" autocomplete="off" placeholder="Français"></label>
+              <label class="field"><span data-i18n="beacon.lp_locale">Format</span><input id="lpLocale" maxlength="20" autocomplete="off" spellcheck="false" placeholder="fr-FR"></label>
+              <label class="field"><span data-i18n="beacon.lp_dir">Schreibrichtung</span><select id="lpDir"><option value="" data-i18n="beacon.lp_ltr">links nach rechts</option><option value="rtl" data-i18n="beacon.lp_rtl">rechts nach links</option></select></label>
+            </div>
+            <label class="field"><span data-i18n="beacon.lp_notiz">Hinweis (optional)</span><input id="lpNote" maxlength="200" autocomplete="off" placeholder="z. B. „Von der Community geprüft“" data-i18n-placeholder="beacon.lp_notiz_ph"></label>
+            <div class="lp-up-row">
+              <input type="file" id="lpFile" accept=".json,application/json" aria-label="Sprachdatei" data-i18n-aria-label="beacon.lp_datei">
+              <select id="lpMode" aria-label="Vorgehen" data-i18n-aria-label="beacon.lp_vorgehen"><option value="merge" data-i18n="beacon.lp_merge">ergänzen</option><option value="replace" data-i18n="beacon.lp_replace">ersetzen</option></select>
+              <button class="btn primary" type="submit" data-i18n="beacon.lp_speichern">Speichern</button>
+            </div>
+            <p class="hint lp-up-hint" data-i18n="beacon.lp_up_hint">Ohne Datei werden nur Name, Format und Hinweis eines vorhandenen Pakets geändert.</p>
+          </form>
+          <p class="error" id="lpErr" role="alert"></p>
+          <ul class="admin-inst" id="lpAdmin"></ul>
+        </section>
+
+        <section class="card i18n-card">
+          <h2 data-i18n="beacon.sprachen">Sprachen</h2>
+          <p class="hint" data-i18n-html="beacon.i18n_intro">Alle Texte dieser Seite und die Meldungen des Beacons stammen aus <strong>Sprachdateien</strong>. Deine Änderungen werden getrennt davon gespeichert (<code>i18n.json</code> im Datenordner) – Updates bringen neue offizielle Texte mit, deine Anpassungen bleiben erhalten.</p>
+        </section>
+        <div id="i18nRoot"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="gifDialog">
+    <form method="dialog" class="gif-detail">
+      <img id="gdImg" alt="">
+      <div>
+        <h3 id="gdTitle"></h3>
+        <p id="gdTags"></p>
+        <p id="gdColls"></p>
+        <div id="gdEdit" hidden>
+          <label class="field"><span data-i18n="beacon.titel">Titel</span><input id="gdTitleIn" maxlength="80"></label>
+          <label class="field"><span data-i18n="beacon.schlagwoerter_2">Schlagwörter</span><input id="gdTagsIn" maxlength="200"></label>
+          <div class="checks" id="gdCollsIn"></div>
+          <div class="row-end">
+            <button type="button" class="btn danger" id="gdDelete" data-i18n="beacon.loeschen">Löschen</button>
+            <button type="button" class="btn primary" id="gdSave" data-i18n="beacon.speichern">Speichern</button>
+          </div>
+        </div>
+      </div>
+      <button class="x" value="close" aria-label="Schließen" data-i18n-aria-label="beacon.schliessen">×</button>
+    </form>
+  </dialog>
+
+  <footer class="wrap foot" id="pageFoot">UCNG Beacon · AGPL-3.0 · <a href="/api/v1/info">API</a></footer>
+  <script src="/api/i18n/boot.js?scope=beacon"></script>
+  <script src="/i18n.js"></script>
+  <script src="/i18n-editor.js"></script>
+  <script src="/beacon.js"></script>
+</body>
+</html>
