@@ -24,6 +24,20 @@ jobs:
     runs-on: ubuntu-latest
     if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
     steps:
+      # Der Assistent legt den Unterschriften-Branch nicht selbst an – beim ersten Lauf hier erzeugen.
+      - name: Branch für Unterschriften anlegen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          if gh api "repos/$REPO/branches/cla-signatures" --silent 2>/dev/null; then
+            echo "Branch cla-signatures vorhanden"
+          else
+            sha="$(gh api "repos/$REPO/git/ref/heads/$BASE" --jq .object.sha)"
+            gh api "repos/$REPO/git/refs" -f ref=refs/heads/cla-signatures -f sha="$sha" --silent
+            echo "Branch cla-signatures angelegt"
+          fi
       - name: CLA-Assistent
         uses: contributor-assistant/github-action@v2.6.1
         env:
@@ -32,5 +46,5 @@ jobs:
           path-to-signatures: signatures/cla-v1.json
           path-to-document: https://github.com/${{ github.repository }}/blob/main/CLA.md
           branch: cla-signatures
-          allowlist: dependabot[bot],github-actions[bot]
+          allowlist: b1tk1ll3r,dependabot[bot],github-actions[bot]
           lock-pullrequest-aftermerge: false
