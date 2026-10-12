@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# UCNG Beacon – Instanz-Verzeichnis, GIF-Hub und Sprachpakete
+#   1. .env.example nach .env kopieren und ausfüllen
+#   2. docker compose up -d
+#   3. Verwaltung: https://<beacon-adresse>/admin
+#
+# Der Port ist nur lokal erreichbar (127.0.0.1) – davor gehört ein Reverse-Proxy mit HTTPS,
+# der auf http://127.0.0.1:${BEACON_PORT:-8090} weiterleitet.
+# Läuft der Beacon auf demselben Server wie ein Chat, ist das kein Problem: eigene Datei,
+# eigenes Projekt, eigener Port.
+
+name: ucng-beacon
+
+services:
+  beacon:
+    image: ghcr.io/b1tsnetwork/ucng-beacon:${BEACON_VERSION:-latest}
+    container_name: ucng-beacon
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BEACON_PORT:-8090}:8090"
+    environment:
+      # Öffentliche Adresse mit https:// – steht in Abo-Adressen und GIF-Links.
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL in .env setzen}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD in .env setzen}
+      TRUST_PROXY: "1"
+      # Welche Instanzen sich eintragen dürfen
+      HTTPS_ONLY: ${HTTPS_ONLY:-1}
+      PUBLIC_ONLY: ${PUBLIC_ONLY:-1}
+      NO_PORTS: ${NO_PORTS:-}
+      # GIFs werden in diesen Rahmen eingepasst (100–1000)
+      GIF_SIZE: ${GIF_SIZE:-480}
+      # Nur bei einer eigenen, veränderten Fassung: Adresse deines Quellcodes (AGPL)
+      SOURCE_URL: ${SOURCE_URL:-}
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      # Instanzen, GIFs (media/, originals/) und Sprachpakete (langpacks/)
+      - beacon-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  beacon-data:

@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# UCNG – Chat-Server
+#   1. .env.example nach .env kopieren und ausfüllen
+#   2. docker compose up -d
+#   3. Admin-Bereich: https://<deine-adresse>/admin
+#
+# Der Port ist nur lokal erreichbar (127.0.0.1) – davor gehört ein Reverse-Proxy mit HTTPS
+# (Caddy, nginx, Traefik …), der auf http://127.0.0.1:${UCNG_PORT:-8080} weiterleitet.
+# Wichtig für den Proxy: Server-Sent Events (Puffer aus, lange Timeouts).
+
+name: ucng
+
+services:
+  chat:
+    image: ghcr.io/b1tsnetwork/ucng:${UCNG_VERSION:-latest}
+    container_name: ucng
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${UCNG_PORT:-8080}:8080"
+    environment:
+      # Öffentliche Adresse mit https:// – nötig für Links in E-Mails, Föderation und Beacon.
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL in .env setzen}
+      # Fest gesetzt, sonst wird bei jedem Start ein neues erzeugt (steht dann im Log).
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD in .env setzen}
+      # simple = Namen ohne Konto, hosted = Konten, 2FA, verschlüsselte DMs, Föderation
+      MODE: ${MODE:-simple}
+      # files (Standard) oder sqlite – beides im Volume /data
+      STORAGE: ${STORAGE:-files}
+      # Hinter dem Reverse-Proxy: echte Client-IP aus X-Forwarded-For
+      TRUST_PROXY: "1"
+      # Zusätzlich erlaubte Seiten für das Widget (kommagetrennt), sonst Einstellung im Admin
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      RATE_LIMIT: ${RATE_LIMIT:-10}
+      # Nur setzen, wenn du eine eigene, veränderte Fassung betreibst (AGPL):
+      # Adresse deines Quellcodes. Offizielle Images bringen sie schon mit.
+      SOURCE_URL: ${SOURCE_URL:-}
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      # Kanäle, Nachrichten, Einstellungen, Bilder und Backups (/data/backups)
+      - ucng-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ucng-data:
