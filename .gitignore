@@ -20,3 +20,6 @@ beacon-data/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Zugangsdaten der Compose-Dateien
+deploy/*/.env

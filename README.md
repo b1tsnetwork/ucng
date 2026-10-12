@@ -1066,7 +1066,7 @@ Im Ordner `.github/` liegt alles für GitHub:
 |-------|-------|
 | `workflows/ci.yml` | Bei jedem Pull Request: `gofmt`, `go vet`, `go test -race`, JavaScript-Syntax, Builds mit allen Speicher-Varianten (Dateien, SQLite, MySQL, beides) samt Rauchtest beider Programme |
 | `workflows/release.yml` | Bei jedem Push auf `main` und jedem Tag `v*`: erst die CI, dann Container-Images für **amd64 und arm64** in die GitHub Container Registry und Programmdateien für Linux, Windows und macOS |
-| `workflows/cla.yml` | Fragt bei Pull Requests nach der Zustimmung zum [CLA](CLA.md); Unterschriften landen im Branch `cla-signatures` (wird beim ersten Mal angelegt) |
+| `workflows/cla.yml` | Fragt bei Pull Requests nach der Zustimmung zum [CLA](CLA.md); Unterschriften landen im Branch `cla-signatures` (legt der Workflow beim ersten Lauf an; darf nicht geschützt sein) |
 | `dependabot.yml` | Wöchentliche Update-PRs (montags) für GitHub Actions, die Docker-Basis-Images und – sobald vorhanden – Go-Module |
 
 **Container-Images** (das UCNG-Image enthält alle Speicher-Treiber):
@@ -1080,6 +1080,8 @@ Im Ordner `.github/` liegt alles für GitHub:
 docker run -p 8080:8080 -v ucng:/data -e ADMIN_PASSWORD=… ghcr.io/<owner>/ucng:latest
 docker run -p 8090:8090 -v beacon:/data -e ADMIN_PASSWORD=… ghcr.io/<owner>/ucng-beacon:latest
 ```
+
+**Docker Compose:** fertige Dateien liegen in `deploy/chat/` und `deploy/beacon/`. Jeweils `.env.example` nach `.env` kopieren, `PUBLIC_URL` und `ADMIN_PASSWORD` eintragen, `docker compose up -d`. Der Port ist nur lokal (`127.0.0.1`) offen – davor gehört ein Reverse-Proxy mit HTTPS; die Container laufen schreibgeschützt, ohne Capabilities und mit Health-Check. Mit `UCNG_VERSION` bzw. `BEACON_VERSION` lässt sich eine feste Version wählen (Update: Version ändern, `docker compose pull && docker compose up -d` – erst die Chats, dann den Beacon).
 
 **Release veröffentlichen:** `git tag v1.0.0 && git push origin v1.0.0`. Der Workflow legt das GitHub-Release an (mit automatisch erzeugten Release-Notes) und hängt Archive für `linux/amd64`, `linux/arm64`, `windows/amd64`, `darwin/arm64` und `darwin/amd64` an – jeweils `ucng` und `ucng-beacon` – plus `SHA256SUMS.txt`. Die Version steht im Log beim Start („UCNG 1.0.0 läuft …“) und wird beim Beacon mitgemeldet.
 

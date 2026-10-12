@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -116,6 +118,9 @@ func (s *Server) handleAdminUpdateRoom(w http.ResponseWriter, r *http.Request) {
 		Links       *string `json:"links"`
 		BotSlowMode *int    `json:"botSlowMode"`
 		BotLinks    *string `json:"botLinks"`
+		// Zugang: fehlt das Feld, bleibt er unverändert; [] = alle.
+		ReadRoles  *[]string `json:"readRoles"`
+		WriteRoles *[]string `json:"writeRoles"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -133,7 +138,13 @@ func (s *Server) handleAdminUpdateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ri := RoomInput{Name: in.Name, Description: in.Description, SlowMode: cur.SlowMode, Links: cur.Links,
-		BotSlowMode: cur.BotSlowMode, BotLinks: cur.BotLinks}
+		BotSlowMode: cur.BotSlowMode, BotLinks: cur.BotLinks, ReadRoles: cur.ReadRoles, WriteRoles: cur.WriteRoles}
+	if in.ReadRoles != nil {
+		ri.ReadRoles = *in.ReadRoles
+	}
+	if in.WriteRoles != nil {
+		ri.WriteRoles = *in.WriteRoles
+	}
 	if in.SlowMode != nil {
 		ri.SlowMode = *in.SlowMode
 	}
@@ -161,8 +172,30 @@ func (s *Server) handleAdminUpdateRoom(w http.ResponseWriter, r *http.Request) {
 		}
 		detail += fmt.Sprintf("Langsam-Modus %ds, Links: %s; Bots: %ds, Links: %s", info.SlowMode, info.Links, info.BotSlowMode, info.BotLinks)
 	}
+	if !slices.Equal(info.ReadRoles, cur.ReadRoles) || !slices.Equal(info.WriteRoles, cur.WriteRoles) {
+		if detail != "" {
+			detail += ", "
+		}
+		detail += "Zugang: " + s.roleListText(info.ReadRoles) + "; Schreiben: " + s.roleListText(info.WriteRoles)
+	}
 	s.log(r, AuditEntry{Action: "room.update", Room: info.Name, Detail: detail})
 	writeJSON(w, http.StatusOK, info)
+}
+
+// roleListText beschreibt den Zugang eines Kanals fürs Protokoll.
+func (s *Server) roleListText(ids []string) string {
+	if len(ids) == 0 {
+		return "alle"
+	}
+	names := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == RoleTeamOnly {
+			names = append(names, "Team")
+		} else if ro, ok := s.hub.Roles().Get(id); ok {
+			names = append(names, ro.Name)
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 // DELETE /api/admin/rooms/{room}

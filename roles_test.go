@@ -89,3 +89,38 @@ func TestRolesPersist(t *testing.T) {
 		t.Fatalf("%+v", m)
 	}
 }
+
+// Kanal bearbeiten: Zugang wird übernommen, und ohne Zugangsfelder bleibt er erhalten
+// (früher setzte jedes Bearbeiten den Kanal stillschweigend auf „offen“).
+func TestAdminPatchRoomRoles(t *testing.T) {
+	ts, h := testServer(t)
+	adm := adminLogin(t, ts.URL)
+	rs := mkRoles(t, ts.URL, adm, `{"roles":[{"name":"Mods","color":"#e11d48"},{"name":"VIP","color":"#2563eb"}]}`)
+	expect(t, do(t, "POST", ts.URL+"/api/admin/rooms", adm, `{"name":"intern","readRoles":["team"]}`), 201, "anlegen").Body.Close()
+	roles := func() ([]string, []string) {
+		for _, ri := range h.Rooms() {
+			if ri.Name == "intern" {
+				return ri.ReadRoles, ri.WriteRoles
+			}
+		}
+		t.Fatal("Kanal fehlt")
+		return nil, nil
+	}
+	body := `{"description":"","readRoles":["` + rs[0].ID + `","` + rs[1].ID + `"],"writeRoles":["` + rs[0].ID + `"]}`
+	expect(t, do(t, "PATCH", ts.URL+"/api/admin/rooms/intern", adm, body), 200, "Rollen").Body.Close()
+	if rr, wr := roles(); len(rr) != 2 || len(wr) != 1 || wr[0] != rs[0].ID {
+		t.Fatalf("Rollen nicht übernommen: %v / %v", rr, wr)
+	}
+	expect(t, do(t, "PATCH", ts.URL+"/api/admin/rooms/intern", adm, `{"description":"neu","slowMode":30}`), 200, "ohne Zugang").Body.Close()
+	if rr, wr := roles(); len(rr) != 2 || len(wr) != 1 {
+		t.Fatalf("Zugang beim Bearbeiten verloren: %v / %v", rr, wr)
+	}
+	expect(t, do(t, "PATCH", ts.URL+"/api/admin/rooms/intern", adm, `{"description":"","readRoles":["team"],"writeRoles":[]}`), 200, "Team").Body.Close()
+	if rr, wr := roles(); len(rr) != 1 || rr[0] != RoleTeamOnly || len(wr) != 0 {
+		t.Fatalf("zurück auf Team: %v / %v", rr, wr)
+	}
+	expect(t, do(t, "PATCH", ts.URL+"/api/admin/rooms/intern", adm, `{"description":"","readRoles":[]}`), 200, "offen").Body.Close()
+	if rr, _ := roles(); len(rr) != 0 {
+		t.Fatalf("öffnen: %v", rr)
+	}
+}
