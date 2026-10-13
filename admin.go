@@ -77,6 +77,10 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := s.hub.Settings()
+	if in.StartRoom != "" && in.StartRoom != before.StartRoom && !s.hub.IsChannel(NormRoom(strings.TrimPrefix(in.StartRoom, "#"))) {
+		fail(w, ErrStartRoom)
+		return
+	}
 	out, err := s.hub.SetSettings(in)
 	if err != nil {
 		fail(w, err)
@@ -85,6 +89,16 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	detail := ""
 	if before.RetentionDays != out.RetentionDays {
 		detail = fmt.Sprintf("Aufbewahrung: %d → %d Tage", before.RetentionDays, out.RetentionDays)
+	}
+	if before.StartRoom != out.StartRoom {
+		if detail != "" {
+			detail += ", "
+		}
+		start := "automatisch"
+		if out.StartRoom != "" {
+			start = "#" + out.StartRoom
+		}
+		detail += "Startkanal: " + start
 	}
 	s.log(r, AuditEntry{Action: "settings.update", Detail: detail})
 	if before.RetentionDays != out.RetentionDays {

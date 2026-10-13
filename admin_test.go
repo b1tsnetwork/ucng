@@ -259,3 +259,33 @@ func TestRoomNames(t *testing.T) {
 }
 
 func itoa(i int64) string { return strconv.FormatInt(i, 10) }
+
+// Startkanal: nur vorhandene Kanäle; Umbenennen zieht mit, Löschen setzt auf automatisch.
+func TestStartRoom(t *testing.T) {
+	ts, h := testServer(t)
+	adm := adminLogin(t, ts.URL)
+	expect(t, do(t, "POST", ts.URL+"/api/admin/rooms", adm, `{"name":"willkommen"}`), 201, "anlegen").Body.Close()
+	put := func(start string, want int) {
+		t.Helper()
+		st := h.Settings()
+		st.StartRoom = start
+		b, _ := json.Marshal(st)
+		expect(t, do(t, "PUT", ts.URL+"/api/admin/settings", adm, string(b)), want, "Startkanal "+start).Body.Close()
+	}
+	put("gibtsnicht", 400)
+	put("#Willkommen", 200)
+	if h.Settings().StartRoom != "willkommen" {
+		t.Fatalf("gespeichert: %q", h.Settings().StartRoom)
+	}
+	if s := jmap(t, do(t, "GET", ts.URL+"/api/settings", "", "")); s["startRoom"] != "willkommen" {
+		t.Fatalf("öffentlich: %v", s["startRoom"])
+	}
+	expect(t, do(t, "PATCH", ts.URL+"/api/admin/rooms/willkommen", adm, `{"name":"hallo","description":""}`), 200, "umbenennen").Body.Close()
+	if h.Settings().StartRoom != "hallo" {
+		t.Fatalf("nach Umbenennen: %q", h.Settings().StartRoom)
+	}
+	expect(t, do(t, "DELETE", ts.URL+"/api/admin/rooms/hallo", adm, ""), 204, "löschen").Body.Close()
+	if h.Settings().StartRoom != "" {
+		t.Fatalf("nach Löschen: %q", h.Settings().StartRoom)
+	}
+}

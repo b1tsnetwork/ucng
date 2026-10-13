@@ -190,3 +190,11 @@ func (h *Hub) NotifyUser(typ, userID string) {
 	defer h.mu.Unlock()
 	h.broadcastAll(Event{Type: typ, User: userID})
 }
+
+// IsChannel: gibt es den Kanal (keine Direktnachricht)?
+func (h *Hub) IsChannel(name string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r, ok := h.rooms[name]
+	return ok && r.kind == ""
+}

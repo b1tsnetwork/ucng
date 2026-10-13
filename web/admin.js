@@ -225,6 +225,7 @@
   function fillSettingsForm() {
     $("setTitle").value = settings.title;
     $("setAllowRooms").checked = settings.allowUserRooms;
+    fillStartRoom();
     $("setDMs").checked = !settings.noDMs;
     theme = { accent: settings.accent, sidebar: settings.sidebar || "", mode: settings.mode };
     renderTheme();
@@ -241,6 +242,17 @@
     renderHours();
     $("policyAny").checked = settings.embedPolicy !== "listed";
     $("policyListed").checked = settings.embedPolicy === "listed";
+  }
+
+  // Startkanal: Auswahl aus den Kanälen, die alle sehen dürfen (plus der aktuelle Wert).
+  function fillStartRoom(keep) {
+    const sel = $("setStartRoom");
+    const cur = keep && sel.options.length ? sel.value : settings.startRoom || "";
+    const names = rooms.filter((r) => !(r.readRoles && r.readRoles.length)).map((r) => r.name);
+    if (cur && !names.includes(cur)) names.unshift(cur);
+    const auto = rooms.some((r) => r.name === "lobby") ? "#lobby" : rooms.length ? "#" + rooms[0].name : "–";
+    sel.replaceChildren(new Option(_t("admin.startkanal_automatisch", { room: auto }), ""), ...names.map((n) => new Option("#" + n, n)));
+    sel.value = cur;
   }
 
   const WEEKDAYS = [_t("admin.montag"), _t("admin.dienstag"), _t("admin.mittwoch"), _t("admin.donnerstag"), _t("admin.freitag"), _t("admin.samstag"), _t("admin.sonntag")];
@@ -279,6 +291,7 @@
     });
     return Object.assign({}, settings, {
       title: $("setTitle").value, allowUserRooms: $("setAllowRooms").checked, noDMs: !$("setDMs").checked,
+      startRoom: $("setStartRoom").value,
       accent: theme.accent, sidebar: theme.sidebar, mode: theme.mode,
       privacyUrl: $("setPrivacy").value.trim(), imprintUrl: $("setImprint").value.trim(),
       retentionDays: ret, timezone: $("setTimezone").value.trim() || "Europe/Berlin",
@@ -386,8 +399,13 @@
     try {
       [rooms, layout] = await Promise.all([api("GET", "/api/admin/rooms"), api("GET", "/api/admin/layout")]);
     } catch { return; }
+    if (settings.startRoom && !rooms.some((r) => r.name === settings.startRoom)) { // umbenannt oder gelöscht
+      try { settings.startRoom = (await api("GET", "/api/admin/settings")).startRoom || ""; } catch { /* egal */ }
+      fillStartRoom();
+    }
     renderRooms();
     fillRoomSelects();
+    fillStartRoom(true);
   }
 
   // Anordnung speichern (Gruppen, Reihenfolge) und neu zeichnen.
@@ -432,6 +450,7 @@
     if (r.links === "known") stats.append(el("span", "rule", _t("admin.links_ab_24_h")));
     if (r.links === "team") stats.append(el("span", "rule", _t("admin.links_nur_team")));
     if (r.botSlowMode) stats.append(el("span", "rule", _t("admin.bots_langsam", { fmtSecs: fmtSecs(r.botSlowMode) })));
+    if (settings.startRoom === r.name) stats.append(el("span", "rule", _t("admin.startkanal")));
     const acc = roomAccessLabel(r);
     if (acc) stats.append(el("span", "rule access", acc));
     if (r.botLinks === "none") stats.append(el("span", "rule", _t("admin.bots_ohne_links")));

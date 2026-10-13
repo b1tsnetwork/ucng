@@ -914,6 +914,8 @@
   }
 
   function firstRoom() {
+    const start = settings.startRoom; // im Admin-Bereich festgelegt (sonst lobby bzw. der erste)
+    if (start && rooms.some((r) => r.name === start)) return start;
     if (rooms.some((r) => r.name === "lobby")) return "lobby";
     return rooms.length ? rooms[0].name : "";
   }

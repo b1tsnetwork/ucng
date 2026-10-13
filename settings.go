@@ -29,6 +29,7 @@ type Settings struct {
 	Hours         Hours  `json:"hours"`         // Öffnungszeiten (z. B. für einen Support-Chat)
 	EmbedPolicy   string `json:"embedPolicy"`   // "any" = Widget überall, "listed" = nur Domains aus den Widgets
 	NoDMs         bool   `json:"noDMs"`         // Direktnachrichten ausgeschaltet
+	StartRoom     string `json:"startRoom"`     // Kanal beim Öffnen ohne bestimmten Kanal (leer = lobby bzw. der erste)
 }
 
 // Hours: Öffnungszeiten je Wochentag (0 = Montag … 6 = Sonntag).
@@ -69,6 +70,7 @@ var (
 	ErrHours       = errors.New("Öffnungszeiten bitte als HH:MM angeben, „bis“ nach „von“")
 	ErrClosedText  = errors.New("Der Hinweis außerhalb der Öffnungszeiten darf höchstens 300 Zeichen lang sein")
 	ErrEmbedPolicy = errors.New("Einbetten: any oder listed")
+	ErrStartRoom   = errors.New("Diesen Kanal gibt es nicht – bitte einen vorhandenen Startkanal wählen")
 	hhmmRe         = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 )
 
@@ -154,6 +156,9 @@ func validateSettings(s Settings) (Settings, error) {
 	}
 	if s.EmbedPolicy != EmbedAny && s.EmbedPolicy != EmbedListed {
 		return Settings{}, ErrEmbedPolicy
+	}
+	if s.StartRoom = NormRoom(strings.TrimPrefix(strings.TrimSpace(s.StartRoom), "#")); s.StartRoom != "" && (!ValidRoom(s.StartRoom) || isDMName(s.StartRoom)) {
+		return Settings{}, ErrStartRoom
 	}
 	return s, nil
 }

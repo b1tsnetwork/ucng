@@ -1578,6 +1578,10 @@ func (h *Hub) UpdateRoomWith(name string, in RoomInput) (RoomInfo, error) {
 		h.rooms[newName] = r
 		r.description = desc
 		h.record(storeOp{kind: opRoomRename, room: name, newName: newName})
+		if h.settings.StartRoom == name { // Startkanal umbenannt
+			h.settings.StartRoom = newName
+			h.touchDoc("config.json")
+		}
 		h.bots.renameRoom(name, newName)
 		h.widgets.renameRoom(name, newName)
 		h.commands.renameRoom(name, newName)
@@ -1602,6 +1606,10 @@ func (h *Hub) DeleteRoom(name string) error {
 	}
 	h.closeClientsLocked(r, Event{Type: "room_deleted", Room: name})
 	delete(h.rooms, name)
+	if h.settings.StartRoom == name { // Startkanal gelöscht: wieder automatisch
+		h.settings.StartRoom = ""
+		h.touchDoc("config.json")
+	}
 	for id, rn := range h.pending {
 		if rn == name {
 			delete(h.pending, id)
