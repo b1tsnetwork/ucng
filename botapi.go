@@ -437,6 +437,11 @@ func (s *Server) handleBotEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := botFrom(r)
+	release, ok := s.streamSlot(w, "bot:"+b.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	bots := s.hub.Bots()
 	ch := s.hub.Listen(256)
 	defer s.hub.Unlisten(ch)

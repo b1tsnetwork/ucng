@@ -44,6 +44,8 @@ jobs:
             file: ./Dockerfile
           - image: ucng-beacon
             file: ./Dockerfile.beacon
+          - image: ucng-voice
+            file: ./Dockerfile.voice
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -65,13 +67,13 @@ jobs:
       # Kompiliert wird nativ (BUILDPLATFORM); QEMU braucht es nur für die
       # wenigen RUN-Befehle im arm64-Laufzeit-Image.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -79,7 +81,7 @@ jobs:
 
       - name: Image tags
         id: tags
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}
           tags: |
@@ -90,7 +92,7 @@ jobs:
             type=sha
 
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.file }}
@@ -129,16 +131,14 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Treiber holen
         shell: bash
         run: |
-          set -euo pipefail
-          go get modernc.org/sqlite
-          go get github.com/go-sql-driver/mysql
+          sh scripts/drivers.sh sqlite mysql
 
       - name: Bauen und packen
         id: pack
@@ -157,6 +157,7 @@ jobs:
           ldflags="-s -w -X main.version=$version -X main.sourceURL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}"
           go build -tags "$UCNG_TAGS" -trimpath -ldflags="$ldflags" -o "$out/ucng$ext" .
           go build -trimpath -ldflags="$ldflags" -o "$out/ucng-beacon$ext" ./cmd/ucng-beacon
+          go build -trimpath -ldflags="$ldflags" -o "$out/ucng-voice$ext" ./cmd/ucng-voice
           cp README.md "$out/"
           cp LICENSE "$out/LICENSE.txt"
           cp web/flags/LICENSE.txt "$out/LICENSE-flags.txt"
@@ -170,7 +171,7 @@ jobs:
           fi
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: ucng-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ steps.pack.outputs.file }}
@@ -186,7 +187,7 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: ucng-*
@@ -212,7 +213,7 @@ jobs:
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --title "UCNG $TAG" --generate-notes \
-              --notes "Container-Images: \`ghcr.io/${OWNER}/ucng:${TAG#v}\` und \`ghcr.io/${OWNER}/ucng-beacon:${TAG#v}\`"
+              --notes "Container-Images: \`ghcr.io/${OWNER}/ucng:${TAG#v}\`, \`ghcr.io/${OWNER}/ucng-beacon:${TAG#v}\` und \`ghcr.io/${OWNER}/ucng-voice:${TAG#v}\`"
           fi
           gh release upload "$TAG" --clobber dist/*
 
@@ -225,6 +226,7 @@ jobs:
             echo
             echo "- \`ghcr.io/${OWNER}/ucng\`"
             echo "- \`ghcr.io/${OWNER}/ucng-beacon\`"
+            echo "- \`ghcr.io/${OWNER}/ucng-voice\`"
             echo
             echo "| Datei | SHA256 |"
             echo "|-------|--------|"

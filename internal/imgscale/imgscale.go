@@ -34,8 +34,8 @@ var (
 const (
 	MaxImageSide   = 4000
 	maxGIFFrames   = 400
-	maxGIFWork     = 120_000_000 // Summe aus Breite × Höhe aller Einzelbilder
-	gifTransparent = 0           // Index der Transparenz in neu erzeugten Farbtabellen
+	maxGIFWork     = 60_000_000 // Summe aus Breite × Höhe aller Einzelbilder (begrenzt Speicher beim Decodieren)
+	gifTransparent = 0          // Index der Transparenz in neu erzeugten Farbtabellen
 )
 
 // ScaledImage ist das Ergebnis der Verarbeitung.
@@ -295,12 +295,9 @@ func nearest(pal color.Palette, r, g, b uint8) int {
 //
 // Animierte GIFs bleiben animiert; Standbilder werden zu PNG (Emotes) bzw. GIF (GIF-Bibliothek).
 func ProcessImage(data []byte, boxW, boxH int, emote, requireGIF bool) (ScaledImage, error) {
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	_, format, err := Check(data) // vor dem Decodieren: Maße, Bildanzahl, Aufwand
 	if err != nil {
-		return ScaledImage{}, ErrImageFormat
-	}
-	if cfg.Width > MaxImageSide || cfg.Height > MaxImageSide || cfg.Width < 1 || cfg.Height < 1 {
-		return ScaledImage{}, ErrImageTooBig
+		return ScaledImage{}, err
 	}
 	if requireGIF && format != "gif" {
 		return ScaledImage{}, ErrNotGIF

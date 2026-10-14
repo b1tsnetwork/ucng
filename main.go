@@ -22,7 +22,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"ucng/internal/clientip"
 	"ucng/internal/fedsig"
+	"ucng/internal/webstatic"
 )
 
 //go:embed web
@@ -45,6 +47,9 @@ type Config struct {
 	DataDir        string   // Ordner für alle Dateien; leer = nichts speichern
 	MaxRooms       int      // 0 = unbegrenzt
 	TrustProxy     bool
+	TrustedProxies string        // vertrauenswürdige Proxys (IPs/Netze, kommagetrennt; leer = Loopback und private Netze)
+	MaxStreams     int           // gleichzeitige Live-Verbindungen insgesamt
+	MaxStreamsIP   int           // gleichzeitige Live-Verbindungen je IP-Adresse
 	RateLimit      int           // Nachrichten pro Fenster und IP
 	RateWindow     time.Duration // Fensterlänge
 	NameTTL        time.Duration // ungenutzte Namen werden danach wieder frei (0 = nie)
@@ -60,6 +65,12 @@ type Config struct {
 	SourceURL      string // Adresse des Quellcodes dieser Fassung (AGPL), z. B. https://github.com/…/ucng
 	FedInsecure    bool   // Föderation auch über http:// (nur für Tests!)
 	BackupKeep     int    // Anzahl aufbewahrter Backups (0 = keine automatischen Backups)
+	// Sprachkanäle (voice.go)
+	VoiceOff             bool    // Sprachkanäle ganz aus
+	VoiceNoBuiltin       bool    // kein eingebauter Relay (nur Agenten, cmd/ucng-voice)
+	VoiceMaxParticipants int     // eingebauter Relay: Teilnehmer insgesamt
+	VoiceMaxMbit         float64 // eingebauter Relay: geschätzte ausgehende Bandbreite
+	VoiceAgentToken      string  // Schlüssel, mit dem sich Agenten anmelden (leer = keine Agenten)
 }
 
 func env(key, def string) string {
@@ -76,6 +87,13 @@ func envInt(key string, def int) int {
 	return def
 }
 
+func envFloat(key string, def float64) float64 {
+	if v, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil {
+		return v
+	}
+	return def
+}
+
 func loadConfig() Config {
 	var c Config
 	var origins string
@@ -87,7 +105,10 @@ func loadConfig() Config {
 	}
 	flag.StringVar(&c.DataDir, "data", env("DATA_DIR", defDir), `Ordner für Kanäle, Nachrichten, Einstellungen, Automod und Namen ("none" = nichts speichern)`)
 	flag.IntVar(&c.MaxRooms, "max-rooms", envInt("MAX_ROOMS", 0), "Maximale Anzahl Kanäle (0 = unbegrenzt)")
-	flag.BoolVar(&c.TrustProxy, "trust-proxy", env("TRUST_PROXY", "") == "1", "X-Forwarded-For für Client-IP verwenden")
+	flag.BoolVar(&c.TrustProxy, "trust-proxy", env("TRUST_PROXY", "") == "1", "X-Forwarded-For für Client-IP verwenden (nur von vertrauenswürdigen Proxys)")
+	flag.StringVar(&c.TrustedProxies, "trusted-proxies", env("TRUSTED_PROXIES", ""), "Vertrauenswürdige Proxys: IP-Adressen oder Netze, kommagetrennt (leer = Loopback und private Netze)")
+	flag.IntVar(&c.MaxStreams, "max-streams", envInt("MAX_STREAMS", 10000), "Gleichzeitige Live-Verbindungen insgesamt")
+	flag.IntVar(&c.MaxStreamsIP, "max-streams-ip", envInt("MAX_STREAMS_PER_IP", 50), "Gleichzeitige Live-Verbindungen je IP-Adresse")
 	flag.IntVar(&c.RateLimit, "rate", envInt("RATE_LIMIT", 10), "Nachrichten pro 10 Sekunden und IP")
 	nameDays := flag.Int("name-ttl", envInt("NAME_TTL_DAYS", 30), "Tage, nach denen ungenutzte Namen wieder frei werden (0 = nie)")
 	flag.IntVar(&c.MaxUsers, "max-users", envInt("MAX_USERS", 10000), "Maximale Anzahl reservierter Namen")
@@ -102,6 +123,11 @@ func loadConfig() Config {
 	flag.StringVar(&c.DBDSN, "db", env("DB_DSN", ""), "Datenbank-Verbindung (sqlite: Pfad, Standard <Datenordner>/ucng.db; mysql: user:pass@tcp(host:3306)/ucng)")
 	flag.StringVar(&c.PublicURL, "public-url", env("PUBLIC_URL", ""), "Öffentliche Adresse (z. B. https://chat.example.org) – für Links in E-Mails und die Föderation")
 	flag.BoolVar(&c.FedInsecure, "fed-insecure", env("FED_INSECURE", "") == "1", "Föderation auch ohne HTTPS erlauben (nur für Tests)")
+	flag.BoolVar(&c.VoiceOff, "voice-off", env("VOICE", "1") == "0", "Sprachkanäle ausschalten")
+	flag.BoolVar(&c.VoiceNoBuiltin, "voice-no-builtin", env("VOICE_BUILTIN", "1") == "0", "Keinen eingebauten Sprach-Relay starten (nur Agenten, cmd/ucng-voice)")
+	flag.IntVar(&c.VoiceMaxParticipants, "voice-max-participants", envInt("VOICE_MAX_PARTICIPANTS", 200), "Eingebauter Sprach-Relay: Teilnehmer insgesamt")
+	flag.Float64Var(&c.VoiceMaxMbit, "voice-max-mbit", envFloat("VOICE_MAX_MBIT", 50), "Eingebauter Sprach-Relay: höchstens so viel ausgehende Bandbreite (Mbit/s, geschätzt)")
+	flag.StringVar(&c.VoiceAgentToken, "voice-agent-token", env("VOICE_AGENT_TOKEN", ""), "Schlüssel für Sprach-Agenten (cmd/ucng-voice); leer = keine Agenten")
 	flag.Parse()
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
 	if c.Mode != ModeHosted {
@@ -176,7 +202,9 @@ func (rl *rateLimiter) cleanup() {
 
 type Server struct {
 	cfg         Config
-	templates   TemplateStore // geprüfte Vorlagen (templates.go)
+	ipr         *clientip.Resolver
+	streams     *streamLimiter // gleichzeitige Live-Verbindungen
+	templates   TemplateStore  // geprüfte Vorlagen (templates.go)
 	tplMu       sync.Mutex
 	hub         *Hub
 	users       *Users
@@ -185,18 +213,21 @@ type Server struct {
 	loginRL     *rateLimiter // Admin-Anmeldungen
 	botRL       *rateLimiter // Nachrichten je Bot
 	gifRL       *rateLimiter
-	reportRL    *rateLimiter // Meldungen je Person
-	uploadRL    *rateLimiter // Bilder je Person
-	dmRL        *rateLimiter // neue Direktnachrichten je Person // GIF-Suchen im Web je IP
-	acctRL      *rateLimiter // Anmeldung/Registrierung je IP (Modus „hosted“)
-	mailRL      *rateLimiter // E-Mails je IP
-	storageKind string       // files, sqlite, mysql (Anzeige im Admin-Bereich)
-	fedRL       *rateLimiter // Föderation: Eingang je Domain, Abfragen je Person
+	previewRL   *rateLimiter  // Vorschaubilder der GIF-Suche je IP
+	previews    *previewCache // … und ihr Zwischenspeicher
+	reportRL    *rateLimiter  // Meldungen je Person
+	uploadRL    *rateLimiter  // Bilder je Person
+	dmRL        *rateLimiter  // neue Direktnachrichten je Person // GIF-Suchen im Web je IP
+	acctRL      *rateLimiter  // Anmeldung/Registrierung je IP (Modus „hosted“)
+	mailRL      *rateLimiter  // E-Mails je IP
+	storageKind string        // files, sqlite, mysql (Anzeige im Admin-Bereich)
+	fedRL       *rateLimiter  // Föderation: Eingang je Domain, Abfragen je Person
 	fedOnce     sync.Once
 	fedHTTP     *http.Client
 	accounts    *Accounts
 	backups     *Backups
 	webhooks    *webhooks
+	voice       *voiceMgr     // Sprachkanäle (nil = aus)
 	done        chan struct{} // wird beim Herunterfahren geschlossen, beendet SSE-Streams
 }
 
@@ -207,13 +238,26 @@ func NewServer(cfg Config, hub *Hub, users *Users) *Server {
 	if cfg.Mode != ModeHosted {
 		cfg.Mode = ModeSimple
 	}
+	ipr, err := clientip.New(cfg.TrustProxy, cfg.TrustedProxies)
+	if err != nil {
+		log.Printf("%v – es gelten die Standard-Proxys (Loopback und private Netze)", err)
+		ipr, _ = clientip.New(cfg.TrustProxy, "")
+	}
+	if cfg.MaxStreams <= 0 {
+		cfg.MaxStreams = 10000
+	}
+	if cfg.MaxStreamsIP <= 0 {
+		cfg.MaxStreamsIP = 50
+	}
 	s := &Server{
-		cfg: cfg, hub: hub, users: users,
+		cfg: cfg, hub: hub, users: users, ipr: ipr, streams: newStreamLimiter(cfg.MaxStreams, cfg.MaxStreamsIP),
 		rl:          newRateLimiter(cfg.RateLimit, cfg.RateWindow),
 		claimRL:     newRateLimiter(cfg.ClaimLimit, time.Minute),
 		loginRL:     newRateLimiter(5, time.Minute),
 		botRL:       newRateLimiter(cfg.BotRate, 10*time.Second),
 		gifRL:       newRateLimiter(30, time.Minute),
+		previewRL:   newRateLimiter(240, time.Minute),
+		previews:    newPreviewCache(),
 		reportRL:    newRateLimiter(10, 10*time.Minute),
 		uploadRL:    newRateLimiter(15, 10*time.Minute),
 		dmRL:        newRateLimiter(10, time.Hour),
@@ -249,13 +293,37 @@ func NewServer(cfg Config, hub *Hub, users *Users) *Server {
 		s.backups = NewBackups(cfg.DataDir, cfg.BackupDir, cfg.BackupKeep)
 	}
 	s.webhooks = newWebhooks(hub, s.botSay)
+	if !cfg.VoiceOff {
+		if s.cfg.VoiceMaxParticipants <= 0 {
+			s.cfg.VoiceMaxParticipants = 200
+		}
+		if s.cfg.VoiceMaxMbit <= 0 {
+			s.cfg.VoiceMaxMbit = 50
+		}
+		s.voice = newVoiceMgr(s)
+	}
 	return s
 }
 
+// staticFiles: die eingebettete Oberfläche – einmal je Prozess eingelesen und gepackt.
+var staticFiles = sync.OnceValue(func() *webstatic.Handler {
+	static, _ := fs.Sub(webFiles, "web")
+	h, err := webstatic.New(static) // gzip, ETag, versionierte Adressen
+	if err != nil {
+		panic("Oberfläche: " + err.Error()) // eingebettet – nur bei kaputtem Build
+	}
+	h.CacheFor = func(name string) string {
+		if strings.HasPrefix(name, "embed/") { // Widget-Lader auf fremden Seiten: ohne Version, kurz cachen
+			return "public, max-age=300"
+		}
+		return ""
+	}
+	return h
+})
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	static, _ := fs.Sub(webFiles, "web")
-	fileServer := http.FileServer(http.FS(static))
+	fileServer := staticFiles()
 	mod, adm := s.requireMod, s.requireAdmin
 
 	// Chat (auch für das Widget auf fremden Webseiten)
@@ -331,6 +399,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/rooms/{room}/search", s.readGate(s.handleSearch))
 	mux.HandleFunc("GET /api/rooms/{room}/presence", s.readGate(s.handlePresence))
 	mux.HandleFunc("GET /api/rooms/{room}/events", s.readGate(s.handleEvents))
+	s.voiceRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
 	// Admin-Bereich (nur gleiche Origin, keine CORS-Freigabe).
@@ -348,7 +417,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/rooms/{room}/messages/{id}", mod(s.handleAdminDeleteMessage))
 	mux.HandleFunc("POST /api/admin/rooms/{room}/messages/{id}/restore", mod(s.handleAdminRestoreMessage))
 	mux.HandleFunc("POST /api/admin/rooms/{room}/messages/{id}/pin", mod(s.handleAdminPin))
-	mux.HandleFunc("GET /api/admin/rooms/{room}/events", tokenFromQuery(mod(s.handleAdminEvents)))
+	mux.HandleFunc("GET /api/admin/rooms/{room}/events", mod(s.handleAdminEvents)) // Token nur als Kopfzeile, nie in der Adresse
 	mux.HandleFunc("GET /api/admin/rooms/{room}/pins", mod(func(w http.ResponseWriter, r *http.Request) {
 		list, err := s.hub.PinnedAll(NormRoom(r.PathValue("room")))
 		if err != nil {
@@ -456,7 +525,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Frame-Options", "DENY")
-		http.ServeFileFS(w, r, static, "admin.html")
+		fileServer.Serve(w, r, "admin.html")
 	})
 	mux.HandleFunc("GET /admin.html", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusMovedPermanently)
@@ -520,26 +589,32 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 
 func (s *Server) withHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if strings.HasPrefix(r.URL.Path, "/embed/") {
-			w.Header().Set("Cache-Control", "public, max-age=300")
+		hd := w.Header()
+		hd.Set("X-Content-Type-Options", "nosniff")
+		hd.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		mic := "()"
+		if s.voice != nil {
+			mic = "(self)" // Sprachkanäle
+		}
+		hd.Set("Permissions-Policy", "camera=(), microphone="+mic+", geolocation=(), payment=(), usb=()")
+		// Content Security Policy: nur eigene Skripte (keine eingebetteten), damit eine
+		// eingeschleuste Zeichenkette nie als Code läuft. Bilder auch von https (GIF-Quellen).
+		// Die Beispielseite /demo.html enthält absichtlich Inline-Code und ist ausgenommen.
+		if r.URL.Path != "/demo.html" {
+			hd.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; connect-src 'self' "+s.voiceConnectSrc(r)+"; "+
+				"frame-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'")
+		}
+		if strings.HasPrefix(s.cfg.PublicURL, "https://") {
+			hd.Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-func (s *Server) clientIP(r *http.Request) string {
-	if s.cfg.TrustProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			return strings.TrimSpace(strings.Split(xff, ",")[0])
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// clientIP: Adresse der anfragenden Person (Weiterleitungs-Kopfzeilen nur von vertrauenswürdigen
+// Proxys, siehe internal/clientip).
+func (s *Server) clientIP(r *http.Request) string { return s.ipr.IP(r) }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	v = translatePayload(w, v)
@@ -560,7 +635,7 @@ func statusFor(err error) int {
 		return http.StatusForbidden
 	case errors.As(err, &sm), errors.Is(err, ErrRepeat), errors.Is(err, errBotRate):
 		return http.StatusTooManyRequests
-	case errors.Is(err, ErrTooMany), errors.Is(err, ErrTooManyUsers):
+	case errors.Is(err, ErrTooMany), errors.Is(err, ErrTooManyUsers), errors.Is(err, ErrBusy):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, ErrMediaTooLarge):
 		return http.StatusRequestEntityTooLarge
@@ -650,7 +725,9 @@ func main() {
 		Addr:              cfg.Addr,
 		Handler:           srv.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       2 * time.Minute, // ganze Anfrage inkl. Upload (langsame Clients halten sonst ewig)
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -687,6 +764,7 @@ func main() {
 			srv.loginRL.cleanup()
 			srv.botRL.cleanup()
 			srv.gifRL.cleanup()
+			srv.previewRL.cleanup()
 			srv.reportRL.cleanup()
 			srv.uploadRL.cleanup()
 			srv.dmRL.cleanup()
@@ -730,6 +808,9 @@ func main() {
 	<-ctx.Done()
 	log.Println("Fahre herunter …")
 	close(srv.done)
+	if srv.voice != nil {
+		srv.voice.Close()
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	httpSrv.Shutdown(shutdownCtx)

@@ -302,12 +302,24 @@ func cleanTags(tags []string) []string {
 	return out
 }
 
+// imgWork begrenzt gleichzeitige Bildverarbeitung (Speicher und CPU).
+var imgWork = make(chan struct{}, 2)
+
+func processLimited(data []byte, w, h int) (imgscale.ScaledImage, error) {
+	if _, _, err := imgscale.Check(data); err != nil { // vor dem Warten und Decodieren
+		return imgscale.ScaledImage{}, err
+	}
+	imgWork <- struct{}{}
+	defer func() { <-imgWork }()
+	return imgscale.ProcessImage(data, w, h, false, true)
+}
+
 // addGIF skaliert ein GIF und legt es an.
 func (s *Server) addGIF(data []byte, title string, tags, colls []string, source string) (GIF, error) {
 	if len(data) > maxGIFUpload {
 		return GIF{}, errors.New("Die Datei ist zu groß (höchstens 20 MB)")
 	}
-	img, err := imgscale.ProcessImage(data, s.cfg.GifBox, s.cfg.GifBox, false, true)
+	img, err := processLimited(data, s.cfg.GifBox, s.cfg.GifBox)
 	if err != nil {
 		return GIF{}, err
 	}
@@ -666,7 +678,7 @@ func (s *Server) makePreview(id string, w, h int, scaled []byte) string {
 	if w <= previewBox && h <= previewBox {
 		return ""
 	}
-	img, err := imgscale.ProcessImage(scaled, previewBox, previewBox, false, true)
+	img, err := processLimited(scaled, previewBox, previewBox)
 	if err != nil {
 		return ""
 	}

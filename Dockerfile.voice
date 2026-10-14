@@ -1,0 +1,18 @@
+# Sprach-Relay (zusätzliche Server für Sprachkanäle):  docker build -f Dockerfile.voice -t ucng-voice .
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+ARG VERSION=dev
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+      go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /ucng-voice ./cmd/ucng-voice
+
+FROM alpine:3.24
+RUN apk add --no-cache ca-certificates && adduser -D -H voice
+USER voice
+COPY --from=build /ucng-voice /usr/local/bin/ucng-voice
+COPY --from=build /src/LICENSE /usr/share/licenses/ucng-voice/
+ENV ADDR=:8090
+EXPOSE 8090
+ENTRYPOINT ["ucng-voice"]

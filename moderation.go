@@ -150,6 +150,13 @@ func (m *Moderation) IPHash(ip string) string {
 }
 
 // PresenceSig signiert eine Nutzer-ID für die Online-Liste (siehe /api/session).
+// MediaSig signiert die Adresse eines Bildes aus einem privaten Kanal (gültig bis exp).
+func (m *Moderation) MediaSig(file string, exp int64) string {
+	mac := hmac.New(sha256.New, m.ipKey)
+	fmt.Fprintf(mac, "media:%s:%d", file, exp)
+	return hex.EncodeToString(mac.Sum(nil))[:32]
+}
+
 func (m *Moderation) PresenceSig(userID string) string {
 	mac := hmac.New(sha256.New, m.ipKey)
 	mac.Write([]byte("presence:" + userID))

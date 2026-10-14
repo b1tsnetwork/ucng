@@ -51,6 +51,8 @@
         </div>
       </nav>
 
+      <section class="voice-bar" id="voiceBar" hidden aria-label="Sprachverbindung" aria-live="polite" data-i18n-aria-label="voice.bar"></section>
+
       <button class="me" id="profileBtn" type="button" title="Profil: Namen ändern, Benachrichtigungen, exportieren" data-i18n-title="app.profil_namen_aendern_benachrichtigungen">
         <span class="avatar" id="meAvatar"></span>
         <span class="me-text">
@@ -80,6 +82,10 @@
         </div>
         <button class="icon-btn" id="dmMenuBtn" type="button" hidden aria-haspopup="menu" aria-label="Unterhaltung: Optionen" title="Blockieren, Unterhaltung löschen" data-i18n-aria-label="app.unterhaltung_optionen" data-i18n-title="app.blockieren_unterhaltung_loeschen">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1.6" fill="currentColor"/><circle cx="10" cy="10" r="1.6" fill="currentColor"/><circle cx="15" cy="10" r="1.6" fill="currentColor"/></svg>
+        </button>
+        <button class="voice-head-btn" id="voiceHeadBtn" type="button" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 13v-3a6.5 6.5 0 0 1 13 0v3" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="2.5" y="11.5" width="4" height="5.5" rx="1.6" fill="currentColor"/><rect x="13.5" y="11.5" width="4" height="5.5" rx="1.6" fill="currentColor"/></svg>
+          <span data-i18n="voice.join">Beitreten</span>
         </button>
         <button class="icon-btn" id="searchBtn" type="button" aria-label="Suchen" title="Im Kanal suchen (Strg+K)" data-i18n-aria-label="app.suchen" data-i18n-title="app.im_kanal_suchen_strg_k">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m13.2 13.2 3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -402,10 +408,38 @@
     </form>
   </dialog>
 
+  <!-- Sprachkanäle: Einstellungen -->
+  <dialog id="voiceDialog" class="voice-dialog">
+    <form method="dialog">
+      <h2 data-i18n="voice.settings">Spracheinstellungen</h2>
+      <label class="voice-field"><span data-i18n="voice.input">Mikrofon</span><select id="voiceInput"></select></label>
+      <label class="voice-field" id="voiceOutputRow"><span data-i18n="voice.output">Ausgabe</span><select id="voiceOutput"></select></label>
+      <div class="voice-meter" id="voiceMeter" aria-hidden="true"><span></span></div>
+      <div class="seg wide voice-mode" role="radiogroup" aria-label="Sprechen" data-i18n-aria-label="voice.mode">
+        <label><input type="radio" name="voiceMode" id="voiceModeVad"> <span data-i18n="voice.mode_vad">Sprachaktivierung</span></label>
+        <label><input type="radio" name="voiceMode" id="voiceModePtt"> <span data-i18n="voice.mode_ptt">Push-to-Talk</span></label>
+      </div>
+      <label class="voice-field" id="voiceVadRow"><span><span data-i18n="voice.sensitivity">Empfindlichkeit</span> <output id="voiceSensVal"></output></span>
+        <input type="range" id="voiceSens" min="-80" max="-15" step="1">
+        <small data-i18n="voice.sensitivity_hint">Gesendet wird, sobald der Pegel die Marke überschreitet (grün).</small>
+      </label>
+      <div class="voice-field" id="voiceKeyRow"><span data-i18n="voice.ptt_key">Taste</span>
+        <div class="voice-key"><kbd id="voiceKey">F9</kbd> <button type="button" class="btn-quiet" id="voiceKeyBtn" data-i18n="voice.change_key">Ändern</button></div>
+        <small data-i18n="voice.ptt_hint">Gedrückt halten zum Sprechen – im Fenster des Chats. Unten in der Seitenleiste gibt es dafür auch einen Knopf.</small>
+      </div>
+      <label class="check"><input type="checkbox" id="voiceNS"> <span data-i18n="voice.noise">Rauschunterdrückung</span></label>
+      <p class="hint" data-i18n="voice.headphones_hint">Tipp: Mit Kopfhörern gibt es kein Echo. Die Lautstärke einzelner Personen stellst du mit einem Klick auf ihren Namen ein.</p>
+      <div class="actions">
+        <button type="button" class="btn-quiet" id="voiceResetVol" data-i18n="voice.reset_volumes">Lautstärken zurücksetzen</button>
+        <button type="submit" class="btn-primary" data-i18n="voice.done">Fertig</button>
+      </div>
+    </form>
+  </dialog>
   <script src="/api/i18n/boot.js?scope=app"></script>
   <script src="/i18n.js"></script>
   <script src="/embed/format.js"></script>
   <script src="/account.js"></script>
+  <script src="/voice.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

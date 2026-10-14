@@ -1,6 +1,10 @@
 module ucng
 
+// Mindestversion der Sprache; gebaut wird mit einer unterstützten Go-Version (toolchain).
+// Go unterstützt nur die beiden neuesten Hauptversionen mit Sicherheitsupdates.
 go 1.27
+
+toolchain go1.27.2
 
 require (
 	github.com/go-sql-driver/mysql v1.10.1

@@ -78,6 +78,7 @@ type tplRoom struct {
 	ReadRoles   []string     `json:"readRoles,omitempty"` // Rollen-IDs der Vorlage (siehe roles)
 	WriteRoles  []string     `json:"writeRoles,omitempty"`
 	Automod     *RoomAutomod `json:"automod,omitempty"`
+	Voice       *VoiceConfig `json:"voice,omitempty"` // Sprachkanal (stageRoles = Rollen-IDs der Vorlage)
 }
 
 type tplChannels struct {
@@ -183,7 +184,7 @@ func (s *Server) exportTemplate(w io.Writer, parts []string) error {
 			}
 			for _, ri := range h.Rooms() {
 				tr := tplRoom{Name: ri.Name, Description: ri.Description, SlowMode: ri.SlowMode, Links: ri.Links,
-					BotSlowMode: ri.BotSlowMode, BotLinks: ri.BotLinks, ReadRoles: ri.ReadRoles, WriteRoles: ri.WriteRoles}
+					BotSlowMode: ri.BotSlowMode, BotLinks: ri.BotLinks, ReadRoles: ri.ReadRoles, WriteRoles: ri.WriteRoles, Voice: ri.Voice}
 				if am, e := h.RoomAutomodConfig(ri.Name); e == nil && (am.Mode != AutomodGlobal || len(am.Patterns) > 0) {
 					tr.Automod = &am
 				}
@@ -723,6 +724,11 @@ func (s *Server) tplChannels(raw []byte, replace bool, roleMap map[string]string
 		name := NormRoom(tr.Name)
 		in := RoomInput{Name: &name, Description: tr.Description, SlowMode: tr.SlowMode, Links: tr.Links,
 			BotSlowMode: tr.BotSlowMode, BotLinks: tr.BotLinks, ReadRoles: mapRoles(tr.ReadRoles), WriteRoles: mapRoles(tr.WriteRoles)}
+		if tr.Voice != nil {
+			v := *tr.Voice
+			v.StageRoles = mapRoles(v.StageRoles)
+			in.Voice = &v
+		}
 		if in.Links == "" {
 			in.Links = LinksAll
 		}

@@ -397,7 +397,11 @@
 
   async function loadRooms() {
     try {
-      [rooms, layout] = await Promise.all([api("GET", "/api/admin/rooms"), api("GET", "/api/admin/layout")]);
+      let vs;
+      [rooms, layout, vs] = await Promise.all([api("GET", "/api/admin/rooms"), api("GET", "/api/admin/layout"),
+        api("GET", "/api/admin/voice").catch(() => ({ enabled: false }))]);
+      voiceAvailable = !!vs.enabled;
+      voicePeers = vs.rooms || {};
     } catch { return; }
     if (settings.startRoom && !rooms.some((r) => r.name === settings.startRoom)) { // umbenannt oder gelöscht
       try { settings.startRoom = (await api("GET", "/api/admin/settings")).startRoom || ""; } catch { /* egal */ }
@@ -454,6 +458,7 @@
     const acc = roomAccessLabel(r);
     if (acc) stats.append(el("span", "rule access", acc));
     if (r.botLinks === "none") stats.append(el("span", "rule", _t("admin.bots_ohne_links")));
+    if (r.voice) stats.append(el("span", "rule voice", _t(r.voice.stage ? "admin.voice_badge_stage" : "admin.voice_badge", { n: (voicePeers[r.name] || 0) })));
     if (r.automod && r.automod !== "global") stats.append(el("span", "rule", AM_MODES[r.automod]));
     const actions = el("div", "room-actions");
     const btn = (html, label, fn, cls, disabled) => {
@@ -580,12 +585,24 @@
   }
 
   let editing = null; // null = neuer Kanal
+  let voiceAvailable = false; // Sprachkanäle auf diesem Server
+  let voicePeers = {}; // Kanal → Teilnehmer gerade
 
   async function openRoomDialog(r) {
     editing = r || null;
     if (!roleCfg.roles.length) await loadRolesAdmin();
     fillRolePicks("roomReadRoles", r ? r.readRoles || [] : []);
     fillRolePicks("roomWriteRoles", r ? r.writeRoles || [] : []);
+    const v = r && r.voice;
+    $("roomVoiceOn").checked = !!v;
+    $("roomVoicePreset").value = v ? v.preset : "standard";
+    $("roomVoiceGuests").value = v ? v.guests : "speak";
+    $("roomVoicePeers").value = v ? v.maxPeers : 25;
+    $("roomVoiceSpeakers").value = v ? v.maxSpeakers : 4;
+    $("roomVoiceStage").checked = !!(v && v.stage);
+    fillRolePicks("roomVoiceStageRoles", v ? v.stageRoles || [] : [], true);
+    $("roomVoiceSet").hidden = !voiceAvailable;
+    syncVoiceFields();
     $("roomDialogTitle").textContent = r ? _t("admin.x_edit", { name: "#" + r.name }) : _t("admin.kanal_anlegen");
     $("roomSubmit").textContent = r ? _t("admin.aenderungen_speichern") : _t("admin.kanal_anlegen");
     $("roomName").value = r ? r.name : "";
@@ -609,6 +626,21 @@
     $("roomName").focus();
   }
   $("newRoomBtn").addEventListener("click", () => openRoomDialog(null));
+
+  // Sprachkanal: Felder ein-/ausblenden und Bandbreite schätzen
+  const VOICE_KBPS = { sparsam: 16, standard: 24, hoch: 40, musik: 96 };
+  function syncVoiceFields() {
+    const on = $("roomVoiceOn").checked;
+    $("roomVoiceOpts").hidden = !on;
+    $("roomVoiceStageRow").hidden = !$("roomVoiceStage").checked;
+    const kb = VOICE_KBPS[$("roomVoicePreset").value] || 24;
+    const sp = Math.max(1, Math.min(16, parseInt($("roomVoiceSpeakers").value, 10) || 4));
+    const peers = Math.max(2, parseInt($("roomVoicePeers").value, 10) || 25);
+    const per = 50 * 8 * (72 + sp * (6 + kb * 1000 / 400)) / 1000; // wie voicerelay.EstimateKbps
+    $("roomVoiceEstimate").textContent = _t("admin.voice_estimate", { per: Math.round(per), total: (Math.round(per * peers / 100) / 10).toLocaleString(GoChatI18n.locale), peers });
+  }
+  ["roomVoiceOn", "roomVoicePreset", "roomVoicePeers", "roomVoiceSpeakers", "roomVoiceStage"].forEach((id) => $(id).addEventListener("input", syncVoiceFields));
+  ["roomVoiceOn", "roomVoiceStage"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
   $("roomName").addEventListener("input", () => {
     $("renameWarn").hidden = !editing || $("roomName").value.trim().toLowerCase() === editing.name;
   });
@@ -620,6 +652,13 @@
       slowMode: parseInt($("roomSlow").value, 10), links: $("roomLinks").value,
       botSlowMode: parseInt($("roomBotSlow").value, 10), botLinks: $("roomBotLinks").value,
       readRoles: pickedRoles("roomReadRoles"), writeRoles: pickedRoles("roomWriteRoles") };
+    if (voiceAvailable) {
+      body.voice = $("roomVoiceOn").checked ? {
+        preset: $("roomVoicePreset").value, guests: $("roomVoiceGuests").value,
+        maxPeers: parseInt($("roomVoicePeers").value, 10) || 25, maxSpeakers: parseInt($("roomVoiceSpeakers").value, 10) || 4,
+        stage: $("roomVoiceStage").checked, stageRoles: pickedRoles("roomVoiceStageRoles"),
+      } : null;
+    }
     try {
       if (editing) await api("PATCH", "/api/admin/rooms/" + encodeURIComponent(editing.name), body);
       else await api("POST", "/api/admin/rooms", body);
@@ -673,6 +712,52 @@
 
   let modES = null;
   let modRoom = "";
+
+  // Live-Stream per fetch mit Authorization-Kopfzeile – das Token steht so nie in der Adresse
+  // (EventSource kann keine Kopfzeilen schicken; Adressen landen in Proxy- und Server-Logs).
+  // Liefert ein Objekt mit close(), onmessage({data}) und onerror() wie EventSource.
+  function authStream(url) {
+    const s = { onmessage: null, onerror: null, closed: false, ctl: null };
+    s.close = () => { s.closed = true; if (s.ctl) s.ctl.abort(); };
+    const run = async () => {
+      let wait = 3000;
+      while (!s.closed) {
+        s.ctl = new AbortController();
+        try {
+          const res = await fetch(url, { headers: { Authorization: "Bearer " + token, Accept: "text/event-stream" }, signal: s.ctl.signal, cache: "no-store" });
+          if (res.status === 401) { s.closed = true; showLogin(); return; }
+          if (!res.ok || !res.body) {
+            if (res.status === 404) { s.closed = true; if (s.onerror) s.onerror(); return; }
+            throw new Error(String(res.status));
+          }
+          wait = 3000;
+          const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+          let buf = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += value;
+            let i;
+            while ((i = buf.indexOf("\n\n")) >= 0) {
+              const block = buf.slice(0, i);
+              buf = buf.slice(i + 2);
+              const data = block.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).replace(/^ /, "")).join("\n");
+              if (data && s.onmessage && !s.closed) s.onmessage({ data });
+            }
+          }
+        } catch (err) {
+          if (s.closed) return;
+          if (err && err.message === "429") wait = 15000 + Math.random() * 15000;
+        }
+        if (s.closed) return;
+        if (s.onerror) s.onerror();
+        await new Promise((r) => setTimeout(r, wait));
+        wait = Math.min(wait * 2, 30000);
+      }
+    };
+    run();
+    return s;
+  }
 
   function stopModeration() {
     if (modES) { modES.close(); modES = null; }
@@ -885,7 +970,7 @@
     modRoom = room;
     $("modStatus").textContent = _t("admin.verbinde");
     const list = $("modList");
-    modES = new EventSource(`/api/admin/rooms/${encodeURIComponent(room)}/events?t=${encodeURIComponent(token)}`);
+    modES = authStream(`/api/admin/rooms/${encodeURIComponent(room)}/events`);
     modES.onmessage = (e) => {
       const ev = JSON.parse(e.data);
       if (ev.type === "pins") { modPins[room] = new Set((ev.messages || []).map((m) => m.id)); return; }
@@ -1383,6 +1468,7 @@
 
   async function loadStats() {
     try { stats = await api("GET", "/api/admin/stats?days=30"); } catch (err) { toast(err.message, true); return; }
+    try { stats.voice = await api("GET", "/api/admin/voice"); } catch { stats.voice = { enabled: false }; }
     renderStats();
   }
 
@@ -1404,6 +1490,7 @@
       kpi(_t("admin.aktive_sperren"), stats.sanctions, _t("admin.stumm_oder_ausgeschlossen"), "#nutzer"),
       kpi(_t("admin.reservierte_namen"), stats.names, _t("admin.nachrichten_gespeichert", { n: st.messages })),
     );
+    renderVoiceStats(stats.voice);
     renderChart();
     const max = Math.max(1, ...st.topRooms.map((r) => r.messages));
     $("topRooms").replaceChildren(...(st.topRooms.length ? st.topRooms.map((r) => {
@@ -1413,6 +1500,29 @@
       li.append(el("span", "name", "#" + r.room), bar, el("span", "num", numFmt.format(r.messages)));
       return li;
     }) : [el("li", "empty-row", _t("admin.in_den_letzten_30_tagen_wurde_nichts"))]));
+  }
+
+  // Sprach-Server: eingebauter Relay und Agenten
+  function renderVoiceStats(v) {
+    $("voicePanel").hidden = !v || !v.enabled;
+    if (!v || !v.enabled) return;
+    let total = 0;
+    for (const r of v.relays) total += r.stats.participants;
+    $("voiceSummary").textContent = _t("admin.voice_kpi_sub", { n: total, rooms: Object.keys(v.rooms || {}).length, relays: v.relays.length });
+    const mb = (x) => (Math.round(x * 10) / 10).toLocaleString(GoChatI18n.locale);
+    $("voiceRelays").replaceChildren(...(v.relays.length ? v.relays.map((r) => {
+      const li = el("li", r.healthy ? "" : "down");
+      const name = el("span", "name", r.builtin ? _t("admin.voice_builtin") : r.id);
+      if (r.url) name.title = r.url;
+      const load = Math.max(r.stats.participants / Math.max(1, r.stats.max), r.stats.estimateMbit / Math.max(0.1, r.stats.maxMbit));
+      const bar = el("span", "bar");
+      bar.style.setProperty("--w", Math.min(100, load * 100) + "%");
+      const num = el("span", "num", _t("admin.voice_relay_load", { n: r.stats.participants, max: r.stats.max, mbit: mb(r.stats.mbit), est: mb(r.stats.estimateMbit), maxMbit: mb(r.stats.maxMbit) }));
+      li.append(name, bar, num);
+      if (!r.healthy) li.append(el("span", "rule", _t("admin.voice_relay_down")));
+      return li;
+    }) : [el("li", "empty-row", _t("admin.voice_no_relay"))]));
+    $("voiceRelayHint").textContent = v.agents ? _t("admin.voice_agents_on") : _t("admin.voice_agents_off");
   }
 
   const METRICS = {
@@ -3281,10 +3391,10 @@ ${previewSnippet()}
 
   // ---------- Rollen-Auswahl an Kanälen ----------
 
-  function fillRolePicks(id, selected) {
+  function fillRolePicks(id, selected, noTeam) {
     const box = $(id);
     const sel = new Set(selected);
-    const items = [{ id: "team", name: _t("admin.nur_team_2"), color: "#16a34a" }].concat(roleCfg.roles);
+    const items = (noTeam ? [] : [{ id: "team", name: _t("admin.nur_team_2"), color: "#16a34a" }]).concat(roleCfg.roles);
     box.replaceChildren(...items.map((r) => {
       const b = el("button", "role-toggle", r.name);
       b.type = "button";
@@ -3296,7 +3406,8 @@ ${previewSnippet()}
         b.setAttribute("aria-pressed", String(on));
         // "Nur Team" schließt die anderen aus und umgekehrt
         if (on && r.id === "team") box.querySelectorAll(".role-toggle").forEach((x) => { if (x !== b) x.setAttribute("aria-pressed", "false"); });
-        if (on && r.id !== "team") box.querySelector('[data-id="team"]').setAttribute("aria-pressed", "false");
+        const team = box.querySelector('[data-id="team"]');
+        if (on && r.id !== "team" && team) team.setAttribute("aria-pressed", "false");
       });
       return b;
     }));

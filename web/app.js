@@ -447,8 +447,22 @@
   let loadingOlder = false;
   let readMark = 0; // beim Öffnen des Kanals zuletzt gelesene Nachricht (für „Neu“-Trenner)
 
+  // Lange Sitzungen: höchstens so viele Nachrichten im Speicher und im DOM. Wer unten mitliest,
+  // braucht die ältesten nicht – sie lassen sich über „Ältere laden“ jederzeit zurückholen.
+  const MAX_LOADED = 500, TRIM_TO = 350;
+  function trimLoaded() {
+    if (loaded.length <= MAX_LOADED || loadingOlder || !atBottom()) return;
+    loaded = loaded.slice(loaded.length - TRIM_TO);
+    hasMore = true;
+    renderAll();
+    list.scrollTop = list.scrollHeight;
+  }
+
   function addMessage(m, forceScroll, live) {
-    if (live) loaded.push(m);
+    if (live) {
+      loaded.push(m);
+      if (loaded.length > MAX_LOADED && !m.thread) { trimLoaded(); if (!loaded.includes(m) || list.querySelector(`.msg[data-id="${m.id}"]`)) return; }
+    }
     if (m.thread) return; // Antworten im Thread erscheinen nur im Thread
     const stick = forceScroll || atBottom();
     list.querySelector(".empty")?.remove();
@@ -832,8 +846,9 @@
           if (thread) reloadThread();
           break;
         case "pins": pinned = ev.messages || []; renderPins(); renderAll(); break;
+        case "voice": if (window.UCNGVoice) UCNGVoice.onEvent(ev); break;
         case "profiles": loadProfiles().then(() => { renderAll(); renderPresence(); if (thread) renderThread(); }); break;
-        case "dm": if (ev.user === me.id) loadDMs(); break;
+        case "dm": if (ev.user === me.id) loadDMs().then(refreshUnread); break;
         case "layout": loadGroups().then(loadRooms); break;
         case "message": onLiveMessage(ev.message); break;
         case "update": updateMessage(ev.message); break;
@@ -853,9 +868,14 @@
           Promise.all([loadRoles(), restoreSession()]).then(() => { loadRooms().then(updateComposer); renderAll(); if (!$("presencePop").hidden) fillPresencePop(); });
           break;
         case "user_renamed":
-        case "user_updated":
-          if (ev.user === me.id) restoreSession(); // z. B. Team-Abzeichen erhalten
-          connect(); return; // Verlauf mit neuen Namen/Abzeichen neu laden
+        case "user_updated": {
+          if (ev.user === me.id) { restoreSession(); connect(); return; } // z. B. Team-Abzeichen erhalten
+          // Verlauf mit neuen Namen/Abzeichen neu laden – verteilt, damit nicht alle gleichzeitig kommen
+          const at = room;
+          clearTimeout(connect.later);
+          connect.later = setTimeout(() => { if (room === at) connect(); }, Math.random() * 4000);
+          return;
+        }
         case "sanction":
           if (ev.user === me.id) restoreSession().then(() => { renderAll(); updateComposer(); });
           break;
@@ -882,6 +902,13 @@
         const next = firstRoom();
         if (next && next !== current) switchRoom(next);
         else noRoom();
+        return;
+      }
+      // Der Browser gibt auf, wenn der Server die Verbindung ablehnt (z. B. 429: zu viele
+      // Verbindungen) – dann selbst später neu verbinden, mit Zufallsanteil gegen Lastspitzen.
+      if (es && es.readyState === EventSource.CLOSED && room === current) {
+        const mine = es;
+        setTimeout(() => { if (es === mine && room === current) connect(); }, 10000 + Math.random() * 20000);
       }
     };
   }
@@ -1169,7 +1196,28 @@
       }
       li.append(ul);
     }
+    if (window.UCNGVoice && !opts.dup) UCNGVoice.decorateRoom(li, r);
     return li;
+  }
+
+  // Sprachkanal: Knopf „Beitreten“ in der Kopfzeile
+  function updateVoiceHead() {
+    const b = $("voiceHeadBtn");
+    if (!b) return;
+    const r = rooms.find((x) => x.name === room);
+    const on = !!(window.UCNGVoice && UCNGVoice.enabled && r && r.voice);
+    b.hidden = !on;
+    if (!on) return;
+    const here = UCNGVoice.room === room;
+    b.classList.toggle("on", here);
+    b.querySelector("span").textContent = here ? _t("voice.leave") : _t("voice.join");
+    b.title = here ? _t("voice.leave") : _t("voice.join_room", { room });
+  }
+
+  let voiceRender = 0;
+  function renderVoice() { // gebündelt: viele Ereignisse kurz hintereinander → einmal zeichnen
+    if (voiceRender) return;
+    voiceRender = requestAnimationFrame(() => { voiceRender = 0; renderRoomList(); });
   }
 
   function renderRoomList() {
@@ -1221,6 +1269,7 @@
     $("sortBtn").title = _t("app.sortierung") + SORT_LABEL[sortMode];
     $("sortBtn").setAttribute("aria-label", _t("app.sortierung") + SORT_LABEL[sortMode]);
     renderDMList();
+    updateVoiceHead();
   }
 
   $("sortBtn").addEventListener("click", () => {
@@ -1254,6 +1303,10 @@
       return a;
     }));
     $("legalLinks").hidden = !links.length;
+    if (window.UCNGVoice && "voice" in s && UCNGVoice.enabled !== !!s.voice) {
+      UCNGVoice.setEnabled(s.voice);
+      UCNGVoice.load();
+    }
   }
 
   // ---------- Eingabe: Senden, Antworten, Bearbeiten ----------
@@ -1915,6 +1968,7 @@
     try {
       const r = await api("/api/blocks", { method: "POST", body: JSON.stringify({ userId: id, block, clear }) });
       me.blocked = (r.blocked || []).map((x) => x.id);
+      if (window.UCNGVoice) UCNGVoice.refreshGains();
       blockedCache = r.blocked || [];
       renderBlockedList(true);
       toast(block ? _t("app.name_ist_blockiert", { name }) : _t("app.blockierung_von_name_aufgehoben", { name }));
@@ -2561,6 +2615,7 @@
   $("accountBtn").addEventListener("click", () => { $("profileDialog").close(); if (window.GoAccount) GoAccount.openSettings(); });
 
   async function signedOut() {
+    if (window.UCNGVoice) UCNGVoice.leave(true);
     token = ""; store.set("gochat:token", "");
     if (window.GoAccount) await GoAccount.forget();
     plainCache.clear();
@@ -2581,6 +2636,7 @@
       return;
     }
     if (!confirm(_t("app.wirklich_abmelden_der_name_wird", { name: me.name }))) return;
+    if (window.UCNGVoice) UCNGVoice.leave(true);
     await fetch("/api/session", { method: "DELETE", headers: { Authorization: "Bearer " + token } }).catch(() => {});
     token = ""; store.set("gochat:token", "");
     me = { id: "", name: "", team: false, viewer: "", sanction: null, roles: [], perms: {} };
@@ -2632,12 +2688,22 @@
     return !!(res && res.ok);
   }
 
+  if (window.UCNGVoice) {
+    UCNGVoice.init({ api, toast, h, iconBtn, avatar, me: () => me, token: () => token, isBlocked,
+      requireName: () => { if (me.name) return true; askName(); return false; },
+      switchRoom: (r) => { switchRoom(r); $("sidebar").classList.remove("open"); }, render: renderVoice });
+    $("voiceHeadBtn").addEventListener("click", () => {
+      if (UCNGVoice.room === room) UCNGVoice.leave(); else UCNGVoice.join(room);
+    });
+  }
+
   (async () => {
     const [st, , , hasName, admin] = await Promise.all([
       fetch("/api/settings").then((r) => r.json()).catch(() => null),
       loadRooms(),
       Promise.all([loadMedia(), loadRoles(), loadProfiles(), loadGroups()]),
-      restoreSession().then(async (ok) => { if (ok) { await loadDMs(); await loadRooms(); } return ok; }),
+      // Kanäle werden oben schon mit dem gespeicherten Token geladen – hier nur noch die DMs.
+      restoreSession().then(async (ok) => { if (ok) await loadDMs(); return ok; }),
       checkAdmin(),
     ]);
     isAdmin = admin;
@@ -2669,7 +2735,17 @@
     let reader = false;
     try { reader = hostedMode() && settings.hosted && settings.hosted.guests === "read" && sessionStorage.getItem("gochat:reader") === "1"; } catch { /* egal */ }
     if (!hasName && !accountFlow && !reader) askName();
-    setInterval(() => { loadRooms(); loadDMs(); }, 15000);
+    // Abgleich: Neue Direktnachrichten kommen als Ereignis über den Live-Stream; Kanalliste
+    // (Online-Zahlen, Ungelesenes in anderen Kanälen) alle 30 s, im Hintergrund-Tab seltener.
+    let lastSync = Date.now(), lastDMSync = Date.now();
+    setInterval(() => {
+      const now = Date.now();
+      if (now - lastSync >= (document.hidden ? 90000 : 30000)) { lastSync = now; loadRooms(); if (window.UCNGVoice) UCNGVoice.load(); }
+      if (now - lastDMSync >= 180000) { lastDMSync = now; loadDMs(); }
+    }, 5000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && Date.now() - lastSync > 10000) { lastSync = lastDMSync = Date.now(); loadRooms(); loadDMs(); }
+    });
     setInterval(() => { // Bearbeiten-Knopf nach 15 Minuten ausblenden
       for (const m of loaded) {
         if (isOwn(m) && !m.deleted && !canEdit(m)) {

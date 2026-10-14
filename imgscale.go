@@ -18,7 +18,11 @@ var (
 	ErrImageFormat = imgscale.ErrImageFormat
 	ErrImageTooBig = imgscale.ErrImageTooBig
 	ErrNotGIF      = imgscale.ErrNotGIF
+	ErrImageBroken = imgscale.ErrImageBroken
 )
+
+// checkImage prüft Format, Maße und (bei GIFs) Bildanzahl und Aufwand vor dem Decodieren.
+func checkImage(data []byte) (image.Config, string, error) { return imgscale.Check(data) }
 
 func ProcessImage(data []byte, boxW, boxH int, emote, requireGIF bool) (ScaledImage, error) {
 	return imgscale.ProcessImage(data, boxW, boxH, emote, requireGIF)

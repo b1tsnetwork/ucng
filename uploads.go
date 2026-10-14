@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"errors"
 	"image"
 	"image/gif"
@@ -90,12 +91,9 @@ func (ml *MediaLib) SetUploads(in UploadSettings) (UploadSettings, error) {
 
 // ProcessPhoto bringt ein Foto in einen Rahmen von box×box (nie vergrößert).
 func ProcessPhoto(data []byte, box int) (ScaledImage, error) {
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	_, format, err := checkImage(data) // vor dem Decodieren: Maße, Bildanzahl, Aufwand
 	if err != nil {
-		return ScaledImage{}, ErrImageFormat
-	}
-	if cfg.Width > maxImageSide || cfg.Height > maxImageSide || cfg.Width < 1 || cfg.Height < 1 {
-		return ScaledImage{}, ErrImageTooBig
+		return ScaledImage{}, err
 	}
 	if format == "gif" {
 		g, err := gif.DecodeAll(bytes.NewReader(data))
@@ -117,12 +115,8 @@ func ProcessPhoto(data []byte, box int) (ScaledImage, error) {
 
 // ProcessAvatar schneidet die Mitte quadratisch aus und skaliert auf size×size (Standbild).
 func ProcessAvatar(data []byte, size int) (ScaledImage, error) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return ScaledImage{}, ErrImageFormat
-	}
-	if cfg.Width > maxImageSide || cfg.Height > maxImageSide || cfg.Width < 1 || cfg.Height < 1 {
-		return ScaledImage{}, ErrImageTooBig
+	if _, _, err := checkImage(data); err != nil {
+		return ScaledImage{}, err
 	}
 	img, _, err := image.Decode(bytes.NewReader(data)) // bei GIFs das erste Bild
 	if err != nil {
@@ -242,14 +236,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ml := s.hub.Media()
-	ml.work <- struct{}{}
-	img, err := ProcessPhoto(data, ml.Uploads().Size)
-	<-ml.work
+	size := ml.Uploads().Size
+	img, err := ml.runImage(data, func() (ScaledImage, error) { return ProcessPhoto(data, size) })
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	file := randomHex(10) + "." + img.Ext
+	if s.hub.IsRestricted(room) { // private Kanäle und Direktnachrichten: nur signiert abrufbar
+		file = privateUploadPrefix + file
+	}
 	if err := writeFileAtomic(filepath.Join(ml.Dir(), "uploads", file), img.Data); err != nil {
 		fail(w, err)
 		return
@@ -303,4 +299,32 @@ func (s *Server) cleanupMedia() {
 	}
 	clean("uploads", refs)
 	clean("avatars", avatars)
+}
+
+// --- Bilder aus privaten Kanälen und Direktnachrichten ---
+//
+// Hochgeladene Bilder liegen unter zufälligen Namen. Stammen sie aus einem Kanal, den nicht
+// alle sehen (private Kanäle, Direktnachrichten), beginnt der Name mit "p_" und die Datei ist
+// nur mit einer signierten, befristeten Adresse abrufbar. Die Signatur wird bei jeder Ausgabe
+// der Nachricht neu erzeugt (gültig 1–2 Tage) – ein weitergegebener Link verfällt also.
+
+const privateUploadPrefix = "p_"
+
+// privateMediaSrc signiert die Adresse eines privaten Bildes (sonst unverändert).
+func (h *Hub) privateMediaSrc(src string) string {
+	file, ok := strings.CutPrefix(src, "/media/uploads/")
+	if !ok || !strings.HasPrefix(file, privateUploadPrefix) || strings.Contains(file, "?") {
+		return src
+	}
+	exp := (time.Now().Unix()/86400 + 2) * 86400
+	return src + "?exp=" + strconv.FormatInt(exp, 10) + "&sig=" + h.mod.MediaSig(file, exp)
+}
+
+// checkMediaSig prüft die Signatur eines privaten Bildes.
+func (h *Hub) checkMediaSig(file, expS, sig string) bool {
+	exp, err := strconv.ParseInt(expS, 10, 64)
+	if err != nil || exp < time.Now().Unix() || exp > time.Now().Unix()+3*86400 {
+		return false
+	}
+	return hmac.Equal([]byte(sig), []byte(h.mod.MediaSig(file, exp)))
 }

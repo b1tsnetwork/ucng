@@ -35,7 +35,7 @@ func newCatalog() *i18n.Catalog {
 
 // Bereiche der Oberfläche → Schlüssel-Präfixe (es wird nur geliefert, was die Seite braucht).
 var i18nScopes = map[string][]string{
-	"app":    {"app.", "acct.", "fmt.", "common."},
+	"app":    {"app.", "acct.", "fmt.", "common.", "voice."},
 	"admin":  {"admin.", "i18ned.", "fmt.", "common."},
 	"widget": {"widget.", "fmt.", "common."},
 }

@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# UCNG Sprach-Server (ucng-voice) – zusätzlicher Relay für Sprachkanäle
+#   1. Beim Chat-Server VOICE_AGENT_TOKEN setzen (deploy/chat/.env) und neu starten
+#   2. .env.example nach .env kopieren und ausfüllen (derselbe Schlüssel als AGENT_TOKEN)
+#   3. docker compose up -d
+#   4. Im Admin-Bereich unter Übersicht → Sprach-Server erscheint der Agent
+#
+# Der Port ist nur lokal erreichbar (127.0.0.1) – davor gehört ein Reverse-Proxy mit HTTPS,
+# der WebSockets an http://127.0.0.1:${VOICE_PORT:-8091}/ws weiterreicht (Upgrade-Kopfzeilen).
+#
+# Auf demselben Server wie der Chat (deploy/chat): Der Agent tritt dem Docker-Netz des Chats
+# bei – CHAT_URL=http://ucng:8080 und CONTROL_URL=http://ucng-voice:8090/control bleiben intern.
+# Auf einem eigenen Server: den Block „networks“ entfernen, CHAT_URL auf die öffentliche
+# https-Adresse des Chats setzen und CONTROL_URL auf eine Adresse, unter der der Chat-Server
+# diesen Agenten erreicht (am besten intern, sonst per https).
+
+name: ucng-voice
+
+services:
+  voice:
+    image: ghcr.io/b1tsnetwork/ucng-voice:${UCNG_VERSION:-latest}
+    container_name: ${AGENT_ID:-ucng-voice}
+    hostname: ${AGENT_ID:-ucng-voice}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${VOICE_PORT:-8091}:8090"
+    environment:
+      CHAT_URL: ${CHAT_URL:-http://ucng:8080}
+      AGENT_TOKEN: ${AGENT_TOKEN:?AGENT_TOKEN in .env setzen (= VOICE_AGENT_TOKEN des Chat-Servers)}
+      # Adresse für Browser, mit wss:// (der Agent hängt /ws an)
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL in .env setzen, z. B. wss://voice1.example.org}
+      CONTROL_URL: ${CONTROL_URL:-http://ucng-voice:8090/control}
+      AGENT_ID: ${AGENT_ID:-ucng-voice}
+      MAX_PARTICIPANTS: ${MAX_PARTICIPANTS:-200}
+      MAX_MBIT: ${MAX_MBIT:-50}
+      MAX_PER_IP: ${MAX_PER_IP:-5}
+      TRUST_PROXY: "1"
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+    networks:
+      - chat
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  chat:
+    external: true
+    name: ucng_default   # Netz des Chat-Projekts (deploy/chat, Projektname „ucng“)

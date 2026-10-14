@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Schreibt die optionalen Datenbank-Treiber (SQLite, MySQL) mit Version und Prüfsummen in
+# go.mod/go.sum fest und öffnet dafür einen Pull Request. Danach bauen Docker, CI und
+# Releases immer genau diese Versionen; Dependabot schlägt Updates vor.
+# Voraussetzung: Einstellungen → Actions → General → „Allow GitHub Actions to create and
+# approve pull requests“.
+name: Treiber festschreiben
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  pin:
+    name: Treiber festschreiben
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Treiber holen und prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          go get modernc.org/sqlite@latest github.com/go-sql-driver/mysql@latest
+          go mod tidy
+          CGO_ENABLED=0 go build -tags "sqlite mysql" -o /dev/null .
+          go test -tags "sqlite mysql" -count=1 -run 'SQL|Storage|Persist' .
+          git diff --stat
+
+      - name: Pull Request öffnen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- go.mod go.sum; then
+            echo "Nichts zu tun – die Treiber sind bereits auf dem neuesten Stand festgeschrieben."
+            exit 0
+          fi
+          branch="deps/treiber-$(date +%Y%m%d%H%M)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add go.mod go.sum
+          git commit -m "deps: Datenbank-Treiber festschreiben"
+          git push origin "$branch"
+          gh pr create --base "${{ github.event.repository.default_branch }}" --head "$branch" \
+            --title "deps: Datenbank-Treiber festschreiben" \
+            --body "SQLite- und MySQL-Treiber mit Version und Prüfsummen in go.mod/go.sum. Danach bauen Docker, CI und Releases reproduzierbar genau diese Versionen."

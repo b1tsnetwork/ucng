@@ -708,6 +708,7 @@
       updateNameUI();
     }
 
+    var reloadTimer = 0;
     function connect() {
       if (es || unavailable) return;
       es = new EventSource(server + "/api/rooms/" + encodeURIComponent(room) + "/events" + (viewer ? "?viewer=" + encodeURIComponent(viewer) : ""));
@@ -727,7 +728,9 @@
           renderAll();
           list.scrollTop = list.scrollHeight - fromBottom;
         } else if (ev.type === "user_renamed" || ev.type === "user_updated") {
-          disconnect(); connect(); // Verlauf mit den neuen Namen neu laden
+          // Verlauf mit den neuen Namen neu laden – zeitlich verteilt, damit nicht alle Widgets gleichzeitig kommen
+          clearTimeout(reloadTimer);
+          reloadTimer = setTimeout(function () { disconnect(); connect(); }, Math.random() * 4000);
           return;
         } else if (ev.type === "room_renamed") {
           room = ev.room; // eingebettete Widgets folgen der Umbenennung bis zum Neuladen
@@ -754,8 +757,11 @@
         status.textContent = _t("widget.verbindung_wird_wiederhergestellt");
         status.className = "gochat-status gochat-err";
         // Gibt es den Kanal überhaupt?
-        gfetch(server + "/api/rooms/" + encodeURIComponent(room) + "/messages").then(function (res) {
-          if (res.status === 404) setUnavailable();
+        var mine = es;
+        gfetch(server + "/api/rooms/" + encodeURIComponent(room) + "/messages?limit=1").then(function (res) {
+          if (res.status === 404) { setUnavailable(); return; }
+          // Abgelehnt (z. B. zu viele Verbindungen): der Browser versucht es nicht mehr selbst
+          if (mine === es && es.readyState === 2) setTimeout(function () { if (mine === es) { disconnect(); connect(); } }, 10000 + Math.random() * 20000);
         }, function () { /* Server offline – EventSource versucht es weiter */ });
       };
     }

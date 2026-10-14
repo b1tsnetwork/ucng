@@ -15,3 +15,5 @@ Nur mit Zustimmung des Projektinhabers (siehe `NOTICE`):
 - Name oder Logo in eigenen Produkt-, Firmen- oder Domainnamen verwenden.
 
 Abspaltungen (Forks) sind ausdrücklich erlaubt – bitte mit eigenem Namen und eigenem Logo.
+
+*Hinweis: Diese Regeln setzen voraus, dass der Name als Marke geschützt ist oder wird; ohne Eintragung gelten sie vor allem als erklärter Wille des Projekts.*

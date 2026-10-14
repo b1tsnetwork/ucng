@@ -59,9 +59,7 @@ func (s *Server) handleAvatarSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ml := s.hub.Media()
-	ml.work <- struct{}{}
-	img, err := ProcessAvatar(data, avatarSize)
-	<-ml.work
+	img, err := ml.runImage(data, func() (ScaledImage, error) { return ProcessAvatar(data, avatarSize) })
 	if err != nil {
 		fail(w, err)
 		return

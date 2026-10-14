@@ -25,6 +25,7 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL in .env setzen}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD in .env setzen}
       TRUST_PROXY: "1"
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       # Welche Instanzen sich eintragen dürfen
       HTTPS_ONLY: ${HTTPS_ONLY:-1}
       PUBLIC_ONLY: ${PUBLIC_ONLY:-1}

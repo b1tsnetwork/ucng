@@ -4,7 +4,9 @@
 package main
 
 import (
+	"image/color"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -140,5 +142,29 @@ func TestBlocksPersist(t *testing.T) {
 	}
 	if f := h2.DMFloor(room, a.ID); f == 0 {
 		t.Fatal("Löschstand nicht gespeichert")
+	}
+}
+
+// Bilder aus Direktnachrichten sind nur über signierte, befristete Adressen abrufbar.
+func TestPrivateUploadSigned(t *testing.T) {
+	ts, srv := testServerWith(t, nil)
+	st := srv.hub.Media().Uploads()
+	st.Mode = UploadsAll
+	srv.hub.Media().SetUploads(st)
+	a, b := claim(t, ts.URL, "Anna"), claim(t, ts.URL, "Ben")
+	bID := sess(t, ts.URL, b).ID
+	dm := decode[DMInfo](t, expect(t, post(t, ts.URL+"/api/dms", a, `{"userId":"`+bID+`"}`), 200, "DM"))
+	m := decode[Message](t, expect(t, upload(t, ts.URL+"/api/rooms/"+dm.Room+"/upload", a, nil, "x.png", testPNG(40, 30, color.RGBA{0, 0, 200, 255})), 201, "Bild"))
+	if m.Media == nil || !strings.Contains(m.Media.Src, "/media/uploads/p_") || !strings.Contains(m.Media.Src, "sig=") {
+		t.Fatalf("Adresse: %+v", m.Media)
+	}
+	plain, _, _ := strings.Cut(m.Media.Src, "?")
+	expect(t, do(t, "GET", ts.URL+plain, "", ""), 404, "ohne Signatur").Body.Close()
+	expect(t, do(t, "GET", ts.URL+m.Media.Src+"x", "", ""), 404, "falsche Signatur").Body.Close()
+	expect(t, do(t, "GET", ts.URL+m.Media.Src, "", ""), 200, "signiert").Body.Close()
+	// Öffentliche Kanäle: wie bisher dauerhaft öffentlich
+	pub := decode[Message](t, expect(t, upload(t, ts.URL+"/api/rooms/lobby/upload", a, nil, "y.png", testPNG(40, 30, color.RGBA{0, 200, 0, 255})), 201, "Lobby"))
+	if strings.Contains(pub.Media.Src, "p_") || strings.Contains(pub.Media.Src, "?") {
+		t.Fatalf("öffentlich: %s", pub.Media.Src)
 	}
 }

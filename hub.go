@@ -4,6 +4,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"log"
 	"regexp"
@@ -130,6 +131,7 @@ type Event struct {
 	ID          int64          `json:"id,omitempty"`
 	Users       []PresenceUser `json:"users,omitempty"`
 	Guests      int            `json:"guests,omitempty"`
+	Voice       []VoicePeer    `json:"voice,omitempty"` // bei "voice": Teilnehmer des Sprachkanals Room
 }
 
 // Viewer ist eine angemeldete Person, die einen Kanal geöffnet hat (für die Online-Liste).
@@ -183,6 +185,8 @@ type room struct {
 	history     []Message                // nach ID aufsteigend sortiert, ohne Längenbegrenzung
 	clients     map[chan Event]*Viewer
 	last        time.Time
+	presenceDue bool         // Online-Liste wird gleich verschickt (gebündelt)
+	voice       *VoiceConfig // Sprachkanal (nil = nur Text)
 }
 
 // find liefert die Position einer Nachricht (Binärsuche über die aufsteigenden IDs).
@@ -223,7 +227,7 @@ func (r *room) info() RoomInfo {
 		LastAt: r.last, Created: r.created, SlowMode: r.slowMode, Links: r.links,
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, Automod: r.amMode,
 		ReadRoles: append([]string{}, r.readRoles...), WriteRoles: append([]string{}, r.writeRoles...), Kind: r.kind,
-		Pins: len(r.pins), Group: r.group, Pos: r.pos,
+		Pins: len(r.pins), Group: r.group, Pos: r.pos, Voice: r.voice,
 	}
 	if n := len(r.history); n > 0 {
 		ri.LastID = r.history[n-1].ID
@@ -233,38 +237,40 @@ func (r *room) info() RoomInfo {
 
 // RoomInfo ist die öffentliche Übersicht eines Raums.
 type RoomInfo struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Online      int         `json:"online"`
-	Messages    int         `json:"messages"`
-	LastAt      time.Time   `json:"lastAt"`
-	LastID      int64       `json:"lastId"`
-	Created     time.Time   `json:"created"`
-	SlowMode    int         `json:"slowMode"`
-	Links       string      `json:"links"`
-	BotSlowMode int         `json:"botSlowMode"`
-	BotLinks    string      `json:"botLinks"`
-	Automod     string      `json:"automod"`    // Automod-Modus des Kanals
-	ReadRoles   []string    `json:"readRoles"`  // leer = alle
-	WriteRoles  []string    `json:"writeRoles"` // leer = alle, die lesen dürfen
-	Kind        string      `json:"kind,omitempty"`
-	Pins        int         `json:"pins"`
-	CanWrite    bool        `json:"canWrite"`          // nur in RoomsFor: darf die anfragende Person schreiben?
-	Group       string      `json:"group,omitempty"`   // Gruppe (siehe layout.go)
-	Pos         int         `json:"pos"`               // Position in der Liste
-	Threads     []ThreadRef `json:"threads,omitempty"` // nur in RoomsFor: aktive Threads
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Online      int          `json:"online"`
+	Messages    int          `json:"messages"`
+	LastAt      time.Time    `json:"lastAt"`
+	LastID      int64        `json:"lastId"`
+	Created     time.Time    `json:"created"`
+	SlowMode    int          `json:"slowMode"`
+	Links       string       `json:"links"`
+	BotSlowMode int          `json:"botSlowMode"`
+	BotLinks    string       `json:"botLinks"`
+	Automod     string       `json:"automod"`    // Automod-Modus des Kanals
+	ReadRoles   []string     `json:"readRoles"`  // leer = alle
+	WriteRoles  []string     `json:"writeRoles"` // leer = alle, die lesen dürfen
+	Kind        string       `json:"kind,omitempty"`
+	Pins        int          `json:"pins"`
+	CanWrite    bool         `json:"canWrite"`          // nur in RoomsFor: darf die anfragende Person schreiben?
+	Group       string       `json:"group,omitempty"`   // Gruppe (siehe layout.go)
+	Pos         int          `json:"pos"`               // Position in der Liste
+	Threads     []ThreadRef  `json:"threads,omitempty"` // nur in RoomsFor: aktive Threads
+	Voice       *VoiceConfig `json:"voice,omitempty"`   // Sprachkanal (nil = nur Text)
 }
 
 // RoomInput sind die im Admin-Bereich änderbaren Werte eines Kanals.
 type RoomInput struct {
-	Name        *string  `json:"name"`
-	Description string   `json:"description"`
-	SlowMode    int      `json:"slowMode"`
-	Links       string   `json:"links"`
-	BotSlowMode int      `json:"botSlowMode"`
-	BotLinks    string   `json:"botLinks"`
-	ReadRoles   []string `json:"readRoles"`
-	WriteRoles  []string `json:"writeRoles"`
+	Name        *string      `json:"name"`
+	Description string       `json:"description"`
+	SlowMode    int          `json:"slowMode"`
+	Links       string       `json:"links"`
+	BotSlowMode int          `json:"botSlowMode"`
+	BotLinks    string       `json:"botLinks"`
+	ReadRoles   []string     `json:"readRoles"`
+	WriteRoles  []string     `json:"writeRoles"`
+	Voice       *VoiceConfig `json:"voice,omitempty"` // Sprachkanal (nil = nur Text)
 }
 
 // Seitengrößen beim Laden des Verlaufs.
@@ -311,32 +317,40 @@ type BusEvent struct {
 
 // Hub verwaltet alle Räume, Verlauf, Einstellungen und verbundene Clients.
 type Hub struct {
-	mu        sync.Mutex
-	rooms     map[string]*room
-	settings  Settings
-	nextID    atomic.Int64
-	maxRooms  int // 0 = unbegrenzt
-	automod   *Automod
-	filter    *Automod         // Wortfilter (ersetzen statt ausblenden)
-	pending   map[int64]string // ungeprüfte Automod-Treffer: Nachrichten-ID → Kanal
-	bots      *Bots
-	mod       *Moderation
-	audit     *Audit
-	accounts  *Accounts
-	widgets   *Widgets
-	media     *MediaLib
-	commands  *Commands
-	roles     *Roles
-	blocks    *Blocks
-	reports   *Reports
-	schedules *Schedules
-	hosted    *Hosted
-	groups    *Groups
-	beacon    *BeaconStore
-	i18n      *i18n.Catalog // Übersetzungen (i18n.go)
-	fed       *FedStore
-	bus       map[chan BusEvent]struct{}
-	loc       atomic.Pointer[time.Location]
+	mu       sync.Mutex
+	rooms    map[string]*room
+	settings Settings
+	nextID   atomic.Int64
+	maxRooms int // 0 = unbegrenzt
+	automod  *Automod
+	filter   *Automod         // Wortfilter (ersetzen statt ausblenden)
+	pending  map[int64]string // ungeprüfte Automod-Treffer: Nachrichten-ID → Kanal
+	bots     *Bots
+	mod      *Moderation
+	audit    *Audit
+	accounts *Accounts
+	widgets  *Widgets
+	media    *MediaLib
+	commands *Commands
+	roles    *Roles
+	blocks   *Blocks
+	// onUserChange wird nach Sperren, Aufhebungen und geänderten Rollen aufgerufen
+	// (Sprachkanäle gleichen Rechte ab).
+	onUserChange func(userID string)
+	voiceMu      sync.Mutex
+	voiceKey     ed25519.PrivateKey // Sprach-Schlüssel: signiert Zutrittskarten (voice.go)
+	// onRoomChange wird nach dem Ändern, Umbenennen oder Löschen eines Kanals aufgerufen
+	// (newName "" = gelöscht) – Sprachkanäle gleichen ihre Teilnehmer ab.
+	onRoomChange func(oldName, newName string)
+	reports      *Reports
+	schedules    *Schedules
+	hosted       *Hosted
+	groups       *Groups
+	beacon       *BeaconStore
+	i18n         *i18n.Catalog // Übersetzungen (i18n.go)
+	fed          *FedStore
+	bus          map[chan BusEvent]struct{}
+	loc          atomic.Pointer[time.Location]
 
 	docs  map[string]docSpec
 	order []string // Lade-Reihenfolge der Dateien
@@ -505,6 +519,7 @@ func NewHub(maxRooms int) *Hub {
 		h.media.restore(nil, list, nil)
 		return nil
 	})
+	h.registerVoiceDoc()
 	h.RegisterDoc("media.json", func() any { return h.media.Config() }, func(b []byte) error {
 		var c MediaConfig
 		if err := jsonUnmarshal(b, &c); err != nil {
@@ -888,6 +903,27 @@ func (h *Hub) broadcast(r *room, ev Event) {
 	}
 }
 
+// presenceDelay bündelt Änderungen der Online-Liste: Viele Verbindungen, die sich gleichzeitig
+// an- oder abmelden (z. B. nach einem Neustart), lösen nur eine Liste je Kanal aus statt eine
+// je Verbindung an alle anderen.
+var presenceDelay = 300 * time.Millisecond
+
+// presenceSoonLocked verschickt die Online-Liste des Kanals kurz verzögert. h.mu muss gehalten werden.
+func (h *Hub) presenceSoonLocked(r *room) {
+	if r.presenceDue {
+		return
+	}
+	r.presenceDue = true
+	time.AfterFunc(presenceDelay, func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		r.presenceDue = false
+		if h.rooms[r.name] == r && len(r.clients) > 0 {
+			h.broadcast(r, presenceLocked(r))
+		}
+	})
+}
+
 // Notify schickt ein einfaches Ereignis (z. B. "roles", "profiles") an alle Kanäle.
 func (h *Hub) Notify(typ string) {
 	h.mu.Lock()
@@ -918,6 +954,11 @@ func (h *Hub) closeClientsLocked(r *room, ev Event) {
 func (h *Hub) out(r *room, m Message, admin bool) Message {
 	if !admin {
 		m = m.public()
+	}
+	if m.Media != nil && m.Media.Kind == "image" && strings.HasPrefix(m.Media.Src, "/media/uploads/"+privateUploadPrefix) {
+		md := *m.Media // nicht das gespeicherte Original ändern
+		md.Src = h.privateMediaSrc(md.Src)
+		m.Media = &md
 	}
 	m.Reply, m.ThreadInfo = nil, nil
 	if m.Thread == 0 {
@@ -1212,6 +1253,13 @@ func (h *Hub) SendFull(roomName string, p Poster, in SendInput) (Message, error)
 	pub := h.out(r, msg, false) // Original und Automod-Muster bleiben im Admin-Bereich
 	h.broadcast(r, Event{Type: "message", Message: &pub, Online: len(r.clients)})
 	h.emit(BusEvent{Type: "message", Room: roomName, Message: &pub})
+	if r.kind == RoomDM { // Gegenüber: Liste der Unterhaltungen aktualisieren (statt ständig abzufragen)
+		for _, mem := range r.members {
+			if mem != p.ID && !isFedID(mem) {
+				h.sendToUserLocked(mem, Event{Type: "dm", User: mem})
+			}
+		}
+	}
 	if rootID > 0 { // Zähler an der Ausgangsnachricht aktualisieren
 		if i, ok := r.find(rootID); ok {
 			rp := h.out(r, r.history[i], false)
@@ -1253,7 +1301,7 @@ func (h *Hub) subscribe(roomName string, viewer *Viewer, admin bool) (c chan Eve
 	if !admin && viewer != nil {
 		hist, more = r.trimFloor(hist, more, r.dmFloor(viewer.ID))
 	}
-	h.broadcast(r, presenceLocked(r))
+	h.presenceSoonLocked(r)
 	info = r.info()
 	info.CanWrite = r.canWrite(viewer.access())
 	return c, h.outAll(r, hist, false), more, info, nil
@@ -1270,7 +1318,7 @@ func (h *Hub) Unsubscribe(roomName string, c chan Event) {
 		return // Stream wurde bereits beim Löschen/Umbenennen beendet
 	}
 	delete(r.clients, c)
-	h.broadcast(r, presenceLocked(r))
+	h.presenceSoonLocked(r)
 }
 
 // Presence liefert die Online-Liste eines Kanals.
@@ -1387,7 +1435,7 @@ func (h *Hub) RenameUser(userID, newName string) {
 			}
 		}
 		if seen {
-			h.broadcast(r, presenceLocked(r))
+			h.presenceSoonLocked(r)
 		}
 		if changed {
 			h.broadcast(r, Event{Type: "user_renamed", User: userID, Name: newName, Online: len(r.clients)})
@@ -1434,17 +1482,74 @@ func (h *Hub) SetUserTeam(userID string, team bool) {
 			}
 		}
 		if seen {
-			h.broadcast(r, presenceLocked(r))
+			h.presenceSoonLocked(r)
 		}
 	}
 	h.broadcastAll(Event{Type: "user_updated", User: userID})
 }
 
-// NotifySanction informiert die betroffene Person (alle anderen ignorieren das Ereignis).
+// SendToReaders schickt ein Ereignis an alle Live-Verbindungen, deren Person den Kanal
+// roomName lesen darf (z. B. Teilnehmer eines Sprachkanals – private Kanäle bleiben privat).
+func (h *Hub) SendToReaders(roomName string, ev Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	target, ok := h.rooms[roomName]
+	if !ok {
+		return
+	}
+	for _, r := range h.rooms {
+		for c, v := range r.clients {
+			var a *Access
+			if v != nil {
+				a = v.access()
+			}
+			if !target.canRead(a) {
+				continue
+			}
+			e := ev
+			e.Online = len(r.clients)
+			select {
+			case c <- e:
+			default:
+			}
+		}
+	}
+}
+
+// NotifySanction informiert die betroffene Person – nur ihre eigenen Verbindungen.
 func (h *Hub) NotifySanction(userID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.broadcastAll(Event{Type: "sanction", User: userID})
+	h.sendToUserLocked(userID, Event{Type: "sanction", User: userID})
+	h.userChangedLocked(userID)
+}
+
+// userChangedLocked meldet geänderte Rechte einer Person (z. B. an die Sprachkanäle).
+func (h *Hub) userChangedLocked(userID string) {
+	if f := h.onUserChange; f != nil {
+		go f(userID)
+	}
+}
+
+// sendToUserLocked schickt ein Ereignis nur an die Live-Verbindungen einer Person (andere
+// erfahren so nicht, wer gerade eine Direktnachricht oder eine Sperre bekommt). h.mu muss
+// gehalten werden.
+func (h *Hub) sendToUserLocked(userID string, ev Event) {
+	if userID == "" {
+		return
+	}
+	for _, r := range h.rooms {
+		for c, v := range r.clients {
+			if v != nil && v.ID == userID {
+				e := ev
+				e.Online = len(r.clients)
+				select {
+				case c <- e:
+				default:
+				}
+			}
+		}
+	}
 }
 
 // --- Admin-Aktionen ---
@@ -1494,6 +1599,10 @@ func (h *Hub) CreateRoomWith(in RoomInput) (RoomInfo, error) {
 		return RoomInfo{}, ErrDMName
 	}
 	readR, writeR := h.validRoleList(in.ReadRoles), h.validRoleList(in.WriteRoles)
+	voice, err := h.validVoice(in.Voice)
+	if err != nil {
+		return RoomInfo{}, err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, ok := h.rooms[name]; ok {
@@ -1505,7 +1614,14 @@ func (h *Hub) CreateRoomWith(in RoomInput) (RoomInfo, error) {
 	}
 	r.slowMode, r.links, r.botSlow, r.botLinks = in.SlowMode, links, in.BotSlowMode, botLinks
 	r.readRoles, r.writeRoles = readR, writeR
+	r.voice = voice
 	return r.info(), nil
+}
+
+func (h *Hub) roomChangedLocked(oldName, newName string) {
+	if f := h.onRoomChange; f != nil {
+		go f(oldName, newName)
+	}
 }
 
 // UpdateRoom ändert Beschreibung und/oder Namen (ältere Schnittstelle).
@@ -1516,6 +1632,7 @@ func (h *Hub) UpdateRoom(name, newName, desc string) (RoomInfo, error) {
 	if ok {
 		in.SlowMode, in.Links, in.BotSlowMode, in.BotLinks = r.slowMode, r.links, r.botSlow, r.botLinks
 		in.ReadRoles, in.WriteRoles = r.readRoles, r.writeRoles
+		in.Voice = r.voice
 	}
 	h.mu.Unlock()
 	return h.UpdateRoomWith(name, in)
@@ -1535,6 +1652,10 @@ func (h *Hub) UpdateRoomWith(name string, in RoomInput) (RoomInfo, error) {
 		return RoomInfo{}, ErrDMName
 	}
 	readR, writeR := h.validRoleList(in.ReadRoles), h.validRoleList(in.WriteRoles)
+	voice, err := h.validVoice(in.Voice)
+	if err != nil {
+		return RoomInfo{}, err
+	}
 	desc, err := cleanDesc(in.Description)
 	if err != nil {
 		return RoomInfo{}, err
@@ -1563,6 +1684,7 @@ func (h *Hub) UpdateRoomWith(name string, in RoomInput) (RoomInfo, error) {
 	}
 	r.slowMode, r.links, r.botSlow, r.botLinks = in.SlowMode, links, in.BotSlowMode, botLinks
 	r.readRoles, r.writeRoles = readR, writeR
+	r.voice = voice
 	h.kickUnreadableLocked(r)
 	if newName != name {
 		delete(h.rooms, name)
@@ -1594,6 +1716,7 @@ func (h *Hub) UpdateRoomWith(name string, in RoomInput) (RoomInfo, error) {
 		d, info := desc, r.info()
 		h.broadcast(r, Event{Type: "room", Description: &d, RoomInfo: &info, Online: len(r.clients)})
 	}
+	h.roomChangedLocked(name, newName)
 	return r.info(), nil
 }
 
@@ -1617,6 +1740,7 @@ func (h *Hub) DeleteRoom(name string) error {
 	}
 	h.record(storeOp{kind: opRoomDelete, room: name})
 	h.bots.removeRoom(name)
+	h.roomChangedLocked(name, "")
 	return nil
 }
 
@@ -1736,6 +1860,7 @@ type roomMeta struct {
 	Kind        string           `json:"kind,omitempty"`
 	Members     []string         `json:"members,omitempty"`
 	Cleared     map[string]int64 `json:"cleared,omitempty"` // Direktnachrichten: gelöscht bis (je Person)
+	Voice       *VoiceConfig     `json:"voice,omitempty"`   // Sprachkanal
 	Pins        []int64          `json:"pins,omitempty"`
 	Group       string           `json:"group,omitempty"`
 	Pos         int              `json:"pos,omitempty"`
@@ -1744,7 +1869,7 @@ type roomMeta struct {
 func metaOfRoom(r *room) roomMeta {
 	m := roomMeta{Name: r.name, Description: r.description, Created: r.created, SlowMode: r.slowMode, Links: r.links,
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, ReadRoles: r.readRoles, WriteRoles: r.writeRoles,
-		Kind: r.kind, Members: r.members, Cleared: r.cleared, Pins: r.pins, Group: r.group, Pos: r.pos}
+		Kind: r.kind, Members: r.members, Cleared: r.cleared, Voice: r.voice, Pins: r.pins, Group: r.group, Pos: r.pos}
 	if a := r.automodLocked(); a.Mode != AutomodGlobal || len(a.Patterns) > 0 {
 		m.Automod = &a
 	}
@@ -1789,7 +1914,7 @@ func (h *Hub) putRoom(meta roomMeta, msgs []Message) {
 	r := &room{name: meta.Name, description: meta.Description, created: meta.Created, slowMode: meta.SlowMode,
 		links: links, botSlow: meta.BotSlowMode, botLinks: botLinks, amMode: AutomodGlobal,
 		history: msgs, clients: make(map[chan Event]*Viewer),
-		readRoles: meta.ReadRoles, writeRoles: meta.WriteRoles, kind: meta.Kind, members: meta.Members, cleared: meta.Cleared, blocks: h.blocks, pins: meta.Pins,
+		readRoles: meta.ReadRoles, writeRoles: meta.WriteRoles, kind: meta.Kind, members: meta.Members, cleared: meta.Cleared, blocks: h.blocks, voice: meta.Voice, pins: meta.Pins,
 		group: meta.Group, pos: meta.Pos}
 	if meta.Automod != nil {
 		if mode, am, err := compileRoomAutomod(*meta.Automod); err == nil {

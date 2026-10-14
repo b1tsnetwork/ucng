@@ -2,16 +2,17 @@
 
 # UCNG – Unified Chat Network Gateway
 
-Echtzeit-Chat in Go – mit vollständiger Weboberfläche und einem einbettbaren Widget (JS + CSS) für beliebige andere Webseiten. Instanzen verbinden sich über Föderation und Beacons zu einem Netz („Unified Chat Network“).
+Echtzeit-Chat in Go – mit vollständiger Weboberfläche und einem einbettbaren Widget (JS + CSS) für beliebige andere Webseiten. Instanzen verbinden sich über Föderation und Beacons zu einem Netz („Unified Chat Network“); jede Instanz ist dabei das Tor („Gateway“) für ihre Mitglieder. Früher hieß das Projekt *GoChat* – siehe [Name und frühere Bezeichnungen](#name-und-frühere-bezeichnungen).
 
 - **Zwei Betriebsarten in einem Programm** (`MODE=simple|hosted`): *simple* für Intranet und private Nutzung (Namen ohne Konto), *hosted* für öffentlich gehostete Chats mit **Nutzerkonten, Zwei-Faktor-Anmeldung, Ende-zu-Ende-verschlüsselten Direktnachrichten und Föderation** (`name@andere-instanz`) – siehe [Modus „hosted“](#modus-hosted)
 - **Speicher wählbar:** Dateien (Standard), **SQLite** oder **MySQL/MariaDB** – beide Treiber in reinem Go, ohne cgo
-- **Keine externen Abhängigkeiten** im Standard-Build – nur die Go-Standardbibliothek (Go ≥ 1.24); Datenbank-Treiber nur per Build-Option
+- **Keine externen Abhängigkeiten** im Standard-Build – nur die Go-Standardbibliothek (Sprachstand Go 1.24, gebaut wird mit einer unterstützten Go-Version, siehe `toolchain` in `go.mod`); Datenbank-Treiber nur per Build-Option
 - **Eine einzige Binärdatei** – HTML, CSS und JS sind per `go:embed` eingebaut
 - **Echtzeit per Server-Sent Events** (funktioniert durch Proxys, automatischer Reconnect)
 - Kanäle, Online-Anzeige, Verlauf – **alles wird dauerhaft gespeichert** (Kanäle, Einstellungen, Nachrichten, Namen)
 - **Namensreservierung ohne Registrierung** – niemand kann unter deinem Namen schreiben
 - **Community-Funktionen:** Threads, Umfragen, angepinnte Nachrichten, Bilder hochladen, Direktnachrichten, Profilbilder und Status, `@Rolle`-Erwähnungen, Melden-Knopf, geplante Ankündigungen
+- **Sprachkanäle:** jeder Kanal auch mit Sprache – Lautstärke jeder Person selbst abmischen, Push-to-Talk oder Sprachaktivierung, Bühnenmodus, Gäste-Regel je Kanal, Moderation; skalierbar über zusätzliche Sprach-Server (siehe [Sprachkanäle](#sprachkanäle))
 - **Rollen mit Rechten** (Links, kein Langsam-Modus, anpinnen, im Chat löschen/stummschalten …) und **private Kanäle** bzw. Kanäle, in denen nur bestimmte Rollen schreiben
 - **Chatten wie gewohnt:** Antworten mit Zitat, Reaktionen, eigene Nachrichten bearbeiten (15 Min.) und löschen, `@Erwähnungen` mit Vervollständigung, **fett**/*kursiv*/`Code`, Online-Liste, Suche, Ungelesen-Zähler, Ton und Browser-Benachrichtigungen
 - **Admin-Bereich** unter `/admin` mit **eigenen Konten für Moderatoren** und **Protokoll** aller Aktionen: Übersicht mit Statistik, Moderation mit Suche, Automoderation, Personen sperren/stummschalten, Kanäle, Farben, Widgets, Bots, Backups
@@ -74,7 +75,10 @@ Jede Option geht als Flag oder als Umgebungsvariable:
 | `-data`        | `DATA_DIR`        | `data`   | Ordner für alle Daten; `none` = nichts speichern (nur zum Testen) |
 | `-max-rooms`   | `MAX_ROOMS`       | `0`      | Maximale Anzahl Kanäle; `0` = unbegrenzt |
 | `-rate`        | `RATE_LIMIT`      | `10`     | Nachrichten pro 10 Sekunden und IP |
-| `-trust-proxy` | `TRUST_PROXY=1`   | aus      | Client-IP aus `X-Forwarded-For` lesen (nur hinter eigenem Reverse-Proxy!) |
+| `-trust-proxy` | `TRUST_PROXY=1`   | aus      | Client-IP aus `X-Forwarded-For`/`X-Real-IP` lesen – nur bei Verbindungen von vertrauenswürdigen Proxys, von rechts gelesen (siehe [Reverse-Proxy](#reverse-proxy-und-client-ip)) |
+| `-trusted-proxies` | `TRUSTED_PROXIES` | Loopback und private Netze | Vertrauenswürdige Proxys: IP-Adressen oder Netze, kommagetrennt (`127.0.0.1,10.0.0.0/8`) – bei einem CDN dessen Adressbereiche ergänzen |
+| `-max-streams` | `MAX_STREAMS`     | `10000`  | Gleichzeitige Live-Verbindungen insgesamt (darüber: `429`, der Browser versucht es später erneut) |
+| `-max-streams-ip` | `MAX_STREAMS_PER_IP` | `50` | Gleichzeitige Live-Verbindungen je IP-Adresse (jeder offene Tab ist eine; hinter NAT mehrere Personen) |
 | `-name-ttl`    | `NAME_TTL_DAYS`   | `30`     | Tage ohne Aktivität, nach denen ein Name wieder frei wird (`0` = nie) |
 | `-max-users`   | `MAX_USERS`       | `10000`  | Maximale Anzahl reservierter Namen |
 | `-claim-rate`  | `CLAIM_RATE`      | `5`      | Namensreservierungen pro Minute und IP |
@@ -87,6 +91,11 @@ Jede Option geht als Flag oder als Umgebungsvariable:
 | `-public-url`  | `PUBLIC_URL`      | leer     | Öffentliche Adresse, z. B. `https://chat.example.org` – für Links in E-Mails und die Föderation |
 | `-source-url`  | `SOURCE_URL`      | bei Releases das GitHub-Repository | Adresse des Quellcodes dieser Fassung – Pflicht nach der AGPL, wenn du eine **geänderte** Fassung öffentlich betreibst; erscheint im Chat, in der Verwaltung, in `/.well-known/ucng` und im Beacon |
 | `-fed-insecure`| `FED_INSECURE=1`  | aus      | Föderation auch über `http://` und zu Adressen im lokalen Netz (nur zum Testen!) |
+| `-voice-off`   | `VOICE=0`         | an       | Sprachkanäle ganz ausschalten |
+| `-voice-no-builtin` | `VOICE_BUILTIN=0` | an | Keinen eingebauten Sprach-Relay starten – Sprache läuft dann nur über Agenten (`ucng-voice`) |
+| `-voice-max-participants` | `VOICE_MAX_PARTICIPANTS` | `200` | Eingebauter Relay: Teilnehmer insgesamt |
+| `-voice-max-mbit` | `VOICE_MAX_MBIT` | `50` | Eingebauter Relay: höchstens so viel ausgehende Bandbreite (Mbit/s, aus den Kanal-Einstellungen geschätzt) |
+| `-voice-agent-token` | `VOICE_AGENT_TOKEN` | leer | Schlüssel, mit dem sich weitere Sprach-Server anmelden; leer = keine Agenten |
 
 Beispiel für den Produktivbetrieb:
 
@@ -269,7 +278,8 @@ ADMIN_PASSWORD=langes-passwort PUBLIC_URL=https://beacon.example.org ./ucng-beac
 | `DATA_DIR` | `beacon-data` | Datenordner (JSON-Dateien, `media/`, `originals/`) |
 | `ADMIN_PASSWORD` | zufällig (steht im Log) | Passwort für die Verwaltung |
 | `PUBLIC_URL` | – | eigene Adresse; wird in Abo-Adressen und GIF-Links verwendet |
-| `TRUST_PROXY` | – | `1`: Client-IP aus `X-Forwarded-For` (hinter einem Reverse-Proxy) |
+| `TRUST_PROXY` | – | `1`: Client-IP aus `X-Forwarded-For` – nur von vertrauenswürdigen Proxys (siehe [Reverse-Proxy](#reverse-proxy-und-client-ip)) |
+| `TRUSTED_PROXIES` | Loopback und private Netze | vertrauenswürdige Proxys (IP-Adressen oder Netze, kommagetrennt) |
 | `GIF_SIZE` | `480` | GIFs werden in diesen Rahmen eingepasst (100–1000) |
 | `NO_PORTS` | – | `1`: Instanzen mit Port in der Adresse (`chat.example.org:8443`) ablehnen |
 | `HTTPS_ONLY` | – | `1`: nur Instanzen mit `https://` annehmen (sonst auch `http://`, mit Abzeichen „ohne HTTPS“) |
@@ -522,6 +532,75 @@ Die Admin-API ist absichtlich nicht per CORS freigegeben: Sie funktioniert nur v
 - **GIFs:** Knopf „GIF“ – aus der eigenen Bibliothek oder (falls eingerichtet) per Websuche. Steht schon Text im Eingabefeld, wird er zur Bildunterschrift; eine laufende Antwort bleibt erhalten.
 - **Befehle:** `!` am Anfang zeigt die verfügbaren Befehle mit Beschreibung.
 - **Benachrichtigungen** (im Profil): Ton und Browser-Hinweis jeweils aus, nur bei Erwähnungen oder bei jeder Nachricht. Die Einstellung wandert mit Profil-Datei und Code mit.
+
+## Sprachkanäle
+
+Jeder Kanal kann zusätzlich ein **Sprachkanal** sein (Admin → Kanäle → Kanal bearbeiten → *Auch als Sprachkanal nutzen*). Der Text-Chat des Kanals bleibt, wer beitritt, kann daneben sprechen und zuhören.
+
+- **Beitreten:** Knopf *Beitreten* oben im Kanal oder das Kopfhörer-Symbol in der Kanalliste. Die Teilnehmer stehen unter dem Kanal in der Seitenleiste (grüner Ring = spricht gerade) – auch für alle, die nicht beigetreten sind.
+- **Selbst abmischen:** Ein Klick auf einen Namen öffnet einen Regler von 0 bis 200 % und *Für mich stummschalten*. Die Einstellung gilt nur im eigenen Browser und bleibt gespeichert; blockierte Personen sind automatisch stumm. Doppelklick auf den Regler setzt ihn auf 100 % zurück.
+- **Unten in der Seitenleiste:** Mikrofon aus/an, *Nichts hören*, Melden (Bühne), Einstellungen (Mikrofon, Ausgabegerät, Sprachaktivierung mit Empfindlichkeit oder Push-to-Talk mit frei wählbarer Taste, Rauschunterdrückung) und Verlassen.
+- **Moderation:** Team und Rollen mit dem Recht *Stummschalten* können Teilnehmer im Sprachkanal stummschalten, entfernen (Wiedereintritt nach einer Minute) und auf der Bühne das Rederecht geben oder entziehen. Jede Aktion steht im Protokoll. Eine Sperre im Chat wirkt sofort: *Ausschließen* beendet die Sprachverbindung, *Stummschalten* schaltet auch die Sprache stumm. Geänderte Rollen oder Kanalrechte werden sofort übernommen.
+
+Einstellungen je Kanal:
+
+| Einstellung | Bedeutung |
+|---|---|
+| Klang | *Sparsam* 16 kbit/s, *Standard* 24 kbit/s, *Hoch* 40 kbit/s, *Musik* 96 kbit/s Stereo (ohne Echo- und Rauschunterdrückung – für Instrumente und Wiedergabe, mit Kopfhörern) |
+| Gäste ohne Konto | *Dürfen sprechen*, *Nur zuhören* oder *Kein Zutritt*. Gast ist, wer kein Konto, keine Rolle und kein Team-Abzeichen hat. |
+| Teilnehmer höchstens | Standard 25 |
+| Sprecher gleichzeitig | Standard 4 – sprechen mehr gleichzeitig, sind die lautesten zu hören. Bestimmt die Bandbreite je Zuhörer. |
+| Bühne | Nur das Team und die gewählten Rollen sprechen; alle anderen hören zu, können sich melden und von Moderierenden freigeschaltet werden. |
+
+Wer den Kanal lesen darf, darf zuhören; sprechen darf, wer schreiben darf (ohne Bühne). Private Kanäle bleiben privat – auch die Teilnehmerliste sieht nur, wer den Kanal lesen darf.
+
+**Technik:** Der Browser kodiert das Mikrofon mit Opus (WebCodecs) in 20-ms-Rahmen und schickt sie über einen WebSocket an einen Relay. Der Relay leitet nur weiter (kein Mischen, nichts wird gespeichert oder aufgezeichnet) – je Kanal höchstens die eingestellte Zahl gleichzeitiger Sprecher, gebündelt in einer Nachricht je 20 ms. Gemischt wird im Browser, jede Person mit ihrer eigenen Lautstärke. Über Zutritt und Rechte entscheidet immer der Chat-Server: Er gibt eine mit Ed25519 signierte Zutrittskarte aus (60 s gültig, nur einmal verwendbar), der Relay prüft sie mit dem öffentlichen Schlüssel. Die Sprache ist über TLS verschlüsselt, aber nicht Ende-zu-Ende (der Relay sieht die Opus-Rahmen). Braucht einen aktuellen Chrome, Edge oder Firefox und HTTPS (oder `localhost`).
+
+**Bandbreite** je Zuhörer (Server → Browser) bei 4 hörbaren Sprechern: etwa 100 kbit/s (*Sparsam*), 135 kbit/s (*Standard*), 200 kbit/s (*Hoch*), 400 kbit/s (*Musik*); ein voller Kanal mit 25 Teilnehmern im Standard also gut 3 Mbit/s. Gemessen mit `go test -tags loadtest -run Load -v ./internal/voicerelay` auf 2 CPU-Kernen: 200 Teilnehmer in 8 Kanälen mit je 4 Sprechern – 99,8 % der Rahmen zugestellt, 20 Mbit/s ausgehend, 5 MB Speicher; 500 Teilnehmer in 20 Kanälen – 99,9 %, 51 Mbit/s.
+
+### Mehr Sprach-Server (Agenten)
+
+Der eingebaute Relay reicht für die Grenzen oben (`VOICE_MAX_PARTICIPANTS`, `VOICE_MAX_MBIT`). Für mehr startest du weitere Sprach-Server mit `ucng-voice` – auf demselben oder anderen Rechnern. Jeder meldet sich beim Chat-Server an; ein neuer Sprachkanal kommt auf den Relay mit der geringsten Auslastung und bleibt dort, bis er leer ist. Fällt ein Agent aus, verbinden sich die Browser neu und landen auf einem anderen. Auslastung aller Relays: Admin → Übersicht → *Sprach-Server*.
+
+```bash
+# Chat-Server
+VOICE_AGENT_TOKEN='langer-zufälliger-schlüssel' PUBLIC_URL=https://chat.example.org ./ucng
+# Agent (z. B. auf voice1.example.org hinter einem Reverse-Proxy mit TLS)
+CHAT_URL=http://chat-intern:8080 AGENT_TOKEN='langer-zufälliger-schlüssel' \
+  PUBLIC_URL=wss://voice1.example.org CONTROL_URL=http://voice1-intern:8090/control ./ucng-voice
+```
+
+| Umgebungsvariable (Agent) | Standard | Bedeutung |
+|---|---|---|
+| `CHAT_URL` | – | Adresse des Chat-Servers, wie der Agent ihn erreicht (intern reicht) |
+| `AGENT_TOKEN` | – | derselbe Wert wie `VOICE_AGENT_TOKEN` beim Chat-Server |
+| `PUBLIC_URL` | – | Adresse für Browser: `wss://voice1.example.org` (der Agent hängt `/ws` an) |
+| `CONTROL_URL` | `http://<hostname><ADDR>/control` | Adresse, unter der der Chat-Server den Agenten erreicht (Steuerbefehle: stummschalten, entfernen) |
+| `AGENT_ID` | Rechnername | Name in der Übersicht |
+| `ADDR` | `:8090` | Listen-Adresse |
+| `MAX_PARTICIPANTS` / `MAX_MBIT` | `200` / `50` | Grenzen dieses Agenten |
+| `MAX_PER_IP` | `5` | Sprachverbindungen je IP-Adresse |
+| `ALLOWED_ORIGINS` | `PUBLIC_URL` des Chat-Servers | Seiten, von denen Browser verbinden dürfen |
+| `TRUST_PROXY`, `TRUSTED_PROXIES` | aus | wie beim Chat-Server |
+
+Wichtig: Beim Chat-Server muss `PUBLIC_URL` gesetzt sein – der Agent lässt nur Browser von dieser Adresse zu. Chat-Server und Agent sprechen am besten über ein internes Netz miteinander (`CHAT_URL`, `CONTROL_URL`); über das Internet nur per HTTPS – beide Richtungen sind mit dem Agenten-Schlüssel geschützt. Ein fertiges Compose-Beispiel (Agent auf demselben Server wie der Chat oder auf einem eigenen) liegt in `deploy/voice/`.
+
+**Reverse-Proxy:** WebSockets brauchen die Upgrade-Kopfzeilen – bei nginx für den Chat-Server (eingebauter Relay unter `/api/voice/ws`) und für jeden Agenten (`/ws`):
+
+```nginx
+location /api/voice/ws {          # beim Agenten: location /ws
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_read_timeout 1h;
+    proxy_buffering off;
+}
+```
+
+Caddy leitet WebSockets ohne weitere Einstellung weiter.
 
 ## Emotes und GIFs
 
@@ -832,6 +911,11 @@ curl -X POST http://localhost:8080/api/bot/rooms/lobby/messages \
 | `POST`  | `/api/rooms/{room}/messages/{id}/report` | Melden: `{"reason":"…"}` |
 | `DELETE`| `/api/rooms/{room}/messages/{id}/mod` | fremde Nachricht löschen – Recht „löschen“ |
 | `POST`  | `/api/users/{id}/mute`              | `{"minutes":15,"reason":"…"}` (1–60) – Recht „stummschalten“ |
+| `GET`   | `/api/voice`                        | Teilnehmer aller sichtbaren Sprachkanäle: `{"enabled":true,"rooms":{"talk":[{"i","u","n","s","m","sm","h"}]}}` (Live-Stream: Ereignis `voice` mit `room` und `voice`) |
+| `POST`  | `/api/voice/{room}/join`            | Zutrittskarte: `{"url","ticket","bitrate","stereo","music","maxSpeakers","maxPeers","speak","muted","stage","guest","moderate"}`; `403` Gäste ausgeschlossen/gesperrt, `404` kein Sprachkanal, `503` voll/ausgelastet |
+| `GET`   | `/api/voice/ws`                     | eingebauter Relay (WebSocket): erst `{"t":"auth","ticket":"…"}`, dann Opus-Rahmen (siehe `internal/voicerelay`) |
+| `POST`  | `/api/voice/{room}/mod`             | `{"userId","action"}` mit `mute`, `unmute`, `kick`, `speak`, `nospeak`, `lowerhand` – Team oder Recht „stummschalten“ |
+| `POST`  | `/api/voice/agents/report`          | nur Sprach-Agenten (`Authorization: Bearer <VOICE_AGENT_TOKEN>`): Auslastung und Teilnehmer melden, Antwort mit öffentlichem Schlüssel |
 | `GET`   | `/api/rooms/{room}/threads/{id}`    | Thread: `{"root":{…},"messages":[…]}` |
 | `POST`  | `/api/rooms/{room}/upload`          | Bild: `multipart/form-data` mit `file`, optional `text`, `replyTo`, `thread` |
 | `GET`/`POST` | `/api/dms`                     | eigene Direktnachrichten `{"enabled","dms":[{"room","with","name","lastId","blocked","blockedByMe"}]}` / öffnen `{"userId":"…"}` (`403`, wenn eine Seite blockiert hat) |
@@ -912,6 +996,7 @@ Admin-Endpunkte (alle außer Login mit `Authorization: Bearer <token>`; **M** = 
 | `GET`/`PUT` | `/api/admin/protected-names`             | geschützte Namen (`GET` **M**) |
 | `GET`   | `/api/admin/audit?q=…&before=<cursor>`       | **M** Protokoll (100 je Seite, `next` = Cursor) |
 | `GET`   | `/api/admin/stats?days=30`                   | **M** Statistik |
+| `GET`   | `/api/admin/voice`                           | **M** Sprach-Server: Relays mit Auslastung, belegte Sprachkanäle |
 | `GET`/`POST` | `/api/admin/accounts`                   | Konten auflisten / anlegen `{"name","display","role","password"}` |
 | `PATCH`/`DELETE` | `/api/admin/accounts/{name}`        | Konto ändern (`password` leer = unverändert, `disabled`) / löschen |
 | `GET`/`PUT` | `/api/admin/layout`                      | Gruppen und Reihenfolge (**M** lesen): `{"groups":[{"id","name","rooms":[…]}],"ungrouped":[…]}` – Gruppen ohne `id` werden angelegt, fehlende gelöscht; SSE-Ereignis `layout` |
@@ -993,6 +1078,13 @@ uploads.go       Bilder hochladen, Profilbilder verarbeiten, Aufräumen
 profile.go       Profilbild und Status
 dms.go           Direktnachrichten
 blocks.go        Blockieren und Unterhaltungen löschen (Direktnachrichten)
+limits.go        Grenzen für Live-Verbindungen
+voice.go         Sprachkanäle: Einstellungen, Rechte, Zutrittskarten, Relay-Auswahl, Agenten, Moderation
+preview.go       Zwischenspeicher und Grenzen für Vorschaubilder der GIF-Suche
+perf_test.go     Last- und Speichermessungen (go test -tags loadtest -run Load -v .)
+internal/clientip   Client-IP hinter vertrauenswürdigen Proxys
+internal/webstatic  Auslieferung der Oberfläche (gzip, ETag, versionierte Adressen)
+scripts/drivers.sh  Datenbank-Treiber für Build-Tags (Version aus go.mod)
 accounts.go      Admin- und Moderatoren-Konten, Passwörter, Sitzungen, Rollen
 admin.go         Admin-Endpunkte (mit Protokolleinträgen)
 audit.go         Protokoll
@@ -1040,8 +1132,11 @@ internal/
   imgscale/      Bilder skalieren (auch animierte GIFs) – nur Standardbibliothek
   fedsig/        Ed25519-Signaturen für Föderation und Beacon
   i18n/          Sprachdateien, eigene Änderungen, Platzhalter/Mehrzahl, Server-Meldungen, Übersetzungspakete, HTTP-Schnittstelle
+  wsock/         WebSocket (RFC 6455) – nur Standardbibliothek
+  voicerelay/    Sprach-Relay: Zutrittskarten, Weiterleitung, Sprecher-Auswahl, Grenzen
 cmd/
   ucng-beacon/   Beacon-Programm: Verzeichnis, GIF-Hub, Verwaltung (Web-Oberfläche eingebettet)
+  ucng-voice/    Sprach-Agent: zusätzlicher Relay für Sprachkanäle
 assets/          Logo, Schriftzug, Social-Preview (für README und GitHub)
 examples/
   bot-stream/    Beispiel-Bot mit Live-Verbindung
@@ -1050,6 +1145,8 @@ web/
   index.html     Weboberfläche
   app.css/js
   account.js     Konten, 2FA und Ende-zu-Ende-Verschlüsselung im Browser (WebCrypto)
+  voice.js       Sprachkanäle im Browser (Opus über WebCodecs, Lautstärke je Person, Bühne)
+  voice-worklet.js  Audio-Worklets: Aufnahme in 20-ms-Rahmen, Jitter-Puffer und Mischen
   admin.html     Verwaltung
   admin.css/js
   demo.html      Demo-Seite für das Widget
@@ -1071,6 +1168,7 @@ Im Ordner `.github/` liegt alles für GitHub:
 |-------|-------|
 | `workflows/ci.yml` | Bei jedem Pull Request: `gofmt`, `go vet`, `go test -race`, JavaScript-Syntax, Builds mit allen Speicher-Varianten (Dateien, SQLite, MySQL, beides) samt Rauchtest beider Programme |
 | `workflows/release.yml` | Bei jedem Push auf `main` und jedem Tag `v*`: erst die CI, dann Container-Images für **amd64 und arm64** in die GitHub Container Registry und Programmdateien für Linux, Windows und macOS |
+| `workflows/deps.yml` | „Treiber festschreiben“ (manuell): SQLite-/MySQL-Treiber mit Prüfsummen in `go.mod`/`go.sum` und Pull Request |
 | `workflows/cla.yml` | Fragt bei Pull Requests nach der Zustimmung zum [CLA](CLA.md); Unterschriften landen im Branch `cla-signatures` (legt der Workflow beim ersten Lauf an; darf nicht geschützt sein) |
 | `dependabot.yml` | Wöchentliche Update-PRs (montags) für GitHub Actions, die Docker-Basis-Images und – sobald vorhanden – Go-Module |
 
@@ -1097,7 +1195,8 @@ docker run -p 8090:8090 -v beacon:/data -e ADMIN_PASSWORD=… ghcr.io/<owner>/uc
 - Empfohlen: *Settings → Branches* eine Regel für `main` mit dem Pflicht-Check **Tests** (aus `ci`) – und zusätzlich **CLA unterschrieben** (aus `cla`), damit nur Beiträge mit unterschriebenem CLA zusammengeführt werden.
 - Vor dem Veröffentlichen in `NOTICE` den Projektinhaber eintragen (zwei Stellen mit „[PROJEKTINHABER …]“) – auf ihn verweist das CLA.
 - *Settings → General → Social preview*: `assets/social-preview.png` hochladen.
-- Dependabot-Alerts und Security-Updates unter *Settings → Code security* einschalten.
+- Dependabot-Alerts, Security-Updates und **Private vulnerability reporting** unter *Settings → Code security* einschalten (Meldeweg siehe [SECURITY.md](SECURITY.md)).
+- Einmal den Workflow **„Treiber festschreiben“** starten (*Actions*) – er schreibt die SQLite-/MySQL-Treiber mit Prüfsummen in `go.mod`/`go.sum` fest und öffnet dafür einen Pull Request. Dafür unter *Settings → Actions → General* „Allow GitHub Actions to create and approve pull requests“ erlauben.
 
 ## Hinweise für den Produktivbetrieb
 
@@ -1109,10 +1208,71 @@ docker run -p 8090:8090 -v beacon:/data -e ADMIN_PASSWORD=… ghcr.io/<owner>/uc
 - **Eigene Konten statt geteiltem Passwort:** Jede Person im Team bekommt ein eigenes Konto – so steht im Protokoll, wer was getan hat, und ein Konto lässt sich einzeln sperren.
 - **Modus „hosted“:** `PUBLIC_URL` mit `https://` setzen (Links in E-Mails, Föderation, 2FA-Bezeichnung) und `TRUST_PROXY=1` hinter dem Reverse-Proxy. Die Browser-Kryptografie (WebCrypto) funktioniert nur über HTTPS oder auf `localhost`. Der Reverse-Proxy muss `/.well-known/ucng` und `/api/fed/` an UCNG durchreichen, wenn die Föderation an ist.
 - **Daten schützen:** Der Datenordner enthält Nachrichten, Originaltexte gelöschter Nachrichten, Token- und Passwort-Hashes (Rechte `0600`). Die Backups ebenso – lege sie auf einen geschützten Datenträger.
-- **Hinter einem Proxy** `TRUST_PROXY=1` setzen, sonst sehen Rate-Limit und Verbindungssperre nur die Adresse des Proxys.
+- **Hinter einem Proxy** `TRUST_PROXY=1` setzen, sonst sehen Rate-Limit und Verbindungssperre nur die Adresse des Proxys (Details unten).
 - **Skalierung:** Der Zustand liegt im Speicher einer Instanz. Für mehrere Instanzen bräuchte es einen gemeinsamen Pub/Sub (z. B. Redis).
 - Die Moderationsansicht und die Einbettungs-Vorschau sind normale Verbindungen und zählen in der Online-Anzeige mit.
 - Jeder Browser hält pro Kanal eine offene Verbindung. Bei HTTP/1.1 erlauben Browser nur ~6 Verbindungen pro Domain – mit HTTP/2 (Standard hinter Caddy/nginx mit TLS) entfällt diese Grenze.
+
+### Reverse-Proxy und Client-IP
+
+Rate-Limits, Verbindungssperren und das Limit für Live-Verbindungen hängen an der IP-Adresse. Mit `TRUST_PROXY=1` gilt:
+
+- Weiterleitungs-Kopfzeilen werden **nur** beachtet, wenn die Verbindung von einem vertrauenswürdigen Proxy kommt (Standard: Loopback und private Netze – passt für einen Proxy auf demselben Server oder im Docker-Netz; sonst `TRUSTED_PROXIES`). Wer direkt verbindet, kann sich per gefälschtem `X-Forwarded-For` also keine andere Adresse geben.
+- `X-Forwarded-For` wird **von rechts** gelesen: Die erste Adresse, die kein eigener Proxy ist, ist die Person. Was ein Client links voranstellt, wird nie verwendet. Ohne `X-Forwarded-For` zählt `X-Real-IP`.
+- Steht ein CDN (z. B. Cloudflare) davor, dessen Adressbereiche in `TRUSTED_PROXIES` aufnehmen – sonst gilt die Adresse des CDN als Person.
+
+Empfohlene nginx-Konfiguration (nginx direkt im Internet):
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;   # ersetzen statt anhängen
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_buffering off;          # Live-Verbindungen (Server-Sent Events)
+    proxy_read_timeout 1h;
+    client_max_body_size 10m;     # Bild-Uploads (bis 8 MB)
+    # Sprachkanäle (WebSocket): siehe „Sprachkanäle → Reverse-Proxy“
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+}
+# im http-Block:
+# map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+# Optional: Verbindungen je IP schon am Proxy begrenzen
+# limit_conn_zone $binary_remote_addr zone=perip:10m;  (im http-Block)
+# limit_conn perip 60;
+```
+
+Caddy setzt die Kopfzeilen selbst richtig (`reverse_proxy 127.0.0.1:8080`). HSTS sendet UCNG selbst, sobald `PUBLIC_URL` mit `https://` beginnt.
+
+### Sicherheitsmaßnahmen im Überblick
+
+- **Bilder:** Vor dem Decodieren werden Maße, Anzahl der Einzelbilder und der Gesamtaufwand aus den Kopfdaten gelesen (bei GIFs alle Bildbeschreibungen, ohne die Bilddaten zu entpacken). Eine kleine Datei, die beim Entpacken Gigabytes bräuchte, wird abgelehnt, bevor Speicher angelegt wird. Höchstens zwei Bilder werden gleichzeitig verarbeitet; wer länger als 20 Sekunden warten müsste, bekommt `503`.
+- **Live-Verbindungen:** begrenzt insgesamt und je IP (`MAX_STREAMS`, `MAX_STREAMS_PER_IP`); Bots je Bot. Änderungen der Online-Liste werden gebündelt verschickt. Anfragen müssen binnen 2 Minuten vollständig sein (langsame Uploads halten keine Verbindung ewig), Live-Streams sind davon ausgenommen.
+- **Hinweise an einzelne Personen** (neue Direktnachricht, Sperre) gehen nur an deren eigene Verbindungen – andere erfahren nicht, wer gerade eine Direktnachricht bekommt.
+- **Admin-Live-Stream:** Das Token steht nie in der Adresse (Proxy- und Server-Logs), sondern in der `Authorization`-Kopfzeile.
+- **Bilder aus privaten Kanälen und Direktnachrichten** sind nur über signierte, befristete Adressen abrufbar (1–2 Tage, bei jeder Ausgabe neu). Bilder aus öffentlichen Kanälen bleiben dauerhaft unter ihrer Adresse erreichbar. Vor diesem Update hochgeladene Bilder behalten ihre bisherige Adresse.
+- **Vorschauen der GIF-Suche:** Zwischenspeicher, höchstens vier gleichzeitige Downloads, Limit je IP.
+- **HTTP-Kopfzeilen:** Content Security Policy (nur eigene Skripte, keine eingebetteten), `Referrer-Policy`, `Permissions-Policy`, `X-Content-Type-Options`, HSTS bei `https://`-Adresse; der Admin-Bereich darf nicht eingebettet werden.
+- **Abhängigkeiten:** Die optionalen Datenbank-Treiber werden über `scripts/drivers.sh` aus `go.mod` geholt, sobald sie festgeschrieben sind (Workflow „Treiber festschreiben“ einmal ausführen). Die CI prüft mit `govulncheck` auf bekannte Schwachstellen; Dependabot schlägt Updates vor.
+- **Sitzungen im Browser:** Chat- und Admin-Token liegen im `localStorage` (das Widget läuft auf fremden Webseiten und braucht Tokens statt Cookies). Die Content Security Policy verhindert, dass eingeschleuster Text als Code ausgeführt wird – die Voraussetzung, um ein Token auszulesen.
+
+### Leistung und Grenzen
+
+Alle Nachrichten liegen im Arbeitsspeicher (die Datei bzw. Datenbank ist die dauerhafte Kopie). Gemessen auf 2 CPU-Kernen (`go test -tags loadtest -run Load -v .`, Messwerte reproduzierbar mit `LOAD_N` und `LOAD_CLIENTS`):
+
+| Szenario | Ergebnis |
+|---|---|
+| Speicher je Nachricht | ca. 520 Byte (200.000 Nachrichten ≈ 100 MB, 1 Mio. ≈ 500 MB) |
+| Kaltstart (Dateispeicher) | 200.000 Nachrichten 1,3 s · 1 Mio. Nachrichten 7 s |
+| Admin-Suche über alle Kanäle, 1 Mio. Nachrichten | ca. 1 s (in einem Kanal: 40 ms) |
+| Statistik 30 Tage, 1 Mio. Nachrichten | ca. 140 ms |
+| Senden, während 4 Admin-Suchen parallel laufen (200.000 Nachrichten) | p50 11 ms, p99 18 ms (vorher p50 3,5 s – die Suche hielt die Sperre am Stück) |
+| Eine Nachricht an 1.000 bzw. 5.000 Live-Verbindungen | 16 ms bzw. 120 ms |
+
+Für Installationen bis einige Hunderttausend Nachrichten ist das unkritisch. Wer mehr erwartet, stellt unter **Allgemein → Datenschutz** eine Aufbewahrungsfrist ein – das begrenzt Speicher und Startzeit zuverlässig.
 
 ## Lizenz
 

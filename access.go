@@ -157,9 +157,10 @@ func (h *Hub) RefreshViewer(userID string, team bool, roles []string) {
 			changed = true
 		}
 		if changed {
-			h.broadcast(r, presenceLocked(r))
+			h.presenceSoonLocked(r)
 		}
 	}
+	h.userChangedLocked(userID)
 }
 
 // kickUnreadableLocked beendet Verbindungen, die den Kanal nicht (mehr) lesen dürfen.
@@ -175,6 +176,7 @@ func (h *Hub) DropViewer(userID string, alive []string) {
 			}
 		}
 	}
+	h.userChangedLocked(userID)
 }
 
 func (h *Hub) kickUnreadableLocked(r *room) {
@@ -213,9 +215,25 @@ func (h *Hub) pruneRoomRoles() {
 		if len(wr) == 0 && len(r.writeRoles) > 0 {
 			wr = []string{RoleTeamOnly}
 		}
+		if r.voice != nil && len(r.voice.StageRoles) > 0 {
+			if sr := h.roles.Filter(r.voice.StageRoles); len(sr) != len(r.voice.StageRoles) {
+				c := *r.voice // gespeicherte Einstellungen nie verändern: Kopie
+				c.StageRoles = sr
+				r.voice = &c
+				h.record(storeOp{kind: opRoomMeta, room: r.name})
+			}
+		}
 		if len(rr) != len(r.readRoles) || len(wr) != len(r.writeRoles) || (len(rr) > 0 && rr[0] != r.readRoles[0]) {
 			r.readRoles, r.writeRoles = rr, wr
 			h.record(storeOp{kind: opRoomMeta, room: r.name})
 		}
 	}
+}
+
+// IsRestricted: Sehen nicht alle diesen Kanal (private Kanäle, Direktnachrichten)?
+func (h *Hub) IsRestricted(roomName string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r, ok := h.rooms[roomName]
+	return ok && r.restricted()
 }

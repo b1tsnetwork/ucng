@@ -909,3 +909,17 @@ a.kpi:hover { border-color: var(--accent); }
 .about-line a { color: inherit; }
 .about-line a:hover { color: var(--ink-strong); }
 .about-line .about-warn { color: #ffc266; cursor: help; text-decoration: underline dotted; }
+
+/* Sprachkanäle */
+.voice-relays { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.voice-relays li { display: grid; grid-template-columns: minmax(90px, 160px) 1fr auto auto; gap: 12px; align-items: center; font-size: 14px; }
+.voice-relays li.down { opacity: .6; }
+.voice-relays .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-relays .bar { height: 10px; border-radius: 5px; background: var(--canvas); position: relative; overflow: hidden; }
+.voice-relays .bar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--accent); border-radius: 5px; }
+.voice-relays .num { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+.voice-relays .rule { color: var(--danger); font-size: 12.5px; font-weight: 600; }
+.voice-relay-hint { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+.voice-estimate { margin: -4px 0 12px; color: var(--muted); font-size: 13px; }
+@media (max-width: 760px) { .voice-relays li { grid-template-columns: 1fr auto; } .voice-relays .bar { grid-column: 1 / -1; } }
+.voice-summary { margin: 0; color: var(--muted); font-size: 13.5px; }

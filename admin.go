@@ -135,6 +135,8 @@ func (s *Server) handleAdminUpdateRoom(w http.ResponseWriter, r *http.Request) {
 		// Zugang: fehlt das Feld, bleibt er unverändert; [] = alle.
 		ReadRoles  *[]string `json:"readRoles"`
 		WriteRoles *[]string `json:"writeRoles"`
+		// Sprachkanal: fehlt das Feld, bleibt er unverändert; null = nur Text.
+		Voice json.RawMessage `json:"voice"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -152,7 +154,18 @@ func (s *Server) handleAdminUpdateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ri := RoomInput{Name: in.Name, Description: in.Description, SlowMode: cur.SlowMode, Links: cur.Links,
-		BotSlowMode: cur.BotSlowMode, BotLinks: cur.BotLinks, ReadRoles: cur.ReadRoles, WriteRoles: cur.WriteRoles}
+		BotSlowMode: cur.BotSlowMode, BotLinks: cur.BotLinks, ReadRoles: cur.ReadRoles, WriteRoles: cur.WriteRoles, Voice: cur.Voice}
+	if len(in.Voice) > 0 {
+		ri.Voice = nil
+		if string(in.Voice) != "null" {
+			var v VoiceConfig
+			if err := json.Unmarshal(in.Voice, &v); err != nil {
+				writeErr(w, http.StatusBadRequest, "Ungültige Einstellungen für den Sprachkanal")
+				return
+			}
+			ri.Voice = &v
+		}
+	}
 	if in.ReadRoles != nil {
 		ri.ReadRoles = *in.ReadRoles
 	}
@@ -191,6 +204,12 @@ func (s *Server) handleAdminUpdateRoom(w http.ResponseWriter, r *http.Request) {
 			detail += ", "
 		}
 		detail += "Zugang: " + s.roleListText(info.ReadRoles) + "; Schreiben: " + s.roleListText(info.WriteRoles)
+	}
+	if (info.Voice == nil) != (cur.Voice == nil) || (info.Voice != nil && !info.Voice.equal(cur.Voice)) {
+		if detail != "" {
+			detail += ", "
+		}
+		detail += "Sprache: " + info.Voice.describe()
 	}
 	s.log(r, AuditEntry{Action: "room.update", Room: info.Name, Detail: detail})
 	writeJSON(w, http.StatusOK, info)

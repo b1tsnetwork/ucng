@@ -12,12 +12,8 @@ ARG TARGETARCH
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY . .
-RUN for t in $TAGS; do \
-      case "$t" in \
-        sqlite) go get modernc.org/sqlite ;; \
-        mysql)  go get github.com/go-sql-driver/mysql ;; \
-      esac; \
-    done && \
+# Treiber: Version aus go.mod, sofern festgeschrieben (scripts/drivers.sh)
+RUN sh scripts/drivers.sh $TAGS && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -tags "$TAGS" -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.sourceURL=$SOURCE_URL" -o /ucng .
 

@@ -202,10 +202,28 @@ func (ml *MediaLib) removeMedia(sub, name string) {
 	}
 }
 
-func (ml *MediaLib) process(data []byte, box int, emote, requireGIF bool) (ScaledImage, error) {
-	ml.work <- struct{}{}
+// ErrBusy: Die Bildverarbeitung ist gerade ausgelastet.
+var ErrBusy = errors.New("Der Server ist gerade ausgelastet – bitte gleich noch einmal versuchen")
+
+// runImage führt fn aus, sobald die Bildverarbeitung frei ist (höchstens zwei gleichzeitig).
+// Wartet höchstens 20 Sekunden – sonst sammeln sich Anfragen samt Dateien im Speicher.
+func (ml *MediaLib) runImage(data []byte, fn func() (ScaledImage, error)) (ScaledImage, error) {
+	if _, _, err := checkImage(data); err != nil { // billig – vor dem Warten ablehnen
+		return ScaledImage{}, err
+	}
+	t := time.NewTimer(20 * time.Second)
+	defer t.Stop()
+	select {
+	case ml.work <- struct{}{}:
+	case <-t.C:
+		return ScaledImage{}, ErrBusy
+	}
 	defer func() { <-ml.work }()
-	return ProcessImage(data, box, box, emote, requireGIF)
+	return fn()
+}
+
+func (ml *MediaLib) process(data []byte, box int, emote, requireGIF bool) (ScaledImage, error) {
+	return ml.runImage(data, func() (ScaledImage, error) { return ProcessImage(data, box, box, emote, requireGIF) })
 }
 
 // --- Emotes ---

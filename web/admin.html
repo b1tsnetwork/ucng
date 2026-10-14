@@ -176,6 +176,12 @@
           <h2 class="panel-title" data-i18n-html="admin.aktivste_kanaele_letzte_30_tage">Aktivste Kanäle <small>letzte 30 Tage</small></h2>
           <ul class="top-rooms" id="topRooms"></ul>
         </div>
+        <div class="panel" id="voicePanel" hidden>
+          <h2 class="panel-title" data-i18n-html="admin.voice_panel_title">Sprach-Server <small>Relays und Auslastung</small></h2>
+          <p class="voice-summary" id="voiceSummary"></p>
+          <ul class="voice-relays" id="voiceRelays"></ul>
+          <p class="voice-relay-hint" id="voiceRelayHint"></p>
+        </div>
       </section>
 
       <!-- Allgemein -->
@@ -1128,6 +1134,62 @@
           <span data-i18n-html="admin.schreiben_leer_alle_die_lesen_duerfen">Schreiben <em>(leer = alle, die lesen dürfen)</em></span>
           <div class="role-picks" id="roomWriteRoles"></div>
           <small data-i18n="admin.z_b_ein_ankuendigungskanal_alle_lesen">Z. B. ein Ankündigungskanal: alle lesen und reagieren, nur die Redaktion schreibt.</small>
+        </div>
+      </fieldset>
+      <fieldset class="sub-set" id="roomVoiceSet">
+        <legend data-i18n="admin.voice_legend">Sprachkanal</legend>
+        <label class="switch-row">
+          <span class="switch-text">
+            <strong data-i18n="admin.voice_on">Auch als Sprachkanal nutzen</strong>
+            <small data-i18n="admin.voice_on_hint">Wer den Kanal lesen darf, kann beitreten und zuhören. Sprechen dürfen alle, die schreiben dürfen – mit den Einschränkungen unten.</small>
+          </span>
+          <input type="checkbox" class="switch" id="roomVoiceOn">
+        </label>
+        <div id="roomVoiceOpts">
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.voice_preset">Klang</span>
+              <select id="roomVoicePreset">
+                <option value="sparsam" data-i18n="admin.voice_preset_sparsam">Sparsam (16 kbit/s)</option>
+                <option value="standard" data-i18n="admin.voice_preset_standard">Standard (24 kbit/s)</option>
+                <option value="hoch" data-i18n="admin.voice_preset_hoch">Hoch (40 kbit/s)</option>
+                <option value="musik" data-i18n="admin.voice_preset_musik">Musik (96 kbit/s, Stereo)</option>
+              </select>
+              <small data-i18n="admin.voice_preset_hint">Musik schaltet Echo- und Rauschunterdrückung ab – für Instrumente und Wiedergabe, mit Kopfhörern.</small>
+            </label>
+            <label class="field">
+              <span data-i18n="admin.voice_guests">Gäste ohne Konto</span>
+              <select id="roomVoiceGuests">
+                <option value="speak" data-i18n="admin.voice_guests_speak">Dürfen sprechen</option>
+                <option value="listen" data-i18n="admin.voice_guests_listen">Nur zuhören</option>
+                <option value="none" data-i18n="admin.voice_guests_none">Kein Zutritt</option>
+              </select>
+              <small data-i18n="admin.voice_guests_hint">Gast ist, wer kein Konto, keine Rolle und kein Team-Abzeichen hat.</small>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.voice_max_peers">Teilnehmer höchstens</span>
+              <input type="number" id="roomVoicePeers" min="2" max="1000" step="1">
+            </label>
+            <label class="field">
+              <span data-i18n="admin.voice_max_speakers">Sprecher gleichzeitig</span>
+              <input type="number" id="roomVoiceSpeakers" min="1" max="16" step="1">
+              <small data-i18n="admin.voice_max_speakers_hint">Sprechen mehr gleichzeitig, sind die lautesten zu hören. Bestimmt die Bandbreite je Zuhörer.</small>
+            </label>
+          </div>
+          <p class="voice-estimate" id="roomVoiceEstimate"></p>
+          <label class="switch-row">
+            <span class="switch-text">
+              <strong data-i18n="admin.voice_stage">Bühne</strong>
+              <small data-i18n="admin.voice_stage_hint">Nur das Team und die gewählten Rollen sprechen. Andere hören zu, können sich melden und von Moderierenden freigeschaltet werden.</small>
+            </span>
+            <input type="checkbox" class="switch" id="roomVoiceStage">
+          </label>
+          <div class="field" id="roomVoiceStageRow">
+            <span data-i18n="admin.voice_stage_roles">Rollen auf der Bühne</span>
+            <div class="role-picks" id="roomVoiceStageRoles"></div>
+          </div>
         </div>
       </fieldset>
       <fieldset class="sub-set">

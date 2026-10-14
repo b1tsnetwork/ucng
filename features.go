@@ -375,6 +375,19 @@ func normSearch(s string) string {
 	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
 }
 
+// searchChunk: so viele Nachrichten werden am Stück unter der Sperre durchsucht. Danach wird
+// die Sperre kurz freigegeben, damit Senden und Lesen nicht hinter einer langen Suche warten.
+const searchChunk = 2000
+
+// matches prüft, ob der normalisierte Suchbegriff q im Text vorkommt (ohne Umwege über
+// Zwischen-Strings, solange der Begriff kein Leerzeichen enthält).
+func matches(hay, q string) bool {
+	if strings.Contains(q, " ") {
+		return strings.Contains(normSearch(hay), q)
+	}
+	return strings.Contains(strings.ToLower(hay), q)
+}
+
 // Search durchsucht einen Kanal (roomName = "" nur für Admins: alle Kanäle), neueste zuerst.
 // admin = true durchsucht auch Originaltexte gelöschter Nachrichten und Namen.
 func (h *Hub) Search(roomName, q string, admin bool, limit int) ([]SearchHit, error) {
@@ -386,11 +399,11 @@ func (h *Hub) Search(roomName, q string, admin bool, limit int) ([]SearchHit, er
 		limit = 50
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	var rooms []*room
 	if roomName != "" {
 		r, ok := h.rooms[roomName]
 		if !ok {
+			h.mu.Unlock()
 			return nil, ErrNoRoom
 		}
 		rooms = []*room{r}
@@ -399,22 +412,48 @@ func (h *Hub) Search(roomName, q string, admin bool, limit int) ([]SearchHit, er
 			rooms = append(rooms, r)
 		}
 	} else {
+		h.mu.Unlock()
 		return nil, ErrNoRoom
 	}
+	h.mu.Unlock()
+
 	hits := []SearchHit{}
 	for _, r := range rooms {
 		n := 0
-		for i := len(r.history) - 1; i >= 0 && n < limit; i-- {
-			m := r.history[i]
-			hay := m.Text
-			if admin {
-				hay += "\n" + m.Original + "\n" + m.Name
-			} else if m.Deleted {
-				continue
+		cursor := int64(-1) // ID der zuletzt geprüften Nachricht (-1 = von hinten beginnen)
+		for n < limit {
+			h.mu.Lock()
+			if h.rooms[r.name] != r { // inzwischen gelöscht oder umbenannt
+				h.mu.Unlock()
+				break
 			}
-			if strings.Contains(normSearch(hay), q) {
-				hits = append(hits, SearchHit{Room: r.name, Message: h.out(r, m, admin)})
-				n++
+			i := len(r.history) - 1
+			if cursor >= 0 {
+				j, _ := r.find(cursor) // Position kann sich durch Löschungen verschoben haben
+				i = j - 1
+			}
+			stop := i - searchChunk
+			for ; i >= 0 && i > stop && n < limit; i-- {
+				m := &r.history[i]
+				if !admin && m.Deleted {
+					continue
+				}
+				ok := matches(m.Text, q)
+				if !ok && admin {
+					ok = matches(m.Original, q) || matches(m.Name, q)
+				}
+				if ok {
+					hits = append(hits, SearchHit{Room: r.name, Message: h.out(r, *m, admin)})
+					n++
+				}
+			}
+			done := i < 0
+			if !done {
+				cursor = r.history[i+1].ID
+			}
+			h.mu.Unlock()
+			if done {
+				break
 			}
 		}
 	}
@@ -536,24 +575,50 @@ func (h *Hub) Stats(days int, now time.Time) Stats {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	first := today.AddDate(0, 0, -(days - 1))
 	st := Stats{Days: make([]DayStat, days)}
-	idx := map[string]int{}
+	idx := map[int]int{} // JJJJMMTT → Tag (ohne Zeichenketten je Nachricht)
+	dayKey := func(t time.Time) int { y, m, d := t.In(loc).Date(); return y*10000 + int(m)*100 + d }
 	users := make([]map[string]bool, days)
 	for i := 0; i < days; i++ {
-		d := first.AddDate(0, 0, i).Format("2006-01-02")
-		st.Days[i] = DayStat{Day: d}
-		idx[d] = i
+		day := first.AddDate(0, 0, i)
+		st.Days[i] = DayStat{Day: day.Format("2006-01-02")}
+		idx[dayKey(day)] = i
 		users[i] = map[string]bool{}
 	}
 	h.mu.Lock()
 	st.Rooms = len(h.rooms)
 	st.Pending = len(h.pending)
+	rooms := make([]*room, 0, len(h.rooms))
 	for _, r := range h.rooms {
+		rooms = append(rooms, r)
+	}
+	h.mu.Unlock()
+	// Je Kanal und in Blöcken auswerten – die Sperre wird zwischendurch freigegeben.
+	for _, r := range rooms {
+		h.mu.Lock()
+		if h.rooms[r.name] != r {
+			h.mu.Unlock()
+			continue
+		}
 		st.Messages += len(r.history)
 		st.Online += len(r.clients)
 		rs := RoomStat{Room: r.name}
+		kind := r.kind
 		start := sort.Search(len(r.history), func(i int) bool { return !r.history[i].Time.Before(first) })
-		for _, m := range r.history[start:] {
-			i, ok := idx[m.Time.In(loc).Format("2006-01-02")]
+		for k := start; k < len(r.history); k++ {
+			if (k-start)%searchChunk == searchChunk-1 { // kurz freigeben, dann an derselben Nachricht weiter
+				id := r.history[k].ID
+				h.mu.Unlock()
+				h.mu.Lock()
+				if h.rooms[r.name] != r {
+					break
+				}
+				k, _ = r.find(id)
+				if k >= len(r.history) {
+					break
+				}
+			}
+			m := &r.history[k]
+			i, ok := idx[dayKey(m.Time)]
 			if !ok {
 				continue
 			}
@@ -573,13 +638,13 @@ func (h *Hub) Stats(days int, now time.Time) Stats {
 				users[i][key] = true
 			}
 		}
+		h.mu.Unlock()
 		if rs.Messages > 0 {
-			if r.kind != RoomDM { // Direktnachrichten nicht namentlich in der Übersicht
+			if kind != RoomDM { // Direktnachrichten nicht namentlich in der Übersicht
 				st.TopRooms = append(st.TopRooms, rs)
 			}
 		}
 	}
-	h.mu.Unlock()
 	for i := range st.Days {
 		st.Days[i].Users = len(users[i])
 		st.Period += st.Days[i].Messages

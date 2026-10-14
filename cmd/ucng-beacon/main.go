@@ -19,7 +19,6 @@ import (
 	"flag"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,6 +28,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"ucng/internal/clientip"
+	"ucng/internal/webstatic"
 
 	"ucng/internal/i18n"
 )
@@ -52,6 +53,7 @@ type Config struct {
 	HTTPSOnly     bool // nur Instanzen mit https:// annehmen
 	PublicOnly    bool // keine Verbindungen zu Adressen im lokalen Netz
 	TrustProxy    bool
+	TrustedProxy  string // vertrauenswürdige Proxys (leer = Loopback und private Netze)
 	GifBox        int    // GIFs passen in einen Rahmen dieser Größe
 	NoPorts       bool   // Instanzen mit Port in der Adresse ablehnen
 	SourceURL     string // Quellcode dieser Fassung (AGPL)
@@ -72,7 +74,8 @@ func loadConfig() Config {
 	flag.StringVar(&c.PublicURL, "public-url", env("PUBLIC_URL", ""), "Öffentliche Adresse des Beacons, z. B. https://beacon.example.org")
 	flag.BoolVar(&c.HTTPSOnly, "https-only", env("HTTPS_ONLY", "") == "1", "nur Instanzen mit https:// annehmen")
 	flag.BoolVar(&c.PublicOnly, "public-only", env("PUBLIC_ONLY", "") == "1", "nur Instanzen mit öffentlicher IP-Adresse annehmen (keine im lokalen Netz)")
-	flag.BoolVar(&c.TrustProxy, "trust-proxy", env("TRUST_PROXY", "") == "1", "Client-IP aus X-Forwarded-For")
+	flag.BoolVar(&c.TrustProxy, "trust-proxy", env("TRUST_PROXY", "") == "1", "Client-IP aus X-Forwarded-For (nur von vertrauenswürdigen Proxys)")
+	flag.StringVar(&c.TrustedProxy, "trusted-proxies", env("TRUSTED_PROXIES", ""), "Vertrauenswürdige Proxys: IP-Adressen oder Netze, kommagetrennt (leer = Loopback und private Netze)")
 	flag.BoolVar(&c.NoPorts, "no-ports", env("NO_PORTS", "") == "1", "Instanzen mit Port in der Adresse (chat.example.org:8443) ablehnen")
 	flag.StringVar(&c.SourceURL, "source-url", env("SOURCE_URL", sourceURL), "Adresse des Quellcodes dieser Fassung (AGPL – bei eigenen Änderungen auf dein Repository setzen)")
 	box, _ := strconv.Atoi(env("GIF_SIZE", "480"))
@@ -87,6 +90,7 @@ func loadConfig() Config {
 }
 
 type Server struct {
+	ipr    *clientip.Resolver
 	cfg    Config
 	store  *Store
 	admin  *adminAuth
@@ -103,6 +107,12 @@ func NewServer(cfg Config, store *Store) *Server {
 	s := &Server{cfg: cfg, store: store, admin: newAdminAuth(cfg.AdminPassword), seen: map[string]time.Time{},
 		regRL: newLimiter(20, time.Hour), readRL: newLimiter(240, time.Minute)}
 	s.client = newClient(cfg.PublicOnly)
+	ipr, err := clientip.New(cfg.TrustProxy, cfg.TrustedProxy)
+	if err != nil {
+		log.Printf("%v – es gelten die Standard-Proxys (Loopback und private Netze)", err)
+		ipr, _ = clientip.New(cfg.TrustProxy, "")
+	}
+	s.ipr = ipr
 	cat, err := openCatalog(store.dir)
 	if err != nil {
 		panic("Sprachdateien: " + err.Error()) // eingebettet – nur bei kaputtem Build
@@ -117,10 +127,19 @@ func NewServer(cfg Config, store *Store) *Server {
 	return s
 }
 
+// staticFiles: die eingebettete Oberfläche – einmal je Prozess eingelesen und gepackt.
+var staticFiles = sync.OnceValue(func() *webstatic.Handler {
+	static, _ := fs.Sub(webFiles, "web")
+	h, err := webstatic.New(static)
+	if err != nil {
+		panic("Oberfläche: " + err.Error())
+	}
+	return h
+})
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	static, _ := fs.Sub(webFiles, "web")
-	mux.Handle("GET /", http.FileServer(http.FS(static)))
+	mux.Handle("GET /", staticFiles()) // gzip, ETag, versionierte Adressen
 
 	// öffentlich
 	mux.HandleFunc("GET /api/v1/info", s.cors(s.handleInfo))
@@ -165,8 +184,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		if !strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/media/") {
-			w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'")
 		}
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -183,18 +203,7 @@ func (s *Server) cors(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) clientIP(r *http.Request) string {
-	if s.cfg.TrustProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			return strings.TrimSpace(strings.Split(xff, ",")[0])
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+func (s *Server) clientIP(r *http.Request) string { return s.ipr.IP(r) }
 
 func (s *Server) baseURL(r *http.Request) string {
 	if s.cfg.PublicURL != "" {
@@ -219,7 +228,8 @@ func main() {
 	}
 	srv := NewServer(cfg, store)
 	go srv.backfillPreviews()
-	httpSrv := &http.Server{Addr: cfg.Addr, Handler: srv.Routes(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+	httpSrv := &http.Server{Addr: cfg.Addr, Handler: srv.Routes(), ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 2 * time.Minute, WriteTimeout: 5 * time.Minute, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

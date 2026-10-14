@@ -8,7 +8,8 @@
 #
 # Der Port ist nur lokal erreichbar (127.0.0.1) – davor gehört ein Reverse-Proxy mit HTTPS
 # (Caddy, nginx, Traefik …), der auf http://127.0.0.1:${UCNG_PORT:-8080} weiterleitet.
-# Wichtig für den Proxy: Server-Sent Events (Puffer aus, lange Timeouts).
+# Wichtig für den Proxy: Server-Sent Events (Puffer aus, lange Timeouts) und WebSockets
+# für die Sprachkanäle (Upgrade-Kopfzeilen, siehe README → Sprachkanäle).
 
 name: ucng
 
@@ -28,8 +29,14 @@ services:
       MODE: ${MODE:-simple}
       # files (Standard) oder sqlite – beides im Volume /data
       STORAGE: ${STORAGE:-files}
-      # Hinter dem Reverse-Proxy: echte Client-IP aus X-Forwarded-For
+      # Hinter dem Reverse-Proxy: echte Client-IP aus X-Forwarded-For – nur von vertrauenswürdigen
+      # Proxys (Standard: Loopback und private Netze, z. B. das Docker-Netz). Bei einem CDN davor
+      # dessen Adressbereiche in TRUSTED_PROXIES ergänzen.
       TRUST_PROXY: "1"
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      # Gleichzeitige Live-Verbindungen (jeder offene Tab ist eine)
+      MAX_STREAMS: ${MAX_STREAMS:-10000}
+      MAX_STREAMS_PER_IP: ${MAX_STREAMS_PER_IP:-50}
       # Zusätzlich erlaubte Seiten für das Widget (kommagetrennt), sonst Einstellung im Admin
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
@@ -37,6 +44,13 @@ services:
       # Nur setzen, wenn du eine eigene, veränderte Fassung betreibst (AGPL):
       # Adresse deines Quellcodes. Offizielle Images bringen sie schon mit.
       SOURCE_URL: ${SOURCE_URL:-}
+      # Sprachkanäle: eingebauter Relay (Grenzen) und Schlüssel für weitere Sprach-Server
+      # (deploy/voice). Der Reverse-Proxy muss WebSockets durchreichen (/api/voice/ws).
+      VOICE: ${VOICE:-1}
+      VOICE_BUILTIN: ${VOICE_BUILTIN:-1}
+      VOICE_MAX_PARTICIPANTS: ${VOICE_MAX_PARTICIPANTS:-200}
+      VOICE_MAX_MBIT: ${VOICE_MAX_MBIT:-50}
+      VOICE_AGENT_TOKEN: ${VOICE_AGENT_TOKEN:-}
       TZ: ${TZ:-Europe/Berlin}
     volumes:
       # Kanäle, Nachrichten, Einstellungen, Bilder und Backups (/data/backups)

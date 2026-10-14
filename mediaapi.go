@@ -64,6 +64,22 @@ func (s *Server) handleGIFPreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Vorschau abgelaufen – bitte neu suchen")
 		return
 	}
+	if it, ok := s.previews.get(id); ok {
+		w.Header().Set("Content-Type", it.ct)
+		w.Header().Set("Cache-Control", "private, max-age=1800")
+		w.Write(it.data)
+		return
+	}
+	if !s.previewRL.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "Zu viele Vorschauen – bitte kurz warten.")
+		return
+	}
+	release, ok := s.previews.acquire()
+	if !ok {
+		fail(w, ErrBusy)
+		return
+	}
+	defer release()
 	// Ältere Beacons liefern keine kleine Vorschau, dann ist es das GIF selbst (bis 20 MB).
 	limit := int64(maxPreview)
 	if strings.HasPrefix(id, "beacon:") {
@@ -79,6 +95,7 @@ func (s *Server) handleGIFPreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "Vorschau nicht verfügbar")
 		return
 	}
+	s.previews.put(id, data, ct)
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "private, max-age=1800")
 	w.Write(data)
@@ -94,6 +111,18 @@ func (s *Server) handleMediaFile(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(s.hub.Media().Dir(), kind, file)
 	if _, err := os.Stat(path); err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	if kind == "uploads" && strings.HasPrefix(file, privateUploadPrefix) {
+		// Bild aus einem privaten Kanal: nur mit gültiger, befristeter Signatur
+		q := r.URL.Query()
+		if !s.hub.checkMediaSig(file, q.Get("exp"), q.Get("sig")) {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		http.ServeFile(w, r, path)
 		return
 	}
 	// Dateinamen enthalten Zufall bzw. Größe – sie ändern sich nie.

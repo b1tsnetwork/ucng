@@ -22,11 +22,12 @@ type PublicSettings struct {
 	Mode        string        `json:"appMode"` // simple oder hosted (nicht verwechseln mit Settings.Mode = Farbschema)
 	Hosted      *PublicHosted `json:"hosted,omitempty"`
 	About       AboutInfo     `json:"about"` // Version, Lizenz, Quellcode (AGPL)
+	Voice       bool          `json:"voice"` // Sprachkanäle verfügbar
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, PublicSettings{Settings: s.hub.Settings(), Reactions: s.hub.Media().Reactions().Reactions, EditMinutes: int(EditWindow / time.Minute),
-		Mode: s.cfg.Mode, Hosted: s.publicHosted(), About: s.about()})
+		Mode: s.cfg.Mode, Hosted: s.publicHosted(), About: s.about(), Voice: s.voice != nil})
 }
 
 func (s *Server) handleRooms(w http.ResponseWriter, r *http.Request) {
@@ -477,19 +478,9 @@ func (s *Server) viewerOf(r *http.Request) *Viewer {
 // handleEvents streamt Nachrichten per Server-Sent Events.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) { s.streamEvents(w, r, false) }
 
-// handleAdminEvents: Live-Stream für die Moderation (Token als ?t=, weil EventSource keine Header kann).
+// handleAdminEvents: Live-Stream für die Moderation (Token als Authorization-Kopfzeile).
 func (s *Server) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 	s.streamEvents(w, r, true)
-}
-
-// tokenFromQuery übernimmt ?t= als Bearer-Token (nur für den Admin-Stream).
-func tokenFromQuery(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") == "" && r.URL.Query().Get("t") != "" {
-			r.Header.Set("Authorization", "Bearer "+r.URL.Query().Get("t"))
-		}
-		next(w, r)
-	}
 }
 
 func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, admin bool) {
@@ -498,6 +489,15 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, admin bool
 		writeErr(w, http.StatusInternalServerError, "Streaming nicht unterstützt")
 		return
 	}
+	key := "ip:" + s.clientIP(r)
+	if admin {
+		key = "admin:" + key
+	}
+	release, ok := s.streamSlot(w, key)
+	if !ok {
+		return
+	}
+	defer release()
 	roomName := NormRoom(r.PathValue("room"))
 	var ch chan Event
 	var hist []Message

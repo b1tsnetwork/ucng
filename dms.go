@@ -184,11 +184,11 @@ func (h *Hub) HasRoom(name string) bool {
 	return ok
 }
 
-// NotifyUser schickt ein Ereignis an alle Verbindungen (nur die genannte Person reagiert).
+// NotifyUser schickt ein Ereignis nur an die Verbindungen der genannten Person.
 func (h *Hub) NotifyUser(typ, userID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.broadcastAll(Event{Type: typ, User: userID})
+	h.sendToUserLocked(userID, Event{Type: typ, User: userID})
 }
 
 // IsChannel: gibt es den Kanal (keine Direktnachricht)?
