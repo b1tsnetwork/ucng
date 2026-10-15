@@ -116,6 +116,23 @@
         <div class="pin-list" id="pinList" hidden></div>
       </div>
 
+      <section class="screen-view" id="screenView" hidden aria-label="Bildschirmfreigabe" data-i18n-aria-label="voice.screen_panel">
+        <header class="screen-head">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M10 13.5V17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <b id="screenTitle"></b>
+          <button type="button" class="icon-btn" id="screenFull" aria-label="Vollbild" title="Vollbild (Doppelklick aufs Bild)" data-i18n-aria-label="voice.screen_fullscreen" data-i18n-title="voice.screen_fullscreen_hint">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 7.5v-4h4M12.5 3.5h4v4M16.5 12.5v4h-4M7.5 16.5h-4v-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="screenClose" aria-label="Nicht mehr zusehen" title="Nicht mehr zusehen" data-i18n-aria-label="voice.screen_unwatch" data-i18n-title="voice.screen_unwatch">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </header>
+        <div class="screen-stage">
+          <canvas id="screenCanvas" width="16" height="9"></canvas>
+          <span class="screen-wait" data-i18n="voice.screen_loading">Bild wird geladen …</span>
+        </div>
+      </section>
+
       <div class="messages" id="messages" aria-live="polite"></div>
 
       <aside class="thread-panel" id="threadPanel" aria-label="Thread" hidden data-i18n-aria-label="app.thread">
@@ -439,6 +456,7 @@
   <script src="/i18n.js"></script>
   <script src="/embed/format.js"></script>
   <script src="/account.js"></script>
+  <script src="/voice-screen.js"></script>
   <script src="/voice.js"></script>
   <script src="/app.js"></script>
 </body>

@@ -34,9 +34,12 @@ const (
 	CmdOnline = "online"
 	CmdChoose = "choose"
 	CmdPoll   = "poll" // Umfrage: die Person selbst postet eine Umfrage (kein Bot-Text)
+	// Temporärer Kanal: legt einen Kanal an, der sich nach einer Weile ohne Personen selbst löscht
+	// (Recht „temporäre Kanäle“ in den Rollen; Einstellungen unter Kanäle → Temporäre Kanäle)
+	CmdTempRoom = "temproom"
 )
 
-var cmdKinds = map[string]bool{CmdText: true, CmdHelp: true, CmdDice: true, CmdCoin: true, CmdTime: true, CmdOnline: true, CmdChoose: true, CmdPoll: true}
+var cmdKinds = map[string]bool{CmdText: true, CmdHelp: true, CmdDice: true, CmdCoin: true, CmdTime: true, CmdOnline: true, CmdChoose: true, CmdPoll: true, CmdTempRoom: true}
 
 type Command struct {
 	ID          string   `json:"id"`
@@ -73,11 +76,17 @@ var (
 	ErrCmdTooMany  = errors.New("Höchstens 200 Befehle")
 )
 
-const commandsVersion = 2
+const commandsVersion = 3
 
 func pollCommand() Command {
 	return Command{ID: "c_umfrage", Trigger: "umfrage", Aliases: []string{"poll", "abstimmung"}, Kind: CmdPoll, Enabled: true,
 		Description: "Umfrage starten: !umfrage Frage? | Antwort 1 | Antwort 2"}
+}
+
+func tempRoomCommand() Command {
+	return Command{ID: "c_kanal", Trigger: "kanal", Aliases: []string{"room", "temp"}, Kind: CmdTempRoom, Enabled: true, Ephemeral: true,
+		Description: "Eigenen temporären Kanal anlegen: !kanal Name",
+		Response:    "✅ Dein Kanal **#{result}** ist bereit. Er löscht sich selbst, wenn eine Weile niemand mehr drin ist."}
 }
 
 func defaultCommands() CommandsConfig {
@@ -96,6 +105,7 @@ func defaultCommands() CommandsConfig {
 		{ID: "c_online", Trigger: "online", Aliases: []string{"wer"}, Kind: CmdOnline, Enabled: true, Cooldown: 10,
 			Description: "Wer ist gerade hier?", Response: "👥 {result}"},
 		pollCommand(),
+		tempRoomCommand(),
 		{ID: "c_waehle", Trigger: "wähle", Aliases: []string{"waehle", "choose"}, Kind: CmdChoose, Enabled: true, Reply: true,
 			Description: "Zufällig wählen: !wähle Pizza | Pasta", Response: "🤔 Ich nehme: **{result}**"},
 	}}
@@ -249,6 +259,16 @@ func (c *Commands) restore(in CommandsConfig) error {
 		if !has {
 			in.Commands = append(in.Commands, pollCommand())
 		}
+		in.Version = 2
+	}
+	if in.Version < 3 { // Update: temporäre Kanäle kamen dazu
+		has := false
+		for _, cmd := range in.Commands {
+			has = has || cmd.Kind == CmdTempRoom || cmd.Trigger == "kanal"
+		}
+		if !has {
+			in.Commands = append(in.Commands, tempRoomCommand())
+		}
 		in.Version = commandsVersion
 	}
 	out, err := validateCommands(in)
@@ -382,6 +402,22 @@ func (c *Commands) PollArgs(text, room string, team bool) (string, string, bool)
 		return "", "", false
 	}
 	return args, cfg.Prefix + cmd.Trigger, true
+}
+
+// Match: Ist text ein eingeschalteter Befehl der Art kind, den diese Person hier nutzen darf?
+// Liefert den Befehl und die Argumente.
+func (c *Commands) Match(text, room string, team bool, kind string) (Command, string, string, bool) {
+	c.mu.Lock()
+	cfg := c.cfg
+	c.mu.Unlock()
+	if !cfg.Enabled || !strings.HasPrefix(strings.TrimSpace(text), cfg.Prefix) {
+		return Command{}, "", "", false
+	}
+	cmd, args := cfg.find(text)
+	if cmd == nil || cmd.Kind != kind || !cmd.Enabled || !cmd.inRoom(room) || (cmd.TeamOnly && !team) {
+		return Command{}, "", "", false
+	}
+	return *cmd, args, cfg.Prefix, true
 }
 
 // IsEphemeral: Ist text ein privater Befehl, den diese Person hier nutzen darf?
@@ -538,6 +574,8 @@ func (c *Commands) result(cmd *Command, cfg CommandsConfig, args string, ctx Cmd
 			return "", ctx.tr(err.Error()) + " " + ctx.tr(fmt.Sprintf("So geht's: %s Frage? | Antwort 1 | Antwort 2", cfg.Prefix+cmd.Trigger)) //i18n
 		}
 		return "", ctx.tr("(Erstellt eine Umfrage von dir – keine Antwort des Bots.)") //i18n
+	case CmdTempRoom:
+		return "", ctx.tr("(Legt einen temporären Kanal an – nur mit dem Rollen-Recht „Temporäre Kanäle“.)") //i18n
 	}
 	return "", ""
 }

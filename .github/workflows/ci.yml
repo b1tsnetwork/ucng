@@ -52,6 +52,8 @@ jobs:
         run: go test -race -count=1 ./...
 
       - name: Schwachstellen (govulncheck)
+        # Immer die neueste Fassung: govulncheck muss die Go-Version kennen, mit der gebaut wird –
+        # eine alte, fest eingetragene Version bricht bei neuen Go-Releases ab (Absturz im SSA-Builder).
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
       - name: JavaScript-Syntax

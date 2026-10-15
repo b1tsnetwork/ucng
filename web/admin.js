@@ -410,6 +410,7 @@
     renderRooms();
     fillRoomSelects();
     fillStartRoom(true);
+    if (tempCfg) fillTempForm(); else loadTempRooms();
   }
 
   // Anordnung speichern (Gruppen, Reihenfolge) und neu zeichnen.
@@ -458,6 +459,8 @@
     const acc = roomAccessLabel(r);
     if (acc) stats.append(el("span", "rule access", acc));
     if (r.botLinks === "none") stats.append(el("span", "rule", _t("admin.bots_ohne_links")));
+    if (r.temp) stats.append(el("span", "rule temp", _t("admin.temp_badge", { min: r.temp.idleMinutes, owner: r.temp.ownerName || (r.temp.by || "").replace(/^bot:.*/, "Bot") })));
+    else if (r.createdBy) stats.append(el("span", "rule", _t("admin.bot_created")));
     if (r.voice) stats.append(el("span", "rule voice", _t(r.voice.stage ? "admin.voice_badge_stage" : "admin.voice_badge", { n: (voicePeers[r.name] || 0) })));
     if (r.automod && r.automod !== "global") stats.append(el("span", "rule", AM_MODES[r.automod]));
     const actions = el("div", "room-actions");
@@ -601,6 +604,10 @@
     $("roomVoiceSpeakers").value = v ? v.maxSpeakers : 4;
     $("roomVoiceStage").checked = !!(v && v.stage);
     fillRolePicks("roomVoiceStageRoles", v ? v.stageRoles || [] : [], true);
+    $("roomScreenMode").value = v ? v.screen || "" : "speakers";
+    $("roomScreenQuality").value = v && v.screenQuality ? v.screenQuality : "standard";
+    $("roomScreenMax").value = v && v.maxScreens ? v.maxScreens : 1;
+    fillRolePicks("roomScreenRoles", v ? v.screenRoles || [] : [], true);
     $("roomVoiceSet").hidden = !voiceAvailable;
     syncVoiceFields();
     $("roomDialogTitle").textContent = r ? _t("admin.x_edit", { name: "#" + r.name }) : _t("admin.kanal_anlegen");
@@ -627,20 +634,69 @@
   }
   $("newRoomBtn").addEventListener("click", () => openRoomDialog(null));
 
+  // ---------- Temporäre Kanäle ----------
+
+  let tempCfg = null;
+  async function loadTempRooms() {
+    try { tempCfg = await api("GET", "/api/admin/temprooms"); } catch { return; }
+    fillTempForm();
+  }
+  function fillTempForm() {
+    if (!tempCfg) return;
+    const c = tempCfg;
+    $("tempEnabled").checked = !!c.enabled;
+    $("tempIdle").value = c.idleMinutes;
+    $("tempMaxTotal").value = c.maxTotal;
+    $("tempMaxUser").value = c.maxPerUser;
+    const sel = $("tempGroup");
+    sel.replaceChildren(new Option(_t("admin.ohne_gruppe"), ""), ...(layout.groups || []).map((g) => new Option(g.name, g.id)));
+    sel.value = c.group || "";
+    $("tempVoice").value = c.voice ? c.voice.preset : "";
+    $("tempScreen").value = c.voice && c.voice.screen === "speakers" ? "speakers" : "";
+    $("tempGuests").value = c.voice ? c.voice.guests : "speak";
+    $("tempVoiceMore").hidden = !c.voice;
+    $("tempError").textContent = "";
+  }
+  $("tempVoice").addEventListener("change", () => { $("tempVoiceMore").hidden = !$("tempVoice").value; });
+  $("tempForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const preset = $("tempVoice").value;
+    const body = {
+      enabled: $("tempEnabled").checked, idleMinutes: parseInt($("tempIdle").value, 10) || 5,
+      maxTotal: parseInt($("tempMaxTotal").value, 10) || 20, maxPerUser: parseInt($("tempMaxUser").value, 10) || 1,
+      group: $("tempGroup").value,
+      voice: preset ? Object.assign({}, tempCfg && tempCfg.voice, { preset, guests: $("tempGuests").value, screen: $("tempScreen").value }) : null,
+    };
+    try {
+      tempCfg = await api("PUT", "/api/admin/temprooms", body);
+      fillTempForm();
+      toast(_t("admin.temp_saved"));
+    } catch (err) { $("tempError").textContent = err.message; }
+  });
+
   // Sprachkanal: Felder ein-/ausblenden und Bandbreite schätzen
   const VOICE_KBPS = { sparsam: 16, standard: 24, hoch: 40, musik: 96 };
   function syncVoiceFields() {
     const on = $("roomVoiceOn").checked;
     $("roomVoiceOpts").hidden = !on;
     $("roomVoiceStageRow").hidden = !$("roomVoiceStage").checked;
+    const scr = $("roomScreenMode").value;
+    $("roomScreenQualityRow").hidden = $("roomScreenMore").hidden = !scr;
+    $("roomScreenRolesRow").hidden = scr !== "roles";
     const kb = VOICE_KBPS[$("roomVoicePreset").value] || 24;
     const sp = Math.max(1, Math.min(16, parseInt($("roomVoiceSpeakers").value, 10) || 4));
     const peers = Math.max(2, parseInt($("roomVoicePeers").value, 10) || 25);
     const per = 50 * 8 * (72 + sp * (6 + kb * 1000 / 400)) / 1000; // wie voicerelay.EstimateKbps
     $("roomVoiceEstimate").textContent = _t("admin.voice_estimate", { per: Math.round(per), total: (Math.round(per * peers / 100) / 10).toLocaleString(GoChatI18n.locale), peers });
+    if (scr) {
+      const sk = { text: 1.5, standard: 2.5, motion: 4 }[$("roomScreenQuality").value] || 2.5;
+      const hints = { text: _t("admin.screen_q_hint_text"), standard: _t("admin.screen_q_hint_standard"), motion: _t("admin.screen_q_hint_motion") };
+      $("roomScreenQualityHint").textContent = hints[$("roomScreenQuality").value] || "";
+      $("roomVoiceEstimate").textContent += " " + _t("admin.screen_estimate", { mbit: sk.toLocaleString(GoChatI18n.locale), total: (Math.round(sk * (peers - 1) * 10) / 10).toLocaleString(GoChatI18n.locale) });
+    }
   }
-  ["roomVoiceOn", "roomVoicePreset", "roomVoicePeers", "roomVoiceSpeakers", "roomVoiceStage"].forEach((id) => $(id).addEventListener("input", syncVoiceFields));
-  ["roomVoiceOn", "roomVoiceStage"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
+  ["roomVoiceOn", "roomVoicePreset", "roomVoicePeers", "roomVoiceSpeakers", "roomVoiceStage", "roomScreenMode", "roomScreenQuality"].forEach((id) => $(id).addEventListener("input", syncVoiceFields));
+  ["roomVoiceOn", "roomVoiceStage", "roomScreenMode", "roomScreenQuality"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
   $("roomName").addEventListener("input", () => {
     $("renameWarn").hidden = !editing || $("roomName").value.trim().toLowerCase() === editing.name;
   });
@@ -657,6 +713,8 @@
         preset: $("roomVoicePreset").value, guests: $("roomVoiceGuests").value,
         maxPeers: parseInt($("roomVoicePeers").value, 10) || 25, maxSpeakers: parseInt($("roomVoiceSpeakers").value, 10) || 4,
         stage: $("roomVoiceStage").checked, stageRoles: pickedRoles("roomVoiceStageRoles"),
+        screen: $("roomScreenMode").value, screenQuality: $("roomScreenQuality").value,
+        maxScreens: parseInt($("roomScreenMax").value, 10) || 1, screenRoles: pickedRoles("roomScreenRoles"),
       } : null;
     }
     try {
@@ -1274,6 +1332,7 @@
     if (!p.write) out.push([_t("admin.nur_lesen")]);
     const extra = [p.react && "reagiert", p.editOwn && "bearbeitet eigene", p.automodExempt && _t("admin.ohne_automod")].filter(Boolean);
     if (extra.length) out.push([extra.join(", ")]);
+    if (p.rooms) out.push([_t("admin.bot_chip_rooms")]);
     const mod = [p.delete && _t("admin.loeschen_4"), p.mute && "stumm", p.ban && _t("admin.ausschliessen")].filter(Boolean);
     if (mod.length) {
       const max = p.maxMinutes >= 1440 ? `${p.maxMinutes / 1440} T` : p.maxMinutes >= 60 ? `${p.maxMinutes / 60} h` : `${p.maxMinutes} min`;
@@ -1317,6 +1376,7 @@
     $("permDelete").checked = !!p.delete;
     $("permMute").checked = !!p.mute;
     $("permBan").checked = !!p.ban;
+    $("permRooms").checked = !!p.rooms;
     $("botRate").value = p.rateLimit || 0;
     setSelect("botMax", p.maxMinutes || 60, _t("admin.n_minutes", { n: p.maxMinutes || 60 }));
     syncPerms();
@@ -1346,7 +1406,7 @@
         receive: $("botRecvCmd").checked ? "commands" : "all",
         write: $("permWrite").checked, react: $("permReact").checked, editOwn: $("permEdit").checked,
         automodExempt: $("permAutomod").checked, history: $("permHistory").checked, presence: $("permPresence").checked,
-        delete: $("permDelete").checked, mute: $("permMute").checked, ban: $("permBan").checked,
+        delete: $("permDelete").checked, mute: $("permMute").checked, ban: $("permBan").checked, rooms: $("permRooms").checked,
         rateLimit: Math.max(0, parseInt($("botRate").value, 10) || 0), maxMinutes: parseInt($("botMax").value, 10),
       },
       enabled: $("botEnabled").checked,
@@ -1762,7 +1822,7 @@
 
   let roleCfg = { roles: [], counts: {} };
   const ROLE_PERMS = [["rpLinks", "links", _t("admin.links")], ["rpNoSlow", "noSlow", _t("admin.ohne_langsam_modus")], ["rpProtected", "protected", _t("admin.geschuetzte_namen")],
-    ["rpPin", "pin", "anpinnen"], ["rpUpload", "upload", _t("admin.bilder")], ["rpDelete", "delete", _t("admin.loeschen_4")], ["rpMute", "mute", "stummschalten"]];
+    ["rpPin", "pin", "anpinnen"], ["rpUpload", "upload", _t("admin.bilder")], ["rpDelete", "delete", _t("admin.loeschen_4")], ["rpMute", "mute", "stummschalten"], ["rpTempRooms", "tempRooms", _t("admin.temp_perm_short")]];
   let editingRole = -1;
   const ROLE_COLORS = ["#e53935", "#d81b60", "#8e24aa", "#5e35b1", "#3949ab", "#1e88e5", "#00897b", "#43a047", "#7cb342", "#f9a825", "#fb8c00", "#6d4c41", "#546e7a"];
 
@@ -3222,6 +3282,7 @@ ${previewSnippet()}
   const KIND_DEFAULT = {
     text: "", help: _t("admin.das_kann_ich"), dice: _t("admin.wuerfelt_eine"), coin: _t("admin.text_2"),
     time: _t("admin.es_ist_uhr_am"), online: _t("admin.text_3"), choose: _t("admin.ich_nehme"),
+    poll: "", temproom: _t("admin.cmd_temproom_default"),
   };
 
   async function loadCommandsAdmin() {

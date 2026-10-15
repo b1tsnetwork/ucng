@@ -249,6 +249,13 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		s.postE2E(w, room, me, ip, enc, peer, fed, in.E2E, in.GIF, in.ReplyTo, in.Thread)
 		return
 	}
+	// temporären Kanal anlegen (Antwort nur für die Person)
+	if in.GIF == "" {
+		if cmd, args, prefix, ok := s.hub.Commands().Match(in.Text, room, me.Team, CmdTempRoom); ok {
+			s.runTempRoomCommand(w, room, in.Text, cmd, args, prefix, me, ip)
+			return
+		}
+	}
 	// private Befehle: weder Befehl noch Antwort landen im Kanal
 	if in.GIF == "" && s.hub.Commands().IsEphemeral(in.Text, room, me.Team) {
 		s.runEphemeral(w, room, in.Text, me, ip)

@@ -21,14 +21,17 @@ type Ticket struct {
 	Channel     string `json:"c"`
 	User        string `json:"u"`
 	Name        string `json:"n"`
-	Speak       bool   `json:"s"`  // darf sprechen
-	Muted       bool   `json:"m"`  // vom Team stummgeschaltet
-	Hand        bool   `json:"h"`  // hat sich gemeldet (Bühne)
-	Bitrate     int    `json:"b"`  // Opus-Bitrate der Voreinstellung (bit/s)
-	Stereo      bool   `json:"st"` // Voreinstellung „Musik“
-	MaxSpeakers int    `json:"ms"` // gleichzeitig weitergeleitete Sprecher
-	MaxPeers    int    `json:"mp"` // Teilnehmer im Kanal
-	Exp         int64  `json:"e"`  // Unix-Sekunden
+	Speak       bool   `json:"s"`             // darf sprechen
+	Muted       bool   `json:"m"`             // vom Team stummgeschaltet
+	Hand        bool   `json:"h"`             // hat sich gemeldet (Bühne)
+	Bitrate     int    `json:"b"`             // Opus-Bitrate der Voreinstellung (bit/s)
+	Stereo      bool   `json:"st"`            // Voreinstellung „Musik“
+	MaxSpeakers int    `json:"ms"`            // gleichzeitig weitergeleitete Sprecher
+	MaxPeers    int    `json:"mp"`            // Teilnehmer im Kanal
+	Screen      bool   `json:"sc,omitempty"`  // darf den Bildschirm teilen
+	ScreenKbps  int    `json:"sk,omitempty"`  // Bitrate einer Bildschirmfreigabe (kbit/s)
+	MaxScreens  int    `json:"msc,omitempty"` // gleichzeitige Freigaben im Kanal
+	Exp         int64  `json:"e"`             // Unix-Sekunden
 	Nonce       string `json:"x"`
 }
 

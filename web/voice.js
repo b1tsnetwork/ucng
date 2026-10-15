@@ -41,6 +41,8 @@
     leave: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.2 11.6c4-3.6 9.6-3.6 13.6 0l-1.6 2.2-2.8-1.1v-2a8.3 8.3 0 0 0-4.8 0v2l-2.8 1.1z" fill="currentColor"/></svg>',
     speaker: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8h3l4-3.5v11l-4-3.5h-3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M13.5 7.2a4 4 0 0 1 0 5.6M15.6 5a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
     join: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 13v-3a6.5 6.5 0 0 1 13 0v3" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="2.5" y="11.5" width="4" height="5.5" rx="1.6" fill="currentColor"/><rect x="13.5" y="11.5" width="4" height="5.5" rx="1.6" fill="currentColor"/></svg>',
+    screen: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M10 13.5V17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    screenOff: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M10 13.5V17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="m7.5 6 5 5m0-5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
     stage: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 16.5h15M4.5 16.5V9l5.5-4.5L15.5 9v7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="10" cy="10.5" r="1.8" fill="currentColor"/></svg>',
   };
 
@@ -121,20 +123,34 @@
     ws.binaryType = "arraybuffer";
     S.ws = ws;
     const mine = S;
+    if (window.UCNGScreen) {
+      UCNGScreen.attach({
+        cfg: j, toast: deps.toast, render: () => { if (S === mine) renderAll(); },
+        ws: () => (S === mine ? mine.ws : null),
+        sendText: (o) => { if (S === mine && ws.readyState === 1) ws.send(JSON.stringify(o)); },
+        sendBin: (b) => { if (S === mine && ws.readyState === 1) ws.send(b); },
+        peer: (idx) => mine.peers.get(idx),
+        screenOK: () => S === mine && !!mine.screenOK,
+      });
+    }
     ws.onopen = () => ws.send(JSON.stringify({ t: "auth", ticket: j.ticket }));
     ws.onmessage = (e) => { if (S === mine) onMessage(e.data); };
     ws.onclose = (e) => { if (S === mine) onClose(e); };
   }
 
   function onMessage(data) {
-    if (typeof data !== "string") { onAudio(new Uint8Array(data)); return; }
+    if (typeof data !== "string") {
+      const b = new Uint8Array(data);
+      if (b[0] === 2) { if (window.UCNGScreen) UCNGScreen.onVideo(b); } else onAudio(b);
+      return;
+    }
     let m;
     try { m = JSON.parse(data); } catch { return; }
     switch (m.t) {
       case "hello":
         S.status = "connected";
         S.you = m.you;
-        S.speak = m.speak; S.muted = m.muted;
+        S.speak = m.speak; S.muted = m.muted; S.screenOK = !!m.screen;
         retries = 0;
         for (const p of m.peers || []) upsertPeer(p);
         sendState();
@@ -144,13 +160,16 @@
         S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) }));
         deps.toast(t("voice.joined", { room: S.room }));
         break;
-      case "peer": upsertPeer(m.peer); break;
-      case "leave": removePeer(m.i); break;
+      case "peer": upsertPeer(m.peer); if (window.UCNGScreen) UCNGScreen.onPeer(m.peer); break;
+      case "leave": removePeer(m.i); if (window.UCNGScreen) UCNGScreen.onLeave(m.i); break;
+      case "share": case "watch": case "keyreq":
+        if (window.UCNGScreen) UCNGScreen.onText(m);
+        break;
       case "you":
         if (m.speak && !S.speak) deps.toast(t("voice.you_can_speak"));
         if (!m.speak && S.speak) deps.toast(t("voice.you_cannot_speak"));
         if (m.muted && !S.muted) deps.toast(t("voice.you_were_muted"));
-        S.speak = m.speak; S.muted = m.muted; S.hand = m.hand;
+        S.speak = m.speak; S.muted = m.muted; S.hand = m.hand; S.screenOK = !!m.screen;
         if (S.peers.has(S.you)) Object.assign(S.peers.get(S.you), { s: m.speak, m: m.muted, h: m.hand }); // eigene Zeile
         if (S.speak) startMic(); else stopMic();
         break;
@@ -194,6 +213,7 @@
     const s = S;
     S = null;
     clearInterval(s.pinger);
+    if (window.UCNGScreen) UCNGScreen.detach();
     if (s.ws) { s.ws.onclose = null; s.ws.onmessage = null; try { s.ws.close(1000); } catch { /* egal */ } }
     stopMicOf(s);
     for (const d of (s.decoders || new Map()).values()) try { d.close(); } catch { /* egal */ }
@@ -489,6 +509,16 @@
     b.title = p.n;
     b.addEventListener("click", (e) => { e.stopPropagation(); openPeer(b, room, p); });
     li.append(b);
+    if (p.sc) { // teilt den Bildschirm: Knopf „Ansehen“ (nur im eigenen Sprachkanal)
+      const here = S && S.room === room && S.status === "connected";
+      const watching = here && window.UCNGScreen && UCNGScreen.watching === p.i;
+      const isMe = here && p.i === S.you;
+      const w = deps.iconBtn("voice-watch" + (watching ? " on" : ""), isMe ? t("voice.screen_you_share") : here ? t("voice.screen_watch", { name: p.n }) : t("voice.screen_join_to_watch"), ICON.screen);
+      w.disabled = !here || isMe;
+      w.addEventListener("click", (e) => { e.stopPropagation(); if (watching) UCNGScreen.unwatch(); else UCNGScreen.watch(p.i); });
+      li.classList.add("sharing");
+      li.append(w);
+    }
     return li;
   }
 
@@ -543,8 +573,12 @@
     }
     const here = S && S.room === room && S.moderate;
     const acts = [];
+    if (p.sc && !isMe && S && S.room === room && window.UCNGScreen) {
+      acts.push(UCNGScreen.watching === p.i ? [t("voice.screen_unwatch"), "", "", () => UCNGScreen.unwatch()] : [t("voice.screen_watch", { name: p.n }), "", "", () => UCNGScreen.watch(p.i)]);
+    }
     if (here && !isMe) {
       acts.push(p.m ? [t("voice.unmute"), "unmute"] : [t("voice.server_mute"), "mute"]);
+      if (S.cfg && S.cfg.screenOn) acts.push(p.so || p.sc ? [t("voice.screen_stop_other"), "stopscreen"] : [t("voice.screen_allow"), "allowscreen"]);
       if (S.stage) acts.push(p.s ? [t("voice.revoke_speak"), "nospeak"] : [t("voice.grant_speak"), "speak"]);
       if (p.h) acts.push([t("voice.lower_hand"), "lowerhand"]);
       acts.push([t("voice.kick"), "kick", "danger"]);
@@ -553,10 +587,10 @@
     }
     if (acts.length) {
       const box = deps.h("div", "voice-pop-actions");
-      for (const [label, action, cls] of acts) {
+      for (const [label, action, cls, fn] of acts) {
         const b = deps.h("button", "menu-item" + (cls ? " " + cls : ""), label);
         b.type = "button";
-        b.addEventListener("click", () => { closePop(); mod(p.u, action); });
+        b.addEventListener("click", () => { closePop(); if (fn) fn(); else mod(p.u, action); });
         box.append(b);
       }
       pop.append(box);
@@ -604,6 +638,13 @@
       hb.addEventListener("click", toggleHand);
       btns.append(hb);
     }
+    if (S.screenOK && window.UCNGScreen && UCNGScreen.supported()) {
+      const on = UCNGScreen.sharing;
+      const sb = deps.iconBtn("vb" + (on ? " sharing" : ""), on ? t("voice.screen_stop") : t("voice.screen_share"), on ? ICON.screenOff : ICON.screen);
+      sb.setAttribute("aria-pressed", String(on));
+      sb.addEventListener("click", () => UCNGScreen.toggleShare());
+      btns.append(sb);
+    }
     const gear = deps.iconBtn("vb", t("voice.settings"), ICON.gear);
     gear.addEventListener("click", openSettings);
     const lv = deps.iconBtn("vb leave", t("voice.leave"), ICON.leave);
@@ -622,6 +663,7 @@
       ptt.addEventListener("pointercancel", up);
       parts.push(ptt);
     }
+    if (window.UCNGScreen && UCNGScreen.sharing) parts.push(deps.h("p", "voice-bar-note sharing", UCNGScreen.starting ? t("voice.screen_starting") : t("voice.screen_sharing_now")));
     if (S.status === "connected" && !S.speak) parts.push(deps.h("p", "voice-bar-note", S.stage ? t("voice.stage_note") : t("voice.listen_only")));
     bar.replaceChildren(...parts);
   }

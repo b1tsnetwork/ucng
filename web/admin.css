@@ -923,3 +923,11 @@ a.kpi:hover { border-color: var(--accent); }
 .voice-estimate { margin: -4px 0 12px; color: var(--muted); font-size: 13px; }
 @media (max-width: 760px) { .voice-relays li { grid-template-columns: 1fr auto; } .voice-relays .bar { grid-column: 1 / -1; } }
 .voice-summary { margin: 0; color: var(--muted); font-size: 13.5px; }
+.field-row.three { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 760px) { .field-row.three { grid-template-columns: 1fr; } }
+.temp-panel { margin-top: 20px; }
+.temp-panel .panel-intro { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.temp-panel .form-error { color: var(--danger); font-size: 14px; margin: 6px 0 0; }
+.temp-panel .form-error:empty { display: none; }
+.rule.temp { color: var(--warn-text, #a86a00); }
+#roomVoiceOpts .field-row { align-items: start; }

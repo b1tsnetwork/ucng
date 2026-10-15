@@ -162,6 +162,7 @@ type EphemeralReply struct {
 	Command string    `json:"command"` // was die Person geschrieben hat
 	Time    time.Time `json:"time"`
 	Notice  bool      `json:"notice,omitempty"` // Hinweis statt Antwort (z. B. Abklingzeit)
+	Open    string    `json:"open,omitempty"`   // in diesen Kanal wechseln (neuer temporärer Kanal)
 }
 
 // runEphemeral beantwortet einen privaten Befehl direkt in der HTTP-Antwort (200 statt 201).

@@ -32,13 +32,23 @@ import (
 //
 //	Browser → Relay  [1][seq u16][level u8][Opus-Rahmen]            (ein 20-ms-Rahmen)
 //	Relay → Browser  [1][n u8] n × ([Teilnehmer u16][seq u16][Länge u16][Opus-Rahmen])
+//	Browser → Relay  [2][flags u8][seq u16][Video-Rahmen]           (Bildschirm; flags&1 = Schlüsselbild)
+//	Relay → Browser  [2][Teilnehmer u16][flags u8][seq u16][Video-Rahmen]
 //
-// Steuerung als JSON-Text: zuerst {"t":"auth","ticket":"…"}; danach {"t":"state","mute":…,"hand":…}
-// und {"t":"ping","ts":…}. Der Relay schickt {"t":"hello"}, {"t":"peer"}, {"t":"leave"},
-// {"t":"you"}, {"t":"pong"} und {"t":"bye"}.
+// Steuerung als JSON-Text: zuerst {"t":"auth","ticket":"…"}; danach {"t":"state","mute":…,"hand":…},
+// {"t":"ping","ts":…}, {"t":"share","on":…,"codec":"vp8"}, {"t":"watch","i":…,"on":…} und
+// {"t":"keyreq","i":…}. Der Relay schickt {"t":"hello"}, {"t":"peer"}, {"t":"leave"}, {"t":"you"},
+// {"t":"pong"}, {"t":"share"}, {"t":"watch"}, {"t":"keyreq"} und {"t":"bye"}.
+//
+// Bildschirmfreigabe: Video geht nur an Personen, die zuschauen („watch“) – die Bandbreite
+// entsteht also nur, wo jemand hinsieht. Neue Zuschauer und verlorene Rahmen lösen eine
+// Anfrage nach einem Schlüsselbild beim Teilenden aus.
 
 const (
 	MsgAudio      = 1
+	MsgVideo      = 2
+	maxVideoFrame = 1 << 20 // größtes Video-Bild (Schlüsselbild in hoher Auflösung)
+	keyReqGap     = time.Second
 	maxFrame      = 1275 // größter Opus-Rahmen
 	tick          = 20 * time.Millisecond
 	activeTimeout = 400 * time.Millisecond
@@ -73,6 +83,8 @@ type PeerInfo struct {
 	Muted    bool   `json:"m,omitempty"` // vom Team stummgeschaltet
 	SelfMute bool   `json:"sm,omitempty"`
 	Hand     bool   `json:"h,omitempty"`
+	Screen   string `json:"sc,omitempty"` // teilt den Bildschirm (Codec, z. B. "vp8")
+	ScreenOK bool   `json:"so,omitempty"` // darf den Bildschirm teilen
 }
 
 // Stats: Auslastung des Relays.
@@ -104,6 +116,8 @@ type channel struct {
 	maxSpeakers int
 	maxPeers    int
 	bitrate     int
+	maxScreens  int
+	screenKbps  int
 	active      map[uint16]*peer // gerade weitergeleitete Sprecher
 	frames      []frameRef       // im laufenden Takt eingegangen
 	ticking     bool
@@ -135,6 +149,15 @@ type peer struct {
 	refill   time.Time
 	gone     bool
 	closing  bool
+	// Bildschirm
+	screenOK  bool             // darf teilen
+	codec     string           // teilt gerade (Codec), sonst leer
+	watchers  map[uint16]*peer // wer meinem Bildschirm zusieht
+	watching  map[uint16]bool  // wem ich zusehe
+	needKey   map[uint16]bool  // je Teilende: auf Schlüsselbild warten
+	vBytes    float64          // Video-Kontingent (Bytes)
+	vRefill   time.Time
+	lastKeyRq time.Time
 }
 
 // New startet einen Relay.
@@ -211,6 +234,11 @@ func (r *Relay) estimateLocked() float64 {
 	total := 0.0
 	for _, ch := range r.channels {
 		total += float64(len(ch.peers)) * EstimateKbps(ch.bitrate, ch.maxSpeakers)
+		for _, p := range ch.peers { // Bildschirm: je Zuschauer die Bitrate der Freigabe
+			if p.codec != "" {
+				total += float64(len(p.watchers)) * float64(ch.screenKbps) * 1.05
+			}
+		}
 	}
 	return total / 1000
 }
@@ -235,7 +263,7 @@ func (r *Relay) peersLocked(ch *channel) []PeerInfo {
 }
 
 func (p *peer) info() PeerInfo {
-	return PeerInfo{Idx: p.idx, User: p.user, Name: p.name, Speak: p.speak, Muted: p.muted, SelfMute: p.selfMute, Hand: p.hand}
+	return PeerInfo{Idx: p.idx, User: p.user, Name: p.name, Speak: p.speak, Muted: p.muted, SelfMute: p.selfMute, Hand: p.hand, Screen: p.codec, ScreenOK: p.screenOK}
 }
 
 // --- Verbindung ---
@@ -246,11 +274,14 @@ type ctlMsg struct {
 	Mute   *bool  `json:"mute,omitempty"`
 	Hand   *bool  `json:"hand,omitempty"`
 	TS     int64  `json:"ts,omitempty"`
+	On     *bool  `json:"on,omitempty"`
+	I      uint16 `json:"i,omitempty"`
+	Codec  string `json:"codec,omitempty"`
 }
 
 // ServeHTTP nimmt eine Sprachverbindung an (GET, WebSocket).
 func (r *Relay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	conn, err := wsock.Upgrade(w, req, r.cfg.OriginOK, 16<<10)
+	conn, err := wsock.Upgrade(w, req, r.cfg.OriginOK, maxVideoFrame+16)
 	if err != nil {
 		return
 	}
@@ -309,6 +340,7 @@ func (r *Relay) join(t Ticket, conn *wsock.Conn) (*peer, error) {
 		ch = &channel{name: t.Channel, peers: map[uint16]*peer{}, active: map[uint16]*peer{}}
 	}
 	ch.maxSpeakers, ch.maxPeers, ch.bitrate = clamp(t.MaxSpeakers, 1, 16), clamp(t.MaxPeers, 1, 5000), clamp(t.Bitrate, 6000, 256000)
+	ch.maxScreens, ch.screenKbps = clamp(t.MaxScreens, 0, 16), clamp(t.ScreenKbps, 100, 20000)
 	if len(ch.peers) >= ch.maxPeers {
 		r.mu.Unlock()
 		r.notifyReplaced(replaced)
@@ -331,12 +363,13 @@ func (r *Relay) join(t Ticket, conn *wsock.Conn) (*peer, error) {
 		}
 	}
 	p := &peer{idx: ch.next, ch: ch, user: t.User, name: t.Name, speak: t.Speak, muted: t.Muted, hand: t.Hand,
-		bitrate: ch.bitrate, conn: conn, out: make(chan []byte, outQueue), tokens: 10, refill: now}
+		bitrate: ch.bitrate, conn: conn, out: make(chan []byte, outQueue), tokens: 10, refill: now,
+		screenOK: t.Screen && ch.maxScreens > 0, watchers: map[uint16]*peer{}, watching: map[uint16]bool{}, needKey: map[uint16]bool{}}
 	p.bytesTok = float64(p.bitrate) / 8 * 1.5 / 2
 	ch.peers[p.idx] = p
 	r.total++
 	hello, _ := json.Marshal(map[string]any{"t": "hello", "you": p.idx, "peers": r.peersLocked(ch),
-		"maxSpeakers": ch.maxSpeakers, "speak": p.speak, "muted": p.muted})
+		"maxSpeakers": ch.maxSpeakers, "speak": p.speak, "muted": p.muted, "screen": p.screenOK, "screenKbps": ch.screenKbps})
 	p.out <- textMsg(hello)
 	join, _ := json.Marshal(map[string]any{"t": "peer", "peer": p.info()})
 	r.broadcastLocked(ch, textMsg(join), p)
@@ -403,6 +436,8 @@ func (r *Relay) reader(p *peer) {
 		if op == wsock.OpBinary {
 			if len(data) >= 4 && data[0] == MsgAudio && len(data)-4 <= maxFrame {
 				r.audio(p, binary.BigEndian.Uint16(data[1:3]), data[3], data[4:])
+			} else if len(data) > 4 && data[0] == MsgVideo {
+				r.video(p, data[1], binary.BigEndian.Uint16(data[2:4]), data[4:])
 			}
 			continue
 		}
@@ -428,6 +463,16 @@ func (r *Relay) reader(p *peer) {
 			name := p.ch.name
 			r.mu.Unlock()
 			r.changed(name, peers)
+		case "share":
+			r.share(p, m.On != nil && *m.On, m.Codec)
+		case "watch":
+			r.watch(p, m.I, m.On != nil && *m.On)
+		case "keyreq":
+			r.mu.Lock()
+			if s := p.ch.peers[m.I]; s != nil && s.codec != "" && p.watching[m.I] {
+				r.keyReqLocked(s)
+			}
+			r.mu.Unlock()
 		}
 	}
 }
@@ -454,6 +499,15 @@ func (r *Relay) removeLocked(p *peer) {
 	}
 	p.gone = true
 	ch := p.ch
+	for i := range p.watching { // als Zuschauer abmelden
+		if s := ch.peers[i]; s != nil {
+			delete(s.watchers, p.idx)
+		}
+	}
+	for _, w := range p.watchers { // als Teilende: Zuschauer lösen
+		delete(w.watching, p.idx)
+		delete(w.needKey, p.idx)
+	}
 	delete(ch.peers, p.idx)
 	delete(ch.active, p.idx)
 	r.total--
@@ -655,6 +709,11 @@ func (r *Relay) Control(channel, user, action string, value bool, reason string)
 			p.muted = value
 		case "hand":
 			p.hand = value
+		case "screen": // Recht zum Teilen; false beendet eine laufende Freigabe
+			p.screenOK = value && ch.maxScreens > 0
+			if !p.screenOK && p.codec != "" {
+				r.stopShareLocked(p)
+			}
 		case "kick", "close":
 			closeList = append(closeList, p)
 			continue
@@ -662,7 +721,7 @@ func (r *Relay) Control(channel, user, action string, value bool, reason string)
 		if !p.speak || p.muted {
 			delete(ch.active, p.idx)
 		}
-		you, _ := json.Marshal(map[string]any{"t": "you", "speak": p.speak, "muted": p.muted, "hand": p.hand})
+		you, _ := json.Marshal(map[string]any{"t": "you", "speak": p.speak, "muted": p.muted, "hand": p.hand, "screen": p.screenOK, "sharing": p.codec != ""})
 		r.enqueueLocked(p, textMsg(you))
 		upd, _ := json.Marshal(map[string]any{"t": "peer", "peer": p.info()})
 		r.broadcastLocked(ch, textMsg(upd), p)
@@ -716,4 +775,188 @@ func minF(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+// --- Bildschirmfreigabe ---
+
+// share startet oder beendet die Freigabe einer Person.
+func (r *Relay) share(p *peer, on bool, codec string) {
+	r.mu.Lock()
+	if p.gone {
+		r.mu.Unlock()
+		return
+	}
+	ch := p.ch
+	reply := map[string]any{"t": "share", "on": false}
+	changed := false
+	switch {
+	case !on:
+		if p.codec != "" {
+			r.stopShareLocked(p)
+			changed = true
+		}
+		reply = nil // stopShareLocked hat schon geantwortet
+	case !p.screenOK:
+		reply["reason"] = "denied"
+	case !validCodec(codec):
+		reply["reason"] = "codec"
+	case p.codec == "" && r.sharersLocked(ch) >= ch.maxScreens:
+		reply["reason"] = "full"
+	default:
+		if p.codec != codec { // neuer Codec: Zuschauer brauchen ein Schlüsselbild
+			for _, w := range p.watchers {
+				w.needKey[p.idx] = true
+			}
+			p.codec = codec
+			changed = true
+			upd, _ := json.Marshal(map[string]any{"t": "peer", "peer": p.info()})
+			r.broadcastLocked(ch, textMsg(upd), nil)
+		}
+		reply["on"], reply["codec"] = true, codec
+	}
+	if reply != nil {
+		b, _ := json.Marshal(reply)
+		r.enqueueLocked(p, textMsg(b))
+	}
+	peers, name := r.peersLocked(ch), ch.name
+	r.mu.Unlock()
+	if changed {
+		r.changed(name, peers)
+	}
+}
+
+func validCodec(c string) bool {
+	if len(c) == 0 || len(c) > 40 {
+		return false
+	}
+	for _, x := range c {
+		if !(x >= 'a' && x <= 'z' || x >= 'A' && x <= 'Z' || x >= '0' && x <= '9' || x == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Relay) sharersLocked(ch *channel) int {
+	n := 0
+	for _, q := range ch.peers {
+		if q.codec != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// stopShareLocked beendet eine Freigabe (Zuschauer werden gelöst).
+func (r *Relay) stopShareLocked(p *peer) {
+	p.codec = ""
+	for _, w := range p.watchers {
+		delete(w.watching, p.idx)
+		delete(w.needKey, p.idx)
+	}
+	p.watchers = map[uint16]*peer{}
+	upd, _ := json.Marshal(map[string]any{"t": "peer", "peer": p.info()})
+	r.broadcastLocked(p.ch, textMsg(upd), nil)
+	r.enqueueLocked(p, textMsg([]byte(`{"t":"share","on":false}`)))
+}
+
+// watch: Zusehen beginnen oder beenden. Beginnen nur, solange der Relay noch Bandbreite hat.
+func (r *Relay) watch(p *peer, idx uint16, on bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if p.gone {
+		return
+	}
+	s := p.ch.peers[idx]
+	reply := map[string]any{"t": "watch", "i": idx, "on": false}
+	switch {
+	case !on:
+		if s != nil {
+			delete(s.watchers, p.idx)
+		}
+		delete(p.watching, idx)
+		delete(p.needKey, idx)
+	case s == nil || s.codec == "" || s == p:
+		reply["reason"] = "gone"
+	case p.watching[idx]:
+		reply["on"], reply["codec"] = true, s.codec
+		p.needKey[idx] = true
+		r.keyReqLocked(s)
+	case r.estimateLocked()+float64(p.ch.screenKbps)*1.05/1000 > r.cfg.MaxMbit:
+		reply["reason"] = "busy"
+	default:
+		s.watchers[p.idx] = p
+		p.watching[idx] = true
+		p.needKey[idx] = true
+		reply["on"], reply["codec"] = true, s.codec
+		r.keyReqLocked(s)
+	}
+	b, _ := json.Marshal(reply)
+	r.enqueueLocked(p, textMsg(b))
+}
+
+// keyReqLocked bittet die Teilende um ein Schlüsselbild (höchstens einmal je Sekunde).
+func (r *Relay) keyReqLocked(s *peer) {
+	now := r.cfg.Now()
+	if !s.lastKeyRq.IsZero() && now.Sub(s.lastKeyRq) < keyReqGap {
+		return
+	}
+	s.lastKeyRq = now
+	r.enqueueLocked(s, textMsg([]byte(`{"t":"keyreq"}`)))
+}
+
+// video verteilt ein Bild an alle Zuschauer. Wer ein Bild verpasst (volle Warteschlange),
+// bekommt bis zum nächsten Schlüsselbild nichts und löst eine Anfrage danach aus.
+func (r *Relay) video(p *peer, flags uint8, seq uint16, data []byte) {
+	now := r.cfg.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if p.gone || p.codec == "" || len(data) > maxVideoFrame {
+		return
+	}
+	// Kontingent: 1,5 × Bitrate, Vorrat für 2 s bzw. ein großes Schlüsselbild
+	rate := float64(p.ch.screenKbps) * 1000 / 8 * 1.5
+	burst := max(rate*2, 768<<10)
+	if p.vRefill.IsZero() {
+		p.vBytes = burst
+	} else {
+		p.vBytes = minF(burst, p.vBytes+now.Sub(p.vRefill).Seconds()*rate)
+	}
+	p.vRefill = now
+	key := flags&1 != 0
+	if p.vBytes < float64(len(data)) { // zu viel: Bild verwerfen, Zuschauer warten aufs nächste Schlüsselbild
+		for _, w := range p.watchers {
+			w.needKey[p.idx] = true
+		}
+		return
+	}
+	p.vBytes -= float64(len(data))
+	if len(p.watchers) == 0 {
+		return
+	}
+	msg := make([]byte, 6+len(data))
+	msg[0] = MsgVideo
+	binary.BigEndian.PutUint16(msg[1:], p.idx)
+	msg[3] = flags
+	binary.BigEndian.PutUint16(msg[4:], seq)
+	copy(msg[6:], data)
+	missing := false
+	for _, w := range p.watchers {
+		if w.needKey[p.idx] {
+			if !key {
+				missing = true
+				continue
+			}
+			delete(w.needKey, p.idx)
+		}
+		if len(w.out) > outQueue/2 { // langsame Verbindung: Video zuerst opfern
+			w.needKey[p.idx] = true
+			missing = true
+			continue
+		}
+		r.enqueueLocked(w, msg)
+	}
+	if missing {
+		r.keyReqLocked(p)
+	}
 }

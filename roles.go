@@ -33,19 +33,21 @@ type Perms struct {
 	Upload    bool `json:"upload"`    // Bilder hochladen (wenn auf Rollen beschränkt)
 	Delete    bool `json:"delete"`    // fremde Nachrichten im Chat löschen
 	Mute      bool `json:"mute"`      // im Chat stummschalten (bis 1 Stunde)
+	TempRooms bool `json:"tempRooms"` // temporäre Kanäle per Befehl anlegen
 }
 
 // Any: hat irgendein Recht?
 func (p Perms) Any() bool {
-	return p.Links || p.NoSlow || p.Protected || p.Pin || p.Upload || p.Delete || p.Mute
+	return p.Links || p.NoSlow || p.Protected || p.Pin || p.Upload || p.Delete || p.Mute || p.TempRooms
 }
 
 // AllPerms sind die Rechte des Teams.
-var AllPerms = Perms{Links: true, NoSlow: true, Protected: true, Pin: true, Upload: true, Delete: true, Mute: true}
+var AllPerms = Perms{Links: true, NoSlow: true, Protected: true, Pin: true, Upload: true, Delete: true, Mute: true, TempRooms: true}
 
 func (p Perms) or(q Perms) Perms {
 	return Perms{Links: p.Links || q.Links, NoSlow: p.NoSlow || q.NoSlow, Protected: p.Protected || q.Protected,
-		Pin: p.Pin || q.Pin, Upload: p.Upload || q.Upload, Delete: p.Delete || q.Delete, Mute: p.Mute || q.Mute}
+		Pin: p.Pin || q.Pin, Upload: p.Upload || q.Upload, Delete: p.Delete || q.Delete, Mute: p.Mute || q.Mute,
+		TempRooms: p.TempRooms || q.TempRooms}
 }
 
 const maxRoles = 30

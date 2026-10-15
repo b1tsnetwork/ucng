@@ -220,6 +220,7 @@ type Server struct {
 	dmRL        *rateLimiter  // neue Direktnachrichten je Person // GIF-Suchen im Web je IP
 	acctRL      *rateLimiter  // Anmeldung/Registrierung je IP (Modus „hosted“)
 	mailRL      *rateLimiter  // E-Mails je IP
+	tempRL      *rateLimiter  // neue temporäre Kanäle je Person bzw. Bot
 	storageKind string        // files, sqlite, mysql (Anzeige im Admin-Bereich)
 	fedRL       *rateLimiter  // Föderation: Eingang je Domain, Abfragen je Person
 	fedOnce     sync.Once
@@ -263,6 +264,7 @@ func NewServer(cfg Config, hub *Hub, users *Users) *Server {
 		dmRL:        newRateLimiter(10, time.Hour),
 		acctRL:      newRateLimiter(10, time.Minute),
 		mailRL:      newRateLimiter(5, time.Hour),
+		tempRL:      newRateLimiter(5, 10*time.Minute),
 		fedRL:       newRateLimiter(120, time.Minute),
 		storageKind: cfg.Storage,
 		accounts:    hub.Accounts(),
@@ -522,6 +524,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/bot/users/{id}/ban", s.requireBot(s.handleBotBan))
 	mux.HandleFunc("DELETE /api/bot/users/{id}/sanction", s.requireBot(s.handleBotLift))
 	mux.HandleFunc("GET /api/bot/events", s.requireBot(s.handleBotEvents))
+	mux.HandleFunc("POST /api/bot/rooms", s.requireBot(s.handleBotRoomCreate))
+	mux.HandleFunc("PATCH /api/bot/rooms/{room}", s.requireBot(s.handleBotRoomUpdate))
+	mux.HandleFunc("DELETE /api/bot/rooms/{room}", s.requireBot(s.handleBotRoomDelete))
+	mux.HandleFunc("GET /api/admin/temprooms", mod(s.handleAdminTempGet))
+	mux.HandleFunc("PUT /api/admin/temprooms", adm(s.handleAdminTempPut))
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -742,7 +749,19 @@ func main() {
 		go srv.runFed(ctx) // Föderation: Warteschlange abarbeiten
 	}
 	go srv.runBeacon(ctx) // Verzeichnis: regelmäßig beim Beacon melden
-	sv.notify()           // Startzustand sofort sichern (z. B. neu angelegte Lobby)
+	go func() {           // temporäre Kanäle ohne Personen löschen
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-t.C:
+				srv.sweepTempRooms(now)
+			}
+		}
+	}()
+	sv.notify() // Startzustand sofort sichern (z. B. neu angelegte Lobby)
 	if srv.backups != nil {
 		srv.backups.store, srv.backups.flush = store, sv.save
 		if store != nil && store.Kind() != "files" {
@@ -770,6 +789,7 @@ func main() {
 			srv.dmRL.cleanup()
 			srv.acctRL.cleanup()
 			srv.mailRL.cleanup()
+			srv.tempRL.cleanup()
 			srv.fedRL.cleanup()
 			if time.Since(lastRetention) >= time.Hour {
 				lastRetention = time.Now()

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -47,9 +48,11 @@ type BotPerms struct {
 	AutomodExempt bool `json:"automodExempt"` // von der Automoderation ausgenommen
 	RateLimit     int  `json:"rateLimit"`     // Nachrichten pro 10 Sekunden; 0 = Standard (BOT_RATE)
 	// Moderieren
-	Delete     bool `json:"delete"`     // Nachrichten moderativ löschen
-	Mute       bool `json:"mute"`       // stummschalten
-	Ban        bool `json:"ban"`        // zeitlich ausschließen
+	Delete bool `json:"delete"` // Nachrichten moderativ löschen
+	Mute   bool `json:"mute"`   // stummschalten
+	Ban    bool `json:"ban"`    // zeitlich ausschließen
+	// Kanäle
+	Rooms      bool `json:"rooms"`      // Kanäle anlegen (auch temporäre) und die eigenen ändern und löschen
 	MaxMinutes int  `json:"maxMinutes"` // längste Sperre, die der Bot verhängen darf
 }
 
@@ -496,6 +499,20 @@ func (bs *Bots) renameRoom(old, neu string) {
 	if changed {
 		bs.changed()
 	}
+}
+
+// addRoom gibt einem Bot einen weiteren Kanal (z. B. einen, den er selbst angelegt hat).
+func (bs *Bots) addRoom(id, name string) {
+	bs.mu.Lock()
+	b, ok := bs.byID[id]
+	if !ok || b.AllRooms || slices.Contains(b.Rooms, name) {
+		bs.mu.Unlock()
+		return
+	}
+	b.Rooms = append(b.Rooms, name)
+	sort.Strings(b.Rooms)
+	bs.mu.Unlock()
+	bs.changed()
 }
 
 func (bs *Bots) removeRoom(name string) {

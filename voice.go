@@ -42,7 +42,32 @@ type VoiceConfig struct {
 	Guests      string   `json:"guests"`               // speak, listen, none
 	Stage       bool     `json:"stage"`                // Bühne: nur Team, Bühnen-Rollen und Freigeschaltete sprechen
 	StageRoles  []string `json:"stageRoles,omitempty"` // Rollen, die auf der Bühne sprechen dürfen
+	// Bildschirm teilen: "" (aus), "speakers" (alle, die sprechen dürfen) oder "roles" (Team und ScreenRoles)
+	Screen        string   `json:"screen,omitempty"`
+	ScreenRoles   []string `json:"screenRoles,omitempty"`
+	ScreenQuality string   `json:"screenQuality,omitempty"` // text, standard, motion
+	MaxScreens    int      `json:"maxScreens,omitempty"`    // gleichzeitige Freigaben
 }
+
+// screenPreset: Qualität einer Bildschirmfreigabe.
+type screenPreset struct {
+	Kbps   int `json:"kbps"`
+	FPS    int `json:"fps"`
+	Height int `json:"height"` // höchstens so viele Zeilen (Breite folgt dem Seitenverhältnis)
+}
+
+var screenPresets = map[string]screenPreset{
+	"text":     {Kbps: 1500, FPS: 5, Height: 1080},  // Folien, Code, Dokumente: scharf, wenig Bewegung
+	"standard": {Kbps: 2500, FPS: 15, Height: 1080}, // Allgemein
+	"motion":   {Kbps: 4000, FPS: 30, Height: 720},  // Videos, Spiele: flüssig
+}
+
+const (
+	ScreenOff      = ""
+	ScreenSpeakers = "speakers"
+	ScreenRoles    = "roles"
+	maxScreens     = 4
+)
 
 type voicePreset struct {
 	Bitrate int  `json:"bitrate"` // Opus, bit/s
@@ -81,6 +106,8 @@ var (
 	ErrVoiceKicked  = errors.New("Du wurdest gerade aus dem Sprachkanal entfernt – bitte kurz warten")
 	ErrVoiceFull    = errors.New("Der Sprachkanal ist voll")
 	ErrVoiceBusy    = errors.New("Der Sprach-Server ist gerade ausgelastet – bitte später noch einmal")
+	ErrScreenMode   = errors.New("Bildschirmfreigabe muss leer, speakers oder roles sein")
+	ErrScreenPreset = errors.New("Unbekannte Qualität für die Bildschirmfreigabe")
 )
 
 // validVoice prüft die Einstellungen eines Sprachkanals (nil = nur Text) und ergänzt Standards.
@@ -116,6 +143,31 @@ func (h *Hub) validVoice(in *VoiceConfig) (*VoiceConfig, error) {
 	if len(v.StageRoles) == 0 {
 		v.StageRoles = nil
 	}
+	switch v.Screen {
+	case "off":
+		v.Screen = ScreenOff
+	case ScreenOff, ScreenSpeakers, ScreenRoles:
+	default:
+		return nil, ErrScreenMode
+	}
+	if v.Screen == ScreenOff {
+		v.ScreenRoles, v.ScreenQuality, v.MaxScreens = nil, "", 0
+		return &v, nil
+	}
+	if v.ScreenQuality == "" {
+		v.ScreenQuality = "standard"
+	}
+	if _, ok := screenPresets[v.ScreenQuality]; !ok {
+		return nil, ErrScreenPreset
+	}
+	if v.MaxScreens <= 0 {
+		v.MaxScreens = 1
+	}
+	v.MaxScreens = min(v.MaxScreens, maxScreens)
+	v.ScreenRoles = h.roles.Filter(v.ScreenRoles)
+	if len(v.ScreenRoles) == 0 {
+		v.ScreenRoles = nil
+	}
 	return &v, nil
 }
 
@@ -135,10 +187,15 @@ func (v *VoiceConfig) describe() string {
 	if v.Stage {
 		s += ", Bühne"
 	}
+	if v.Screen != ScreenOff {
+		s += fmt.Sprintf(", Bildschirm: %s (%s, %d)", v.Screen, v.ScreenQuality, v.MaxScreens)
+	}
 	return s
 }
 
 func (v *VoiceConfig) preset() voicePreset { return voicePresets[v.Preset] }
+
+func (v *VoiceConfig) screenPreset() screenPreset { return screenPresets[v.ScreenQuality] }
 
 // voiceAccess: Einstellungen und Zugang eines Kanals für a.
 func (h *Hub) voiceAccess(name string, a *Access) (cfg *VoiceConfig, exists, read, write bool) {
@@ -233,11 +290,12 @@ type voiceMgr struct {
 }
 
 type voiceRoom struct {
-	relay  string // Relay, auf dem der Kanal liegt
-	peers  []VoicePeer
-	grants map[string]bool      // Bühne: true = freigeschaltet, false = Rederecht entzogen
-	muted  map[string]bool      // vom Team stummgeschaltet (bleibt beim erneuten Beitreten)
-	kicked map[string]time.Time // entfernt: Wiedereintritt erst danach
+	relay    string // Relay, auf dem der Kanal liegt
+	peers    []VoicePeer
+	grants   map[string]bool      // Bühne: true = freigeschaltet, false = Rederecht entzogen
+	muted    map[string]bool      // vom Team stummgeschaltet (bleibt beim erneuten Beitreten)
+	kicked   map[string]time.Time // entfernt: Wiedereintritt erst danach
+	noScreen map[string]bool      // vom Team: darf hier nicht (mehr) teilen
 }
 
 type voiceAgent struct {
@@ -291,7 +349,7 @@ func (v *voiceMgr) Close() {
 func (v *voiceMgr) room(name string) *voiceRoom {
 	st := v.rooms[name]
 	if st == nil {
-		st = &voiceRoom{grants: map[string]bool{}, muted: map[string]bool{}, kicked: map[string]time.Time{}}
+		st = &voiceRoom{grants: map[string]bool{}, muted: map[string]bool{}, kicked: map[string]time.Time{}, noScreen: map[string]bool{}}
 		v.rooms[name] = st
 	}
 	return st
@@ -365,7 +423,7 @@ func (v *voiceMgr) janitor() {
 					delete(st.kicked, u)
 				}
 			}
-			if len(st.peers) == 0 && len(st.muted) == 0 && len(st.kicked) == 0 {
+			if len(st.peers) == 0 && len(st.muted) == 0 && len(st.kicked) == 0 && len(st.noScreen) == 0 {
 				delete(v.rooms, name)
 			}
 		}
@@ -392,10 +450,11 @@ func (w voiceWho) access() *Access { return &Access{ID: w.ID, Team: w.Team, Role
 func (w voiceWho) guest() bool { return !w.Team && !w.Member && len(w.Roles) == 0 }
 
 type voiceDecision struct {
-	Cfg   VoiceConfig
-	Speak bool
-	Muted bool
-	Guest bool
+	Cfg    VoiceConfig
+	Speak  bool
+	Muted  bool
+	Guest  bool
+	Screen bool // darf den Bildschirm teilen
 }
 
 // decide: Darf w dem Sprachkanal beitreten, sprechen, ist w stummgeschaltet?
@@ -443,6 +502,16 @@ func (v *voiceMgr) decide(name string, w voiceWho) (voiceDecision, error) {
 			d.Muted = true
 		}
 	}
+	// Bildschirm: nur, wer sprechen darf und nicht stummgeschaltet ist
+	switch cfg.Screen {
+	case ScreenSpeakers:
+		d.Screen = d.Speak && !d.Muted
+	case ScreenRoles:
+		d.Screen = d.Speak && !d.Muted && (w.Team || intersects(cfg.ScreenRoles, w.Roles))
+	}
+	if st := v.rooms[name]; st != nil && st.noScreen[w.ID] {
+		d.Screen = false
+	}
 	return d, nil
 }
 
@@ -482,6 +551,9 @@ func (v *voiceMgr) reconcile(room string, p VoicePeer) {
 	}
 	if d.Muted != p.Muted {
 		v.control(room, p.User, "mute", d.Muted, "")
+	}
+	if d.Screen != p.ScreenOK {
+		v.control(room, p.User, "screen", d.Screen, "")
 	}
 }
 
@@ -741,10 +813,11 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 			v.control(rp.room, me.ID, "kick", false, "moved")
 		}
 	}
-	pr := d.Cfg.preset()
+	pr, sp := d.Cfg.preset(), d.Cfg.screenPreset()
 	ticket := voicerelay.SignTicket(v.priv, voicerelay.Ticket{
 		Channel: room, User: me.ID, Name: me.Name, Speak: d.Speak, Muted: d.Muted,
 		Bitrate: pr.Bitrate, Stereo: pr.Stereo, MaxSpeakers: d.Cfg.MaxSpeakers, MaxPeers: d.Cfg.MaxPeers,
+		Screen: d.Screen, ScreenKbps: sp.Kbps, MaxScreens: d.Cfg.MaxScreens,
 	}, time.Now())
 	u := choice.url
 	if u == "" {
@@ -754,6 +827,7 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 		"url": u, "ticket": ticket, "preset": d.Cfg.Preset, "bitrate": pr.Bitrate, "stereo": pr.Stereo, "music": pr.Music,
 		"maxSpeakers": d.Cfg.MaxSpeakers, "maxPeers": d.Cfg.MaxPeers, "speak": d.Speak, "muted": d.Muted,
 		"stage": d.Cfg.Stage, "guest": d.Guest, "moderate": v.canModerate(who),
+		"screen": d.Screen, "screenOn": d.Cfg.Screen != ScreenOff, "screenKbps": sp.Kbps, "screenFps": sp.FPS, "screenHeight": sp.Height,
 	})
 }
 
@@ -853,6 +927,10 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 		st.grants[in.UserID] = true
 	case "nospeak":
 		st.grants[in.UserID] = false
+	case "stopscreen":
+		st.noScreen[in.UserID] = true
+	case "allowscreen":
+		delete(st.noScreen, in.UserID)
 	case "lowerhand":
 	default:
 		v.mu.Unlock()
@@ -878,6 +956,13 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 		v.control(room, in.UserID, "speak", false, "")
 	case "lowerhand":
 		v.control(room, in.UserID, "hand", false, "")
+	}
+	if in.Action != "kick" && in.Action != "lowerhand" { // Recht zum Teilen hängt an Sprechen/Stumm
+		if tw, ok := v.whoByID(in.UserID); ok {
+			if d, err := v.decide(room, tw); err == nil {
+				v.control(room, in.UserID, "screen", d.Screen, "")
+			}
+		}
 	}
 	if in.Action != "lowerhand" {
 		actor, display := chatActor(me)

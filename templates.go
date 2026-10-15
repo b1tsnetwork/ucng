@@ -183,6 +183,9 @@ func (s *Server) exportTemplate(w io.Writer, parts []string) error {
 				c.RoleNames[r.ID] = r.Name
 			}
 			for _, ri := range h.Rooms() {
+				if ri.Temp != nil { // temporäre Kanäle gehören nicht in eine Vorlage
+					continue
+				}
 				tr := tplRoom{Name: ri.Name, Description: ri.Description, SlowMode: ri.SlowMode, Links: ri.Links,
 					BotSlowMode: ri.BotSlowMode, BotLinks: ri.BotLinks, ReadRoles: ri.ReadRoles, WriteRoles: ri.WriteRoles, Voice: ri.Voice}
 				if am, e := h.RoomAutomodConfig(ri.Name); e == nil && (am.Mode != AutomodGlobal || len(am.Patterns) > 0) {

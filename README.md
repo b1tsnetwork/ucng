@@ -12,7 +12,8 @@ Echtzeit-Chat in Go – mit vollständiger Weboberfläche und einem einbettbaren
 - Kanäle, Online-Anzeige, Verlauf – **alles wird dauerhaft gespeichert** (Kanäle, Einstellungen, Nachrichten, Namen)
 - **Namensreservierung ohne Registrierung** – niemand kann unter deinem Namen schreiben
 - **Community-Funktionen:** Threads, Umfragen, angepinnte Nachrichten, Bilder hochladen, Direktnachrichten, Profilbilder und Status, `@Rolle`-Erwähnungen, Melden-Knopf, geplante Ankündigungen
-- **Sprachkanäle:** jeder Kanal auch mit Sprache – Lautstärke jeder Person selbst abmischen, Push-to-Talk oder Sprachaktivierung, Bühnenmodus, Gäste-Regel je Kanal, Moderation; skalierbar über zusätzliche Sprach-Server (siehe [Sprachkanäle](#sprachkanäle))
+- **Temporäre Kanäle:** per Befehl (`!kanal Name`) oder Bot anlegen; sie löschen sich selbst, wenn eine Weile niemand mehr drin ist
+- **Sprachkanäle:** jeder Kanal auch mit Sprache und Bildschirmfreigabe – Lautstärke jeder Person selbst abmischen, Push-to-Talk oder Sprachaktivierung, Bühnenmodus, Gäste-Regel je Kanal, Moderation; skalierbar über zusätzliche Sprach-Server (siehe [Sprachkanäle](#sprachkanäle))
 - **Rollen mit Rechten** (Links, kein Langsam-Modus, anpinnen, im Chat löschen/stummschalten …) und **private Kanäle** bzw. Kanäle, in denen nur bestimmte Rollen schreiben
 - **Chatten wie gewohnt:** Antworten mit Zitat, Reaktionen, eigene Nachrichten bearbeiten (15 Min.) und löschen, `@Erwähnungen` mit Vervollständigung, **fett**/*kursiv*/`Code`, Online-Liste, Suche, Ungelesen-Zähler, Ton und Browser-Benachrichtigungen
 - **Admin-Bereich** unter `/admin` mit **eigenen Konten für Moderatoren** und **Protokoll** aller Aktionen: Übersicht mit Statistik, Moderation mit Suche, Automoderation, Personen sperren/stummschalten, Kanäle, Farben, Widgets, Bots, Backups
@@ -558,6 +559,23 @@ Wer den Kanal lesen darf, darf zuhören; sprechen darf, wer schreiben darf (ohne
 
 **Bandbreite** je Zuhörer (Server → Browser) bei 4 hörbaren Sprechern: etwa 100 kbit/s (*Sparsam*), 135 kbit/s (*Standard*), 200 kbit/s (*Hoch*), 400 kbit/s (*Musik*); ein voller Kanal mit 25 Teilnehmern im Standard also gut 3 Mbit/s. Gemessen mit `go test -tags loadtest -run Load -v ./internal/voicerelay` auf 2 CPU-Kernen: 200 Teilnehmer in 8 Kanälen mit je 4 Sprechern – 99,8 % der Rahmen zugestellt, 20 Mbit/s ausgehend, 5 MB Speicher; 500 Teilnehmer in 20 Kanälen – 99,9 %, 51 Mbit/s.
 
+### Bildschirm teilen
+
+In Sprachkanälen kann der Bildschirm (oder ein Fenster, ein Tab) geteilt werden – einstellbar je Kanal unter *Bildschirm teilen*: aus, *Wer sprechen darf* oder *Team und gewählte Rollen*; dazu die Zahl gleichzeitiger Freigaben (Standard 1) und die Qualität:
+
+| Qualität | Auflösung | Bilder/s | Bitrate je Zuschauer |
+|---|---|---|---|
+| Text und Folien | 1080p | 5 | 1,5 Mbit/s |
+| Standard | 1080p | 15 | 2,5 Mbit/s |
+| Bewegung | 720p | 30 | 4 Mbit/s |
+
+- **Teilen:** Knopf mit dem Bildschirm-Symbol unten in der Sprachleiste. Der Browser kodiert das Bild mit VP9 (wenig Bewegung) bzw. VP8 (WebCodecs) und schickt es über die bestehende Sprachverbindung.
+- **Ansehen:** Neben der teilenden Person in der Seitenleiste erscheint ein Bildschirm-Knopf. Das Bild öffnet sich über dem Chat, mit Vollbild (Doppelklick). Zusehen kann, wer dem Sprachkanal beigetreten ist.
+- **Bandbreite nur, wo jemand hinsieht:** Der Relay schickt das Bild nur an Personen, die zusehen. Neue Zuschauer bekommen sofort ein Schlüsselbild; bei einer langsamen Verbindung wird zuerst Video ausgelassen (die Sprache bleibt). Ist ein Relay an seiner Grenze (`VOICE_MAX_MBIT` bzw. `MAX_MBIT`), werden keine weiteren Zuschauer angenommen.
+- **Auf den Sprach-Servern:** Bildschirmfreigaben laufen über denselben Relay wie der Sprachkanal – mit Agenten (`ucng-voice`) also auch dort, nicht über den Chat-Server.
+- **Moderation:** Team und Rollen mit dem Recht *Stummschalten* können eine Freigabe beenden und das Teilen für die Person sperren (*Bildschirmfreigabe beenden und sperren*) bzw. wieder erlauben. Wer stummgeschaltet ist, kann nicht teilen.
+- Ton des Bildschirms wird nicht übertragen. In Chrome und Edge läuft das Teilen auch weiter, wenn das Chat-Fenster im Hintergrund ist; in Firefox kann es dann ruckeln.
+
 ### Mehr Sprach-Server (Agenten)
 
 Der eingebaute Relay reicht für die Grenzen oben (`VOICE_MAX_PARTICIPANTS`, `VOICE_MAX_MBIT`). Für mehr startest du weitere Sprach-Server mit `ucng-voice` – auf demselben oder anderen Rechnern. Jeder meldet sich beim Chat-Server an; ein neuer Sprachkanal kommt auf den Relay mit der geringsten Auslastung und bleibt dort, bis er leer ist. Fällt ein Agent aus, verbinden sich die Browser neu und landen auf einem anderen. Auslastung aller Relays: Admin → Übersicht → *Sprach-Server*.
@@ -583,7 +601,7 @@ CHAT_URL=http://chat-intern:8080 AGENT_TOKEN='langer-zufälliger-schlüssel' \
 | `ALLOWED_ORIGINS` | `PUBLIC_URL` des Chat-Servers | Seiten, von denen Browser verbinden dürfen |
 | `TRUST_PROXY`, `TRUSTED_PROXIES` | aus | wie beim Chat-Server |
 
-Wichtig: Beim Chat-Server muss `PUBLIC_URL` gesetzt sein – der Agent lässt nur Browser von dieser Adresse zu. Chat-Server und Agent sprechen am besten über ein internes Netz miteinander (`CHAT_URL`, `CONTROL_URL`); über das Internet nur per HTTPS – beide Richtungen sind mit dem Agenten-Schlüssel geschützt. Ein fertiges Compose-Beispiel (Agent auf demselben Server wie der Chat oder auf einem eigenen) liegt in `deploy/voice/`.
+Wichtig: Beim Chat-Server muss `PUBLIC_URL` gesetzt sein – der Agent lässt nur Browser von dieser Adresse zu. Chat-Server und Agent sprechen am besten über ein internes Netz miteinander (`CHAT_URL`, `CONTROL_URL`); über das Internet nur per HTTPS – beide Richtungen sind mit dem Agenten-Schlüssel geschützt. Ein fertiges Compose-Beispiel (Agent auf demselben Server wie der Chat oder auf einem eigenen) liegt in `deploy/voice/`. Schritt für Schritt: [docs/voice-deployment.md](docs/voice-deployment.md).
 
 **Reverse-Proxy:** WebSockets brauchen die Upgrade-Kopfzeilen – bei nginx für den Chat-Server (eingebauter Relay unter `/api/voice/ws`) und für jeden Agenten (`/ws`):
 
@@ -601,6 +619,14 @@ location /api/voice/ws {          # beim Agenten: location /ws
 ```
 
 Caddy leitet WebSockets ohne weitere Einstellung weiter.
+
+## Temporäre Kanäle
+
+Personen mit dem Rollen-Recht **Temporäre Kanäle anlegen** (und das Team) schreiben in einem Kanal `!kanal Spielrunde` und landen sofort in einem eigenen Kanal `#spielrunde`. Ist eine Weile niemand mehr drin – weder im Text-Chat (offenes Fenster) noch im Sprachkanal –, wird er **mit allen Nachrichten gelöscht** (Standard: nach 5 Minuten; geprüft alle 15 Sekunden).
+
+Einstellungen unter *Kanäle → Temporäre Kanäle*: Befehl an/aus, Frist, Höchstzahl insgesamt (Standard 20) und je Person (Standard 1), Gruppe in der Kanalliste und eine Vorlage für Sprache und Bildschirm (Standard: Sprachkanal mit Bildschirmfreigabe). Den Befehl selbst – Name, Aliase (`room`, `temp`), Antworttext, Kanäle, in denen er gilt – stellst du unter *Befehle* ein (Art *Temporären Kanal anlegen*). Temporäre Kanäle sind öffentlich, tragen in der Kanalliste ein ⏳ und landen nicht in Vorlagen; das Anlegen und Löschen steht im Protokoll.
+
+Bots mit dem Recht **Kanäle anlegen** können über die Bot-API ebenfalls (temporäre) Kanäle anlegen – z. B. auf Anfrage einer Person mit einem eigenen Befehl – und die Kanäle ändern und löschen, die sie selbst angelegt haben (siehe [Bot-API](#bot-api)).
 
 ## Emotes und GIFs
 
@@ -825,8 +851,18 @@ Alle Aufrufe mit `Authorization: Bearer gcb_…`:
 | `POST`  | `/api/bot/users/{userId}/ban`          | **Ausschließen:** wie oben, zeitlich begrenzt |
 | `DELETE`| `/api/bot/users/{userId}/sanction`     | eigene Sperre aufheben |
 | `GET`   | `/api/bot/events`                      | Live-Stream (Server-Sent Events), siehe unten |
+| `POST`  | `/api/bot/rooms`                       | **Kanäle anlegen:** Kanal anlegen `{"name","description","temporary":true,"idleMinutes":10,"forUser":"<userId>","voice":{…},"readRoles":[…],"writeRoles":[…]}` → `201`. `temporary`: löscht sich nach `idleMinutes` (Standard: Einstellung) ohne Personen; `forUser`: für diese Person (zählt zu ihrer Grenze). `voice` fehlt = Vorlage der temporären Kanäle bzw. nur Text, `null` = nur Text. Der Bot darf den Kanal danach nutzen. |
+| `PATCH` | `/api/bot/rooms/{room}`                | **Kanäle anlegen:** eigenen Kanal ändern (`name`, `description`, `voice`, `readRoles`, `writeRoles` – fehlende Felder bleiben) |
+| `DELETE`| `/api/bot/rooms/{room}`                | **Kanäle anlegen:** eigenen Kanal mit allen Nachrichten löschen |
 
-Fehler: `401` falscher oder deaktivierter Schlüssel, `403` Kanal nicht freigegeben, fehlendes Recht oder Link-Regel, `404` Kanal oder Nachricht gibt es nicht, `429` zu viele Nachrichten oder Langsam-Modus.
+Fehler: `401` falscher oder deaktivierter Schlüssel, `403` Kanal nicht freigegeben, fehlendes Recht oder Link-Regel (bei Kanälen: nicht vom Bot angelegt), `404` Kanal oder Nachricht gibt es nicht, `409` die Person hat schon einen temporären Kanal, `429` zu viele Nachrichten oder Langsam-Modus, `503` zu viele temporäre Kanäle.
+
+Beispiel: Ein Bot reagiert auf `!raum` und legt für die Person einen Kanal an, der nach 10 Minuten ohne Personen verschwindet:
+
+```bash
+curl http://localhost:8080/api/bot/rooms -H "Authorization: Bearer gcb_…" \
+  -d '{"name":"Raum von Anna","temporary":true,"idleMinutes":10,"forUser":"<userId aus der Nachricht>"}'
+```
 
 ### Weg 1: Live-Verbindung (empfohlen)
 
@@ -914,7 +950,7 @@ curl -X POST http://localhost:8080/api/bot/rooms/lobby/messages \
 | `GET`   | `/api/voice`                        | Teilnehmer aller sichtbaren Sprachkanäle: `{"enabled":true,"rooms":{"talk":[{"i","u","n","s","m","sm","h"}]}}` (Live-Stream: Ereignis `voice` mit `room` und `voice`) |
 | `POST`  | `/api/voice/{room}/join`            | Zutrittskarte: `{"url","ticket","bitrate","stereo","music","maxSpeakers","maxPeers","speak","muted","stage","guest","moderate"}`; `403` Gäste ausgeschlossen/gesperrt, `404` kein Sprachkanal, `503` voll/ausgelastet |
 | `GET`   | `/api/voice/ws`                     | eingebauter Relay (WebSocket): erst `{"t":"auth","ticket":"…"}`, dann Opus-Rahmen (siehe `internal/voicerelay`) |
-| `POST`  | `/api/voice/{room}/mod`             | `{"userId","action"}` mit `mute`, `unmute`, `kick`, `speak`, `nospeak`, `lowerhand` – Team oder Recht „stummschalten“ |
+| `POST`  | `/api/voice/{room}/mod`             | `{"userId","action"}` mit `mute`, `unmute`, `kick`, `speak`, `nospeak`, `lowerhand`, `stopscreen`, `allowscreen` – Team oder Recht „stummschalten“ |
 | `POST`  | `/api/voice/agents/report`          | nur Sprach-Agenten (`Authorization: Bearer <VOICE_AGENT_TOKEN>`): Auslastung und Teilnehmer melden, Antwort mit öffentlichem Schlüssel |
 | `GET`   | `/api/rooms/{room}/threads/{id}`    | Thread: `{"root":{…},"messages":[…]}` |
 | `POST`  | `/api/rooms/{room}/upload`          | Bild: `multipart/form-data` mit `file`, optional `text`, `replyTo`, `thread` |
@@ -1080,6 +1116,7 @@ dms.go           Direktnachrichten
 blocks.go        Blockieren und Unterhaltungen löschen (Direktnachrichten)
 limits.go        Grenzen für Live-Verbindungen
 voice.go         Sprachkanäle: Einstellungen, Rechte, Zutrittskarten, Relay-Auswahl, Agenten, Moderation
+temprooms.go     Temporäre Kanäle: Befehl, Ablauf, Bot-API zum Verwalten von Kanälen
 preview.go       Zwischenspeicher und Grenzen für Vorschaubilder der GIF-Suche
 perf_test.go     Last- und Speichermessungen (go test -tags loadtest -run Load -v .)
 internal/clientip   Client-IP hinter vertrauenswürdigen Proxys
@@ -1147,6 +1184,7 @@ web/
   account.js     Konten, 2FA und Ende-zu-Ende-Verschlüsselung im Browser (WebCrypto)
   voice.js       Sprachkanäle im Browser (Opus über WebCodecs, Lautstärke je Person, Bühne)
   voice-worklet.js  Audio-Worklets: Aufnahme in 20-ms-Rahmen, Jitter-Puffer und Mischen
+  voice-screen.js   Bildschirm teilen und ansehen (VP9/VP8 über WebCodecs)
   admin.html     Verwaltung
   admin.css/js
   demo.html      Demo-Seite für das Widget

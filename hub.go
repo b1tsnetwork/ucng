@@ -187,6 +187,9 @@ type room struct {
 	last        time.Time
 	presenceDue bool         // Online-Liste wird gleich verschickt (gebündelt)
 	voice       *VoiceConfig // Sprachkanal (nil = nur Text)
+	temp        *TempInfo    // temporärer Kanal (nil = dauerhaft), siehe temprooms.go
+	createdBy   string       // "bot:<id>", wenn ein Bot den Kanal angelegt hat (darf ihn dann verwalten)
+	emptySince  time.Time    // temporäre Kanäle: seit wann niemand mehr drin ist
 }
 
 // find liefert die Position einer Nachricht (Binärsuche über die aufsteigenden IDs).
@@ -227,7 +230,7 @@ func (r *room) info() RoomInfo {
 		LastAt: r.last, Created: r.created, SlowMode: r.slowMode, Links: r.links,
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, Automod: r.amMode,
 		ReadRoles: append([]string{}, r.readRoles...), WriteRoles: append([]string{}, r.writeRoles...), Kind: r.kind,
-		Pins: len(r.pins), Group: r.group, Pos: r.pos, Voice: r.voice,
+		Pins: len(r.pins), Group: r.group, Pos: r.pos, Voice: r.voice, Temp: r.temp, CreatedBy: r.createdBy,
 	}
 	if n := len(r.history); n > 0 {
 		ri.LastID = r.history[n-1].ID
@@ -258,6 +261,8 @@ type RoomInfo struct {
 	Pos         int          `json:"pos"`               // Position in der Liste
 	Threads     []ThreadRef  `json:"threads,omitempty"` // nur in RoomsFor: aktive Threads
 	Voice       *VoiceConfig `json:"voice,omitempty"`   // Sprachkanal (nil = nur Text)
+	Temp        *TempInfo    `json:"temp,omitempty"`    // temporärer Kanal
+	CreatedBy   string       `json:"createdBy,omitempty"`
 }
 
 // RoomInput sind die im Admin-Bereich änderbaren Werte eines Kanals.
@@ -337,6 +342,7 @@ type Hub struct {
 	// onUserChange wird nach Sperren, Aufhebungen und geänderten Rollen aufgerufen
 	// (Sprachkanäle gleichen Rechte ab).
 	onUserChange func(userID string)
+	temps        *tempStore // temporäre Kanäle (temprooms.go)
 	voiceMu      sync.Mutex
 	voiceKey     ed25519.PrivateKey // Sprach-Schlüssel: signiert Zutrittskarten (voice.go)
 	// onRoomChange wird nach dem Ändern, Umbenennen oder Löschen eines Kanals aufgerufen
@@ -520,6 +526,7 @@ func NewHub(maxRooms int) *Hub {
 		return nil
 	})
 	h.registerVoiceDoc()
+	h.registerTempDoc()
 	h.RegisterDoc("media.json", func() any { return h.media.Config() }, func(b []byte) error {
 		var c MediaConfig
 		if err := jsonUnmarshal(b, &c); err != nil {
@@ -1864,12 +1871,15 @@ type roomMeta struct {
 	Pins        []int64          `json:"pins,omitempty"`
 	Group       string           `json:"group,omitempty"`
 	Pos         int              `json:"pos,omitempty"`
+	Temp        *TempInfo        `json:"temp,omitempty"`
+	CreatedBy   string           `json:"createdBy,omitempty"`
 }
 
 func metaOfRoom(r *room) roomMeta {
 	m := roomMeta{Name: r.name, Description: r.description, Created: r.created, SlowMode: r.slowMode, Links: r.links,
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, ReadRoles: r.readRoles, WriteRoles: r.writeRoles,
-		Kind: r.kind, Members: r.members, Cleared: r.cleared, Voice: r.voice, Pins: r.pins, Group: r.group, Pos: r.pos}
+		Kind: r.kind, Members: r.members, Cleared: r.cleared, Voice: r.voice, Pins: r.pins, Group: r.group, Pos: r.pos,
+		Temp: r.temp, CreatedBy: r.createdBy}
 	if a := r.automodLocked(); a.Mode != AutomodGlobal || len(a.Patterns) > 0 {
 		m.Automod = &a
 	}
@@ -1915,7 +1925,7 @@ func (h *Hub) putRoom(meta roomMeta, msgs []Message) {
 		links: links, botSlow: meta.BotSlowMode, botLinks: botLinks, amMode: AutomodGlobal,
 		history: msgs, clients: make(map[chan Event]*Viewer),
 		readRoles: meta.ReadRoles, writeRoles: meta.WriteRoles, kind: meta.Kind, members: meta.Members, cleared: meta.Cleared, blocks: h.blocks, voice: meta.Voice, pins: meta.Pins,
-		group: meta.Group, pos: meta.Pos}
+		group: meta.Group, pos: meta.Pos, temp: meta.Temp, createdBy: meta.CreatedBy, emptySince: time.Now()}
 	if meta.Automod != nil {
 		if mode, am, err := compileRoomAutomod(*meta.Automod); err == nil {
 			r.amMode, r.am = mode, am

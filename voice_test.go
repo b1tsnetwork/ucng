@@ -344,3 +344,50 @@ func TestVoicePersist(t *testing.T) {
 		t.Fatal("Sprach-Schlüssel nicht gespeichert")
 	}
 }
+
+func TestVoiceScreenRights(t *testing.T) {
+	ts, srv := voiceServer(t, nil)
+	h := srv.hub
+	name := "talk"
+	if _, err := h.CreateRoomWith(RoomInput{Name: &name, Voice: &VoiceConfig{Screen: ScreenSpeakers, ScreenQuality: "text"}}); err != nil {
+		t.Fatal(err)
+	}
+	anna, ben := claim(t, ts.URL, "Anna"), claim(t, ts.URL, "Ben")
+	var ja struct {
+		joinResp
+		Screen     bool
+		ScreenKbps int
+		ScreenFps  int
+	}
+	res := post(t, ts.URL+"/api/voice/talk/join", anna, `{}`)
+	json.NewDecoder(res.Body).Decode(&ja)
+	if !ja.Screen || ja.ScreenKbps != 1500 || ja.ScreenFps != 5 {
+		t.Fatalf("Beitritt: %+v", ja)
+	}
+	ca, _ := voiceDial(t, ts.URL, ja.joinResp)
+	jb, _ := voiceJoin(t, ts.URL, ben, "talk")
+	voiceDial(t, ts.URL, jb)
+	peers := waitPeers(t, srv.voice, "talk", 2)
+	ca.WriteText([]byte(`{"t":"share","on":true,"codec":"vp8"}`))
+	if m := readText(t, ca, "share"); m["on"] != true {
+		t.Fatalf("teilen: %v", m)
+	}
+	waitVoice(t, func() bool { return srv.voice.Peers("talk")[0].Screen == "vp8" })
+	// Team-Mitglied beendet die Freigabe
+	srv.users.SetTeam(peers[1].User, true)
+	res = post(t, ts.URL+"/api/voice/talk/mod", ben, `{"userId":"`+peers[0].User+`","action":"stopscreen"}`)
+	if res.StatusCode != 200 {
+		t.Fatalf("stopscreen: %d", res.StatusCode)
+	}
+	waitVoice(t, func() bool { p := srv.voice.Peers("talk")[0]; return p.Screen == "" && !p.ScreenOK })
+	// Kanal ohne Bildschirm: Recht weg
+	post(t, ts.URL+"/api/voice/talk/mod", ben, `{"userId":"`+peers[0].User+`","action":"allowscreen"}`)
+	waitVoice(t, func() bool { return srv.voice.Peers("talk")[0].ScreenOK })
+	if _, err := h.UpdateRoomWith("talk", RoomInput{Links: LinksAll, BotLinks: "all", Voice: &VoiceConfig{}}); err != nil {
+		t.Fatal(err)
+	}
+	waitVoice(t, func() bool { return !srv.voice.Peers("talk")[0].ScreenOK })
+	if _, err := h.validVoice(&VoiceConfig{Screen: "alle"}); err == nil {
+		t.Fatal("ungültiger Modus angenommen")
+	}
+}

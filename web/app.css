@@ -1157,3 +1157,34 @@ code { font-size: .9em; }
 .voice-key kbd { min-width: 44px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--canvas); font: 600 14px/1 ui-monospace, Menlo, Consolas, monospace; text-align: center; }
 .voice-key .btn-quiet { height: 36px; }
 .voice-dialog .actions { margin-top: 4px; }
+
+/* Bildschirmfreigabe */
+.screen-view {
+  flex-shrink: 0; display: grid; grid-template-rows: auto minmax(0, 1fr);
+  height: min(58vh, 640px); margin: 10px max(16px, calc((100% - var(--column)) / 2)) 0;
+  background: #0b0c14; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow-float);
+}
+.screen-view:fullscreen { height: 100vh; margin: 0; border-radius: 0; }
+.screen-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; color: #e7e8f2; font-size: 14px; }
+.screen-head svg { width: 18px; height: 18px; flex-shrink: 0; }
+.screen-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.screen-head .icon-btn { color: #e7e8f2; }
+.screen-head .icon-btn:hover { background: rgba(255, 255, 255, .1); }
+.screen-stage { position: relative; display: grid; place-items: center; min-height: 0; padding: 0 8px 8px; }
+.screen-stage canvas { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 6px; background: #000; }
+.screen-wait { position: absolute; color: #9a9db5; font-size: 14px; display: none; }
+.screen-view.waiting .screen-wait { display: block; }
+.screen-view.waiting canvas { visibility: hidden; }
+.voice-peer { display: flex; align-items: center; }
+.voice-peer .voice-peer-btn { flex: 1; min-width: 0; }
+.voice-watch {
+  width: 26px; height: 24px; padding: 3px; margin-left: 2px; border: 0; border-radius: 7px; flex-shrink: 0;
+  background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--ink-strong); display: grid; place-items: center;
+}
+.voice-watch svg { width: 16px; height: 16px; }
+.voice-watch:hover:not(:disabled) { background: var(--accent); }
+.voice-watch.on { background: var(--accent); }
+.voice-watch:disabled { opacity: .5; cursor: default; }
+.vb.sharing { color: #fff; background: var(--online); }
+.voice-bar-note.sharing { color: var(--online); font-weight: 600; }
+@media (max-width: 760px) { .screen-view { height: 38vh; margin: 8px 8px 0; } }

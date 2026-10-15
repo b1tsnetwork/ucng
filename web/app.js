@@ -814,6 +814,7 @@
     if (info.slowMode) notes.push(_t("app.langsam_modus_s", { slowMode: info.slowMode }));
     if (info.links === "known") notes.push(_t("app.links_erst_nach_24_h"));
     if (info.links === "team") notes.push(_t("app.links_nur_vom_team"));
+    if (info.temp) notes.push(_t("app.temp_rule", { min: info.temp.idleMinutes }));
     $("roomRules").textContent = notes.join(" · ");
     $("roomRules").hidden = !notes.length;
   }
@@ -1157,6 +1158,7 @@
     a.append(h("span", "hash", "#"), h("span", "room-name", r.name));
     if (r.readRoles && r.readRoles.length) a.append(Object.assign(h("span", "room-flag", "🔒"), { title: _t("app.privater_kanal") }));
     else if (r.writeRoles && r.writeRoles.length) a.append(Object.assign(h("span", "room-flag", "📣"), { title: r.canWrite ? _t("app.hier_duerfen_nur_bestimmte_rollen") : _t("app.nur_lesen") }));
+    if (r.temp) a.append(Object.assign(h("span", "room-flag temp", "⏳"), { title: r.temp.ownerName ? _t("app.temp_room_of", { name: r.temp.ownerName, min: r.temp.idleMinutes }) : _t("app.temp_room", { min: r.temp.idleMinutes }) }));
     const u = unreadOf(r.name);
     if (u) {
       a.classList.add("unread");
@@ -1413,6 +1415,10 @@
         if (replyTo && !dmFed()) body.replyTo = replyTo.id;
         const res = await api(`${roomPath()}/messages`, { method: "POST", body: JSON.stringify(body) });
         if (res && res.ephemeral) addEphemeral(res.ephemeral);
+        if (res && res.ephemeral && res.ephemeral.open) { // neuer temporärer Kanal: gleich hinein
+          const target = res.ephemeral.open;
+          loadRooms().then(() => switchRoom(target));
+        }
         input.value = "";
         cancelCompose();
         list.scrollTop = list.scrollHeight;

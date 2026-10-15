@@ -317,6 +317,69 @@
           </div>
         </div>
         <ul class="room-sections" id="roomTable"></ul>
+
+        <form class="panel temp-panel" id="tempForm">
+          <h2 class="panel-title" data-i18n-html="admin.temp_title">Temporäre Kanäle <small>legen Personen per Befehl selbst an</small></h2>
+          <p class="panel-intro" data-i18n="admin.temp_intro">Wer eine Rolle mit dem Recht „Temporäre Kanäle anlegen“ hat (oder im Team ist), schreibt im Chat z. B. „!kanal Spielrunde“ und landet in einem eigenen Kanal. Ist eine Weile niemand mehr drin – weder im Text-Chat noch im Sprachkanal –, wird er mit allen Nachrichten gelöscht. Bots mit dem Recht „Kanäle anlegen“ können das über die Bot-API.</p>
+          <label class="switch-row">
+            <span class="switch-text">
+              <strong data-i18n="admin.temp_enabled">Befehl erlauben</strong>
+              <small data-i18n="admin.temp_enabled_hint">Den Befehl selbst (Name, Aliase, Antwort) stellst du unter „Befehle“ ein.</small>
+            </span>
+            <input type="checkbox" class="switch" id="tempEnabled">
+          </label>
+          <div class="field-row three">
+            <label class="field">
+              <span data-i18n="admin.temp_idle">Löschen nach (Minuten ohne Personen)</span>
+              <input type="number" id="tempIdle" min="1" max="1440" step="1">
+            </label>
+            <label class="field">
+              <span data-i18n="admin.temp_max_total">Höchstens insgesamt</span>
+              <input type="number" id="tempMaxTotal" min="1" max="500" step="1">
+            </label>
+            <label class="field">
+              <span data-i18n="admin.temp_max_user">Je Person</span>
+              <input type="number" id="tempMaxUser" min="1" max="20" step="1">
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.temp_group">Gruppe in der Kanalliste</span>
+              <select id="tempGroup"></select>
+            </label>
+            <label class="field">
+              <span data-i18n="admin.temp_voice">Sprache</span>
+              <select id="tempVoice">
+                <option value="" data-i18n="admin.temp_voice_off">Nur Text</option>
+                <option value="sparsam" data-i18n="admin.voice_preset_sparsam">Sparsam (16 kbit/s)</option>
+                <option value="standard" data-i18n="admin.voice_preset_standard">Standard (24 kbit/s)</option>
+                <option value="hoch" data-i18n="admin.voice_preset_hoch">Hoch (40 kbit/s)</option>
+                <option value="musik" data-i18n="admin.voice_preset_musik">Musik (96 kbit/s, Stereo)</option>
+              </select>
+            </label>
+          </div>
+          <div class="field-row" id="tempVoiceMore">
+            <label class="field">
+              <span data-i18n="admin.screen_mode">Bildschirm teilen</span>
+              <select id="tempScreen">
+                <option value="" data-i18n="admin.screen_off">Aus</option>
+                <option value="speakers" data-i18n="admin.screen_speakers">Wer sprechen darf</option>
+              </select>
+            </label>
+            <label class="field">
+              <span data-i18n="admin.voice_guests">Gäste ohne Konto</span>
+              <select id="tempGuests">
+                <option value="speak" data-i18n="admin.voice_guests_speak">Dürfen sprechen</option>
+                <option value="listen" data-i18n="admin.voice_guests_listen">Nur zuhören</option>
+                <option value="none" data-i18n="admin.voice_guests_none">Kein Zutritt</option>
+              </select>
+            </label>
+          </div>
+          <p class="form-error" id="tempError" role="alert"></p>
+          <div class="panel-actions">
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
       </section>
 
       <!-- Moderation -->
@@ -1190,6 +1253,36 @@
             <span data-i18n="admin.voice_stage_roles">Rollen auf der Bühne</span>
             <div class="role-picks" id="roomVoiceStageRoles"></div>
           </div>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.screen_mode">Bildschirm teilen</span>
+              <select id="roomScreenMode">
+                <option value="" data-i18n="admin.screen_off">Aus</option>
+                <option value="speakers" data-i18n="admin.screen_speakers">Wer sprechen darf</option>
+                <option value="roles" data-i18n="admin.screen_roles">Team und gewählte Rollen</option>
+              </select>
+              <small data-i18n="admin.screen_mode_hint">Bild geht nur an Personen, die zusehen – über denselben Sprach-Server wie der Kanal.</small>
+            </label>
+            <label class="field" id="roomScreenQualityRow">
+              <span data-i18n="admin.screen_quality">Qualität</span>
+              <select id="roomScreenQuality">
+                <option value="text" data-i18n="admin.screen_q_text">Text und Folien</option>
+                <option value="standard" data-i18n="admin.screen_q_standard">Standard</option>
+                <option value="motion" data-i18n="admin.screen_q_motion">Bewegung</option>
+              </select>
+              <small id="roomScreenQualityHint"></small>
+            </label>
+          </div>
+          <div class="field-row" id="roomScreenMore">
+            <label class="field">
+              <span data-i18n="admin.screen_max">Freigaben gleichzeitig</span>
+              <input type="number" id="roomScreenMax" min="1" max="4" step="1">
+            </label>
+            <div class="field" id="roomScreenRolesRow">
+              <span data-i18n="admin.screen_roles_pick">Rollen, die teilen dürfen</span>
+              <div class="role-picks" id="roomScreenRoles"></div>
+            </div>
+          </div>
         </div>
       </fieldset>
       <fieldset class="sub-set">
@@ -1303,6 +1396,7 @@
           <label class="check-row"><input type="checkbox" id="permDelete"><span data-i18n="admin.nachrichten_moderativ_loeschen">Nachrichten moderativ löschen</span></label>
           <label class="check-row"><input type="checkbox" id="permMute"><span data-i18n="admin.personen_stummschalten">Personen stummschalten</span></label>
           <label class="check-row"><input type="checkbox" id="permBan"><span data-i18n="admin.personen_zeitlich_ausschliessen">Personen zeitlich ausschließen</span></label>
+          <label class="check-row"><input type="checkbox" id="permRooms"><span data-i18n="admin.bot_perm_rooms">Kanäle anlegen (auch temporäre) und eigene ändern/löschen</span></label>
         </div>
         <label class="field inline-field" id="botMaxRow">
           <span data-i18n="admin.sperren_hoechstens">Sperren höchstens</span>
@@ -1514,6 +1608,7 @@
           <label class="check-row"><input type="checkbox" id="rpUpload"><span data-i18n="admin.bilder_hochladen_2">Bilder hochladen</span></label>
           <label class="check-row"><input type="checkbox" id="rpDelete"><span data-i18n="admin.nachrichten_im_chat_loeschen">Nachrichten im Chat löschen</span></label>
           <label class="check-row"><input type="checkbox" id="rpMute"><span data-i18n="admin.im_chat_stummschalten_bis_1_std">Im Chat stummschalten (bis 1 Std.)</span></label>
+          <label class="check-row"><input type="checkbox" id="rpTempRooms"><span data-i18n="admin.temp_perm">Temporäre Kanäle anlegen (Befehl)</span></label>
         </div>
         <small class="perm-note" data-i18n="admin.zugang_zu_privaten_kanaelen_stellst_du">Zugang zu privaten Kanälen stellst du am Kanal ein. Das Team hat immer alle Rechte.</small>
       </fieldset>
@@ -1557,6 +1652,8 @@
             <option value="time" data-i18n="admin.uhrzeit">Uhrzeit</option>
             <option value="online" data-i18n="admin.wer_ist_online">Wer ist online</option>
             <option value="choose" data-i18n="admin.zufaellige_auswahl">Zufällige Auswahl</option>
+            <option value="poll" data-i18n="admin.cmd_kind_poll">Umfrage</option>
+            <option value="temproom" data-i18n="admin.cmd_kind_temproom">Temporären Kanal anlegen</option>
           </select>
         </label>
         <label class="field">
