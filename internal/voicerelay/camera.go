@@ -75,10 +75,10 @@ func (r *Relay) camOn(p *peer, on bool, codec string) {
 		b, _ := json.Marshal(reply)
 		r.enqueueLocked(p, textMsg(b))
 	}
-	peers, name := r.peersLocked(ch), ch.name
+	peers := r.peersLocked(ch)
 	r.mu.Unlock()
 	if changed {
-		r.changed(name, peers)
+		r.changedCh(ch, peers)
 	}
 }
 
@@ -242,13 +242,14 @@ func (r *Relay) camFrame(p *peer, layer int, flags uint8, seq uint16, data []byt
 	msg[4] = flags
 	binary.BigEndian.PutUint16(msg[5:], seq)
 	copy(msg[7:], data)
+	tid := frameTid(flags)
 	missing := false
 	for _, w := range ch.peers {
 		if w == p {
 			continue
 		}
 		if layer == 1 && w.highOff {
-			if now.Sub(w.degradedAt) < degradeFor || len(w.out) > 4 {
+			if now.Sub(w.degradedAt) < degradeFor || w.videoBusy(0.1) {
 				continue
 			}
 			w.highOff = false // wieder versuchen
@@ -256,28 +257,41 @@ func (r *Relay) camFrame(p *peer, layer int, flags uint8, seq uint16, data []byt
 			r.enqueueLocked(w, textMsg([]byte(`{"t":"degraded","on":false}`)))
 		}
 		nk := w.camKeys(p.idx)
+		sk := w.camSkip[p.idx]
+		if sk == nil {
+			sk = &[2]uint8{255, 255}
+			w.camSkip[p.idx] = sk
+		}
 		if nk[layer] {
 			if !key {
 				missing = true
 				continue
 			}
 			nk[layer] = false
+			sk[layer] = 255
 		}
-		limit := outQueue / 2
-		if layer == 1 {
-			limit = outQueue / 3
-		}
-		if len(w.out) > limit { // langsame Verbindung
-			nk[layer] = true
-			if layer == 1 && !w.highOff {
-				w.highOff, w.degradedAt = true, now
-				r.enqueueLocked(w, textMsg([]byte(`{"t":"degraded","on":true}`)))
-			} else {
-				missing = true
+		if sk[layer] != 255 {
+			if tid >= sk[layer] {
+				continue
 			}
+			sk[layer] = 255
+		}
+		// große Bilder nur, solange die Leitung nicht schon zur Hälfte voll ist
+		if layer == 1 && w.videoBusy(0.5) && !w.highOff {
+			nk[1] = true
+			w.highOff, w.degradedAt = true, now
+			r.enqueueLocked(w, textMsg([]byte(`{"t":"degraded","on":true}`)))
 			continue
 		}
-		r.enqueueLocked(w, msg)
+		if r.enqueueVideoLocked(w, msg, tid > 0) {
+			continue
+		}
+		if tid > 0 && !key {
+			sk[layer] = tid
+			continue
+		}
+		nk[layer] = true
+		missing = true
 	}
 	if missing {
 		r.camKeyReqLocked(p, layer)

@@ -703,7 +703,8 @@
     $("roomVoiceEstimate").textContent = _t("admin.voice_estimate", { per: Math.round(per), total: (Math.round(per * peers / 100) / 10).toLocaleString(GoChatI18n.locale), peers });
     if (scr) {
       const sk = { text: 1.5, standard: 2.5, motion: 4 }[$("roomScreenQuality").value] || 2.5;
-      const hints = { text: _t("admin.screen_q_hint_text"), standard: _t("admin.screen_q_hint_standard"), motion: _t("admin.screen_q_hint_motion") };
+      const hints = { text: _t("admin.screen_q_hint_text"), standard: _t("admin.screen_q_hint_standard"), motion: _t("admin.screen_q_hint_motion"),
+        high: _t("admin.screen_q_hint_high"), max: _t("admin.screen_q_hint_max") };
       $("roomScreenQualityHint").textContent = hints[$("roomScreenQuality").value] || "";
       $("roomVoiceEstimate").textContent += " " + _t("admin.screen_estimate", { mbit: sk.toLocaleString(GoChatI18n.locale), total: (Math.round(sk * (peers - 1) * 10) / 10).toLocaleString(GoChatI18n.locale) });
     }
@@ -1599,6 +1600,9 @@
       bar.style.setProperty("--w", Math.min(100, load * 100) + "%");
       const num = el("span", "num", _t("admin.voice_relay_load", { n: r.stats.participants, max: r.stats.max, mbit: mb(r.stats.mbit), est: mb(r.stats.estimateMbit), maxMbit: mb(r.stats.maxMbit) }));
       li.append(name, bar, num);
+      if (r.role === "media") li.append(el("span", "rule voice", _t("admin.voice_relay_media")));
+      const streams = Object.values(r.stats.media || {}).reduce((n, m) => n + (m.pub || 0), 0);
+      if (streams) li.append(el("span", "rule", _t("admin.voice_relay_streams", { n: streams })));
       if (!r.healthy) li.append(el("span", "rule", _t("admin.voice_relay_down")));
       return li;
     }) : [el("li", "empty-row", _t("admin.voice_no_relay"))]));

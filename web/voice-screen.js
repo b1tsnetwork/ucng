@@ -1,42 +1,39 @@
 // SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Bildschirmfreigabe in Sprachkanälen: Bildschirm aufnehmen → VP9/VP8 (WebCodecs) → über die
-// Sprachverbindung zum Relay. Zuschauen: Bilder einer Person empfangen, dekodieren und auf ein
-// <canvas> zeichnen. Video geht nur an Personen, die zusehen.
+// Bildschirmfreigabe in Sprachkanälen: Bildschirm aufnehmen → Video-Encoder (WebCodecs, Hardware
+// bevorzugt, siehe voice-media.js) → über die Medienverbindung zum Relay. Zuschauen: Bilder einer
+// Person empfangen, dekodieren und auf ein <canvas> zeichnen. Video geht nur an Personen, die
+// zusehen.
+//
+// Geringe Verzögerung: Beim Senden stehen höchstens ≈ 250 ms in der Leitung, sonst wird ein Bild
+// ausgelassen (vor dem Kodieren – das schadet nicht) und die Bitrate sinkt. Beim Empfang wird
+// nichts gepuffert; staut sich der Decoder, fallen zuerst Bilder der oberen Zeitebenen weg.
 (() => {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
   const t = (k, v) => window._t(k, v);
 
-  let L = null; // Verbindung von voice.js: { sendText, sendBin, ws, peer(idx), you, cfg, toast, render }
+  // Verbindung von voice.js: { cfg, ws(), sendText, sendBin, peer(idx), peers(), screenOK(), toast,
+  // render, prepare(), hint(codec) }
+  let L = null;
 
   // Teilen
-  let share = null; // { stream, track, enc, codec, w, h, seq, ts, forceKey, timer, reader, on }
+  let share = null; // { stream, track, enc, codec, hw, svc, w, h, kbps, seq, ts, forceKey, reader, on, drops }
   // Zusehen
-  let view = null; // { idx, name, codec, dec, needKey, ts, frames, last }
+  let view = null; // { idx, user, name, codec, dec, needKey, pending }
 
-  const supported = () => !!(window.VideoEncoder && window.VideoDecoder && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  const supported = () => !!(window.VideoEncoder && window.VideoDecoder && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && window.UCNGMedia);
 
   // ---------- Teilen ----------
 
-  async function pickCodec(cfg, w, h) {
-    // Wenig Bewegung: VP9 (schärfer bei Text); flüssig: VP8 (weniger Rechenlast)
-    const list = cfg.screenFps <= 15 ? ["vp09.00.10.08", "vp8"] : ["vp8", "vp09.00.10.08"];
-    for (const codec of list) {
-      const c = encConfig(codec, cfg, w, h);
-      try { if ((await VideoEncoder.isConfigSupported(c)).supported) return codec; } catch { /* nächster */ }
-    }
-    return "";
-  }
-
-  function encConfig(codec, cfg, w, h) {
-    return { codec, width: w, height: h, bitrate: cfg.screenKbps * 1000, framerate: cfg.screenFps,
-      latencyMode: "realtime", bitrateMode: "variable" };
-  }
-
   const even = (x) => Math.max(2, Math.round(x / 2) * 2);
+  const hintFor = (fps) => (fps <= 15 ? "text" : fps >= 60 ? "motion" : "detail");
+
+  function encConfig(s) {
+    return UCNGMedia.config({ codec: s.codec, hw: s.hw }, s.w, s.h, L.cfg.screenFps, s.kbps, s.svc, { hint: hintFor(L.cfg.screenFps) });
+  }
 
   async function startShare() {
     if (!L || share || !L.screenOK()) return;
@@ -49,17 +46,21 @@
         audio: false,
       });
     } catch { return; } // abgebrochen
-    if (!L) { stream.getTracks().forEach((x) => x.stop()); return; }
+    // Medienverbindung vorbereiten: Der Chat-Server kann den Bildschirm jetzt auf einen anderen
+    // Sprach-Server legen (Lastverteilung) – danach ist L womöglich eine neue Verbindung.
+    if (L && L.prepare && !(await L.prepare())) { stream.getTracks().forEach((x) => x.stop()); return; }
+    if (!L || share) { stream.getTracks().forEach((x) => x.stop()); return; }
     const track = stream.getVideoTracks()[0];
-    try { track.contentHint = cfg.screenFps <= 5 ? "text" : cfg.screenFps >= 30 ? "motion" : "detail"; } catch { /* egal */ }
+    try { track.contentHint = hintFor(cfg.screenFps); } catch { /* egal */ }
     const st = track.getSettings();
     const scale = Math.min(1, cfg.screenHeight / (st.height || cfg.screenHeight));
     const w = even((st.width || 1280) * scale), h = even((st.height || 720) * scale);
-    const codec = await pickCodec(cfg, w, h);
-    if (!codec) { stream.getTracks().forEach((x) => x.stop()); L.toast(t("voice.screen_unsupported")); return; }
-    share = { stream, track, codec, w, h, seq: 0, ts: 0, forceKey: true, on: false, lastAt: 0 };
+    const enc = await UCNGMedia.pick(w, h, cfg.screenFps, cfg.screenKbps, { text: cfg.screenFps <= 15, hint: hintFor(cfg.screenFps) });
+    if (!enc || !L) { stream.getTracks().forEach((x) => x.stop()); if (L) L.toast(t("voice.screen_unsupported")); return; }
+    share = { stream, track, codec: enc.codec, hw: enc.hw, svc: enc.svc, w, h, kbps: cfg.screenKbps, seq: 0, ts: 0, forceKey: true,
+      on: false, lastAt: 0, drops: 0, sent: 0 };
     track.addEventListener("ended", () => stopShare());
-    L.sendText({ t: "share", on: true, codec });
+    L.sendText({ t: "share", on: true, codec: enc.codec });
     L.render();
   }
 
@@ -67,18 +68,19 @@
   function begin() {
     const s = share;
     s.on = true;
-    s.enc = new VideoEncoder({ output: (chunk) => sendChunk(s, chunk), error: () => { if (share === s) { L.toast(t("voice.screen_failed")); stopShare(); } } });
-    s.enc.configure(encConfig(s.codec, L.cfg, s.w, s.h));
+    s.enc = new VideoEncoder({ output: (chunk, meta) => sendChunk(s, chunk, meta), error: () => { if (share === s) { L.toast(t("voice.screen_failed")); stopShare(); } } });
+    s.enc.configure(encConfig(s));
+    if (L.hint) L.hint(s.codec);
     const interval = 1000 / L.cfg.screenFps;
     if (window.MediaStreamTrackProcessor) { // läuft auch, wenn der Tab im Hintergrund ist
-      s.reader = new MediaStreamTrackProcessor({ track: s.track }).readable.getReader();
+      s.reader = new MediaStreamTrackProcessor({ track: s.track, maxBufferSize: 1 }).readable.getReader();
       (async () => {
         for (;;) {
           let r;
           try { r = await s.reader.read(); } catch { break; }
           if (r.done || share !== s) { if (r.value) r.value.close(); break; }
           const now = performance.now();
-          if (now - s.lastAt < interval * 0.9) { r.value.close(); continue; }
+          if (now - s.lastAt < interval * 0.85) { r.value.close(); continue; }
           s.lastAt = now;
           encode(s, r.value);
         }
@@ -95,7 +97,21 @@
         encode(s, f);
       }, interval);
     }
+    s.adapt = setInterval(() => adapt(s), 2000);
     L.render();
+  }
+
+  // Bitrate an die eigene Leitung anpassen: ausgelassene Bilder → runter, frei → wieder hoch
+  function adapt(s) {
+    if (share !== s || !s.enc || s.enc.state !== "configured") return;
+    const max = L.cfg.screenKbps, min = Math.round(max * 0.25);
+    let k = s.kbps;
+    if (s.drops > s.sent * 0.1 + 1) k = Math.max(min, Math.round(k * 0.75));
+    else if (s.drops === 0 && k < max) k = Math.min(max, Math.round(k * 1.15));
+    s.drops = 0; s.sent = 0;
+    if (Math.abs(k - s.kbps) / s.kbps < 0.1) return;
+    s.kbps = k;
+    try { s.enc.configure(encConfig(s)); } catch { /* egal */ }
   }
 
   function encode(s, frame) {
@@ -105,37 +121,37 @@
       const w = even(frame.displayWidth * scale), h = even(frame.displayHeight * scale);
       if (w !== s.w || h !== s.h) {
         s.w = w; s.h = h;
-        s.enc.configure(encConfig(s.codec, L.cfg, w, h));
+        s.enc.configure(encConfig(s));
         s.forceKey = true;
       }
       // Gegendruck: Encoder oder Leitung voll → Bild auslassen (vor dem Kodieren schadet das nicht)
-      if (s.enc.state !== "configured" || s.enc.encodeQueueSize > 2 || !L.ws() || L.ws().bufferedAmount > 1.5e6) return;
-      s.ts += Math.round(1e6 / L.cfg.screenFps);
+      const ws = L.ws();
+      if (s.enc.state !== "configured" || s.enc.encodeQueueSize > 1 || !ws || ws.bufferedAmount > UCNGMedia.sendBudget(s.kbps)) { s.drops++; return; }
+      s.sent++;
+      s.ts = Math.round(performance.now() * 1000);
       const out = frame.displayWidth === w && frame.displayHeight === h ? frame : null;
+      let vf;
       if (out) {
-        const vf = new VideoFrame(out, { timestamp: s.ts });
-        s.enc.encode(vf, { keyFrame: s.forceKey });
-        vf.close();
-      } else {
-        // verkleinern
+        vf = new VideoFrame(out, { timestamp: s.ts });
+      } else { // verkleinern
         if (!s.canvas) { s.canvas = new OffscreenCanvas(w, h); s.c2d = s.canvas.getContext("2d"); }
         if (s.canvas.width !== w || s.canvas.height !== h) { s.canvas.width = w; s.canvas.height = h; }
         s.c2d.drawImage(frame, 0, 0, w, h);
-        const vf = new VideoFrame(s.canvas, { timestamp: s.ts });
-        s.enc.encode(vf, { keyFrame: s.forceKey });
-        vf.close();
+        vf = new VideoFrame(s.canvas, { timestamp: s.ts });
       }
+      s.enc.encode(vf, { keyFrame: s.forceKey });
+      vf.close();
       s.forceKey = false;
     } catch { /* nächstes Bild */ } finally {
       frame.close();
     }
   }
 
-  function sendChunk(s, chunk) {
+  function sendChunk(s, chunk, meta) {
     if (share !== s || !s.on) return;
     const b = new Uint8Array(4 + chunk.byteLength);
     b[0] = 2;
-    b[1] = chunk.type === "key" ? 1 : 0;
+    b[1] = (chunk.type === "key" ? 1 : 0) | (UCNGMedia.tidOf(meta) << 1);
     s.seq = (s.seq + 1) & 0xffff;
     b[2] = s.seq >> 8; b[3] = s.seq & 255;
     chunk.copyTo(b.subarray(4));
@@ -146,11 +162,12 @@
     const s = share;
     if (!s) return;
     share = null;
-    clearInterval(s.timer);
+    clearInterval(s.timer); clearInterval(s.adapt);
     if (s.reader) s.reader.cancel().catch(() => {});
     if (s.video) { s.video.srcObject = null; }
     s.stream.getTracks().forEach((x) => x.stop());
     if (s.enc && s.enc.state !== "closed") try { s.enc.close(); } catch { /* egal */ }
+    if (L && L.hint) L.hint("");
     if (!fromRelay && L) L.sendText({ t: "share", on: false });
     if (L) L.render();
   }
@@ -163,9 +180,15 @@
     if (view && view.idx === idx) { $("screenView").scrollIntoView({ block: "nearest" }); return; }
     if (view) unwatch();
     const p = L.peer(idx);
-    view = { idx, name: p ? p.n : "", codec: "", dec: null, needKey: true, ts: 0, pending: true };
+    view = { idx, user: p ? p.u : "", name: p ? p.n : "", codec: "", dec: null, needKey: true, pending: true };
     L.sendText({ t: "watch", i: idx, on: true });
     showPanel();
+  }
+  // nach Nutzer-ID (die Seitenleiste kennt die Indizes der Medienverbindung nicht)
+  function watchUser(uid) {
+    if (!L) return;
+    const p = (L.peers ? L.peers() : []).find((x) => x.u === uid && x.sc);
+    if (p) watch(p.i); else L.toast(t("voice.screen_gone"));
   }
 
   function unwatch(silent) {
@@ -195,7 +218,7 @@
         if (L) L.sendText({ t: "keyreq", i: v.idx });
       },
     });
-    v.dec.configure({ codec: v.codec, optimizeForLatency: true });
+    v.dec.configure(UCNGMedia.decoderConfig(v.codec));
   }
 
   function onVideo(b) {
@@ -203,13 +226,18 @@
     if (!v || !v.dec || b.length < 7) return;
     const idx = (b[1] << 8) | b[2];
     if (idx !== v.idx) return;
-    const key = (b[3] & 1) === 1;
+    const key = (b[3] & 1) === 1, tid = (b[3] >> 1) & 3;
     if (v.needKey && !key) return;
+    if (v.skipTid != null) { // eine Zeitebene ausgelassen: alles darüber auch, bis eine niedrigere kommt
+      if (tid >= v.skipTid && !key) return;
+      v.skipTid = null;
+    }
     v.needKey = false;
-    v.ts += 33333;
     try {
-      if (v.dec.decodeQueueSize > 10) { v.needKey = true; L.sendText({ t: "keyreq", i: v.idx }); return; } // zu langsam: aufholen
-      v.dec.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: v.ts, data: b.subarray(6) }));
+      const q = v.dec.decodeQueueSize;
+      if (q > 2 && tid > 0 && !key) { v.skipTid = tid; return; } // zu langsam: obere Ebene opfern
+      if (q > 6) { v.needKey = true; L.sendText({ t: "keyreq", i: v.idx }); return; } // aufholen
+      v.dec.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: b.subarray(6) }));
     } catch { v.needKey = true; L.sendText({ t: "keyreq", i: v.idx }); }
   }
 
@@ -295,7 +323,8 @@
     stopShare: () => stopShare(true),
     get sharing() { return !!share; },
     get starting() { return !!share && !share.on; },
-    watch, unwatch: () => unwatch(),
+    watch, watchUser, unwatch: () => unwatch(),
     get watching() { return view ? view.idx : 0; },
+    get watchingUser() { return view ? view.user : ""; },
   };
 })();

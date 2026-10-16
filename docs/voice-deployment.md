@@ -28,12 +28,13 @@ Diese Anleitung beschreibt, wie du zusätzliche Sprach-Server (`ucng-voice`, im 
 - Der **Agent** prüft die Karte mit dem öffentlichen Schlüssel des Chat-Servers und leitet die Opus-Rahmen weiter. Er mischt nichts, speichert nichts und kennt keine Konten.
 - Jeder Agent **meldet sich alle 3 Sekunden** beim Chat-Server (Auslastung, Teilnehmer). Ein neuer Sprachkanal kommt auf den am wenigsten ausgelasteten Relay und bleibt dort, bis er leer ist.
 - Fällt ein Agent aus, gilt er nach 15 Sekunden als ausgefallen. Die Browser verbinden sich automatisch neu und landen auf einem anderen Relay.
+- **Bildschirm und Kameras** laufen über eigene Verbindungen. Die Sprache eines Kanals bleibt auf ihrem Relay; Bildschirm (ab 50 % Auslastung, `VOICE_OFFLOAD_SCREEN`) und Kameras (ab 75 %, `VOICE_OFFLOAD_VIDEO`) kann der Chat-Server auf einen anderen Relay legen – bevorzugt auf Agenten mit `ROLE=media`. Ein Browser hat dann bis zu drei Verbindungen, gegebenenfalls zu verschiedenen Agenten.
 
 ### Verbindungen im Überblick
 
 | Von | Nach | Adresse | Zweck |
 |---|---|---|---|
-| Browser | Agent | `PUBLIC_URL` des Agenten (`wss://…/ws`) | Sprache |
+| Browser | Agent | `PUBLIC_URL` des Agenten (`wss://…/ws`) | Sprache, Bildschirm, Kameras (je eine Verbindung) |
 | Agent | Chat-Server | `CHAT_URL` + `/api/voice/agents/report` | Anmeldung und Meldungen |
 | Chat-Server | Agent | `CONTROL_URL` (`…/control`) | Steuerbefehle |
 
@@ -60,9 +61,9 @@ Gemessen auf 2 CPU-Kernen: 200 Teilnehmer mit 99,8 % zugestellten Rahmen bei 20 
 | Hoch (40 kbit/s) | ca. 200 kbit/s | 5 Mbit/s | 40 Mbit/s |
 | Musik (96 kbit/s, Stereo) | ca. 400 kbit/s | 10 Mbit/s | 80 Mbit/s |
 
-**Bildschirmfreigaben** laufen über denselben Relay wie der Sprachkanal und kommen dazu – aber nur je Person, die tatsächlich zusieht: 1,5 Mbit/s (Text und Folien), 2,5 Mbit/s (Standard) oder 4 Mbit/s (Bewegung). Sehen 20 Personen einer Standard-Freigabe zu, sind das 50 Mbit/s. Ist die Grenze erreicht, nimmt der Relay keine weiteren Zuschauer an; die Sprache läuft weiter.
+**Bildschirmfreigaben** kommen dazu – aber nur je Person, die tatsächlich zusieht: 3 Mbit/s (Text und Folien), 4,5 Mbit/s (Standard), 8 Mbit/s (Flüssig, 1080p60), 12 Mbit/s (1440p60) oder 16 Mbit/s (4K). Sehen 20 Personen einer Standard-Freigabe zu, sind das 90 Mbit/s. Ist die Grenze erreicht, nimmt der Relay keine weiteren Zuschauer an; die Sprache läuft weiter. Deshalb lohnt sich ein eigener **Medien-Agent** (`ROLE=media`, siehe unten): Der Chat-Server lagert Bildschirm und Kameras dorthin aus, sobald der Sprach-Server zu voll würde.
 
-**Kameras (Konferenzraum)** kommen ebenfalls dazu. Jede Person mit Kamera schickt eine Miniansicht (150 kbit/s) an alle und – solange sie zu den großen Sprechern gehört – das große Bild (bis 0,6 / 1,5 / 2,8 Mbit/s bei SD / HD / Full HD). Je Zuschauer ausgehend also etwa `Kameras × 150 kbit/s + große Sprecher × Qualität`: 10 Kameras, 1 Sprecher groß in HD ≈ 3 Mbit/s je Person, bei 10 Teilnehmern ≈ 30 Mbit/s. Langsame Zuschauer bekommen automatisch nur Miniansichten. **Musik von Bots** braucht je Zuhörer so viel wie ein Sprecher mit der Klang-Einstellung *Musik* (≈ 100 kbit/s).
+**Kameras (Konferenzraum)** kommen ebenfalls dazu. Jede Person mit Kamera schickt eine Miniansicht (180 kbit/s) an alle und – solange sie zu den großen Sprechern gehört – das große Bild (bis 0,7 / 1,8 / 3,2 / 5 Mbit/s bei SD / HD / Full HD / Full HD 60). Je Zuschauer ausgehend also etwa `Kameras × 180 kbit/s + große Sprecher × Qualität`: 10 Kameras, 1 Sprecher groß in HD ≈ 3,6 Mbit/s je Person, bei 10 Teilnehmern ≈ 36 Mbit/s. Langsame Zuschauer bekommen automatisch nur Miniansichten. **Musik von Bots** braucht je Zuhörer so viel wie ein Sprecher mit der Klang-Einstellung *Musik* (≈ 100 kbit/s).
 
 Das sind vorsichtige Schätzungen (gemessen wurde etwa ein Viertel weniger). Setze `MAX_MBIT` auf etwa 70–80 % der Upload-Bandbreite des Servers. Der Agent nimmt keine neuen Teilnehmer mehr an, wenn die Schätzung diese Grenze überschreiten würde.
 
@@ -180,6 +181,19 @@ Auf dem Agent-Server brauchst du nur `deploy/voice/compose.yml` und `.env`.
    - `CONTROL_URL`: Adresse, unter der der **Chat-Server** den Agenten erreicht. Über das Internet nur per `https://`. Im Reverse-Proxy erlaubst du `/control` dann nur von der IP-Adresse des Chat-Servers (Abschnitt 7).
 
 3. Starten und Log prüfen wie in Variante A.
+
+### Reiner Medien-Server
+
+Für viele Bildschirmfreigaben oder große Konferenzen lohnt sich ein Agent nur für Bildschirm und Kameras – mit viel Upload-Bandbreite. Er bekommt keine Sprachkanäle; der Chat-Server lagert die Medien zuerst dorthin aus:
+
+```env
+ROLE=media
+AGENT_ID=media-fra-1
+PUBLIC_URL=wss://media1.example.org
+MAX_MBIT=800
+```
+
+Sonst wie oben. In der Übersicht (Admin → Übersicht → *Sprach-Server*) steht er als „nur Bildschirm und Kameras“, mit der Zahl laufender Freigaben und Kameras. Die Schwellen stellst du beim Chat-Server ein: `VOICE_OFFLOAD_SCREEN=0` lagert Bildschirme immer aus, `100` nie.
 
 ---
 
@@ -338,7 +352,7 @@ Von außen muss nur 443/tcp offen sein (und 80/tcp für die Zertifikatserneuerun
 | Browser-Konsole: `Refused to connect … Content Security Policy` | Der Chat-Server kennt den Agenten noch nicht (erst nach der ersten Meldung). Seite neu laden. |
 | „Der Sprach-Server ist gerade ausgelastet“ | Alle Relays haben `MAX_PARTICIPANTS` oder `MAX_MBIT` erreicht. Grenzen erhöhen oder einen weiteren Agenten starten. |
 | Stummschalten/Entfernen wirkt nicht | Der Chat-Server erreicht `CONTROL_URL` nicht. Log des **Chat-Servers**: `Sprache: Agent … nicht erreichbar`. Adresse und Proxy-Regel für `/control` prüfen. |
-| `429 Zu viele Sprachverbindungen von dieser Adresse` | Mehr als `MAX_PER_IP` (Standard 5) Verbindungen von einer IP. Stehen Agent und Browser hinter einem Proxy, `TRUST_PROXY=1` setzen; sonst sehen alle Verbindungen wie die des Proxys aus. |
+| `429 Zu viele Sprachverbindungen von dieser Adresse` | Mehr als `MAX_PER_IP` (Standard 12; je Person bis zu drei: Sprache, Bildschirm, Kameras) Verbindungen von einer IP. Stehen Agent und Browser hinter einem Proxy, `TRUST_PROXY=1` setzen; sonst sehen alle Verbindungen wie die des Proxys aus. |
 
 ---
 

@@ -50,6 +50,7 @@ type config struct {
 	MaxParticipants, MaxPerIP                       int
 	MaxMbit                                         float64
 	Origins                                         string
+	Role                                            string // "" = alles, "media" = nur Bildschirm und Kameras
 	TrustProxy                                      bool
 	TrustedProxies                                  string
 }
@@ -58,7 +59,7 @@ func loadConfig() config {
 	var c config
 	host, _ := os.Hostname()
 	maxP, _ := strconv.Atoi(env("MAX_PARTICIPANTS", "200"))
-	perIP, _ := strconv.Atoi(env("MAX_PER_IP", "5"))
+	perIP, _ := strconv.Atoi(env("MAX_PER_IP", "12")) // je Person bis zu drei Verbindungen (Sprache, Bildschirm, Kameras)
 	maxM, _ := strconv.ParseFloat(env("MAX_MBIT", "50"), 64)
 	flag.StringVar(&c.Addr, "addr", env("ADDR", ":8090"), "Listen-Adresse")
 	flag.StringVar(&c.ChatURL, "chat-url", env("CHAT_URL", ""), "Adresse des Chat-Servers (intern erreichbar), z. B. http://chat:8080")
@@ -72,7 +73,11 @@ func loadConfig() config {
 	flag.StringVar(&c.Origins, "origins", env("ALLOWED_ORIGINS", ""), "Erlaubte Herkunft der Browser (kommagetrennt; Standard: PUBLIC_URL des Chat-Servers)")
 	flag.BoolVar(&c.TrustProxy, "trust-proxy", env("TRUST_PROXY", "") == "1", "X-Forwarded-For von vertrauenswürdigen Proxys verwenden")
 	flag.StringVar(&c.TrustedProxies, "trusted-proxies", env("TRUSTED_PROXIES", ""), "Vertrauenswürdige Proxys (leer = Loopback und private Netze)")
+	flag.StringVar(&c.Role, "role", env("ROLE", ""), "Aufgaben: leer = Sprache, Bildschirm und Kameras; \"media\" = nur Bildschirm und Kameras (ausgelagert)")
 	flag.Parse()
+	if c.Role != "" && c.Role != "media" {
+		log.Fatal("ROLE: leer oder \"media\"")
+	}
 	c.ChatURL = strings.TrimRight(c.ChatURL, "/")
 	c.PublicURL = strings.TrimRight(c.PublicURL, "/")
 	if c.ControlURL == "" {
@@ -245,7 +250,7 @@ func (a *agent) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 	var ok bool
 	switch in.Action {
-	case "speak", "mute", "hand", "kick", "close", "screen", "video", "mod", "move":
+	case "speak", "mute", "hand", "kick", "close", "screen", "video", "mod", "move", "mediakick", "remedia":
 		ok = a.relay.Control(in.Channel, in.User, in.Action, in.Value, in.Reason)
 	default:
 		http.Error(w, "unbekannte Aktion", http.StatusBadRequest)
@@ -287,7 +292,7 @@ func (a *agent) report(ctx context.Context) error {
 		rooms[ch] = a.relay.Peers(ch)
 	}
 	body, _ := json.Marshal(map[string]any{"id": a.cfg.ID, "wsURL": a.ws, "controlURL": a.cfg.ControlURL,
-		"version": version, "stats": st, "rooms": rooms})
+		"version": version, "stats": st, "rooms": rooms, "role": a.cfg.Role})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.ChatURL+"/api/voice/agents/report", bytes.NewReader(body))
 	if err != nil {
 		return err

@@ -565,14 +565,17 @@ In Sprachkanälen kann der Bildschirm (oder ein Fenster, ein Tab) geteilt werden
 
 | Qualität | Auflösung | Bilder/s | Bitrate je Zuschauer |
 |---|---|---|---|
-| Text und Folien | 1080p | 5 | 1,5 Mbit/s |
-| Standard | 1080p | 15 | 2,5 Mbit/s |
-| Bewegung | 720p | 30 | 4 Mbit/s |
+| Text und Folien | bis 1440p | 15 | 3 Mbit/s |
+| Standard | 1080p | 30 | 4,5 Mbit/s |
+| Flüssig | 1080p | 60 | 8 Mbit/s |
+| Flüssig und scharf | 1440p | 60 | 12 Mbit/s |
+| Maximum | bis 4K | 30 | 16 Mbit/s |
 
-- **Teilen:** Knopf mit dem Bildschirm-Symbol unten in der Sprachleiste. Der Browser kodiert das Bild mit VP9 (wenig Bewegung) bzw. VP8 (WebCodecs) und schickt es über die bestehende Sprachverbindung.
+- **Teilen:** Knopf mit dem Bildschirm-Symbol unten in der Sprachleiste. Der Browser kodiert mit WebCodecs und nimmt den besten Encoder, den er hat: zuerst über die Grafikkarte (H.264, VP9, AV1), sonst in Software (VP9, VP8). Wo möglich mit **zeitlichen Ebenen** (SVC, L1T3): Kommt ein Zuschauer nicht hinterher, lässt der Relay für ihn einzelne Bilder weg – er sieht dann z. B. 30 statt 60 Bilder je Sekunde, aber das Bild friert nicht ein.
+- **Geringe Verzögerung:** Bildschirm und Kameras laufen über **eigene Verbindungen**, getrennt von der Sprache – ein großes Schlüsselbild hält die Sprache nie auf. Beim Senden stehen höchstens etwa 250 ms in der Leitung, im Relay höchstens etwa 300 ms je Zuschauer; was älter würde, wird ausgelassen statt gestaut, und die Bitrate des Senders passt sich laufend an.
 - **Ansehen:** Neben der teilenden Person in der Seitenleiste erscheint ein Bildschirm-Knopf. Das Bild öffnet sich über dem Chat, mit Vollbild (Doppelklick). Zusehen kann, wer dem Sprachkanal beigetreten ist.
 - **Bandbreite nur, wo jemand hinsieht:** Der Relay schickt das Bild nur an Personen, die zusehen. Neue Zuschauer bekommen sofort ein Schlüsselbild; bei einer langsamen Verbindung wird zuerst Video ausgelassen (die Sprache bleibt). Ist ein Relay an seiner Grenze (`VOICE_MAX_MBIT` bzw. `MAX_MBIT`), werden keine weiteren Zuschauer angenommen.
-- **Auf den Sprach-Servern:** Bildschirmfreigaben laufen über denselben Relay wie der Sprachkanal – mit Agenten (`ucng-voice`) also auch dort, nicht über den Chat-Server.
+- **Auf den Sprach-Servern:** Bildschirmfreigaben laufen über die Sprach-Server (eingebaut oder Agenten), nie über den Chat-Server – und bei Bedarf auf einem anderen als die Sprache, siehe [Lastverteilung in einem Kanal](#lastverteilung-in-einem-kanal).
 - **Moderation:** Team und Rollen mit dem Recht *Stummschalten* können eine Freigabe beenden und das Teilen für die Person sperren (*Bildschirmfreigabe beenden und sperren*) bzw. wieder erlauben. Wer stummgeschaltet ist, kann nicht teilen.
 - Ton des Bildschirms wird nicht übertragen. In Chrome und Edge läuft das Teilen auch weiter, wenn das Chat-Fenster im Hintergrund ist; in Firefox kann es dann ruckeln.
 
@@ -582,13 +585,14 @@ Ein Sprachkanal wird zum Konferenzraum, wenn unter *Kameras (Konferenz)* etwas a
 
 - **Ansicht:** Alle aktiven Kameras stehen als Miniansicht in einer Leiste; die *x* zuletzt Sprechenden (*Sprecher groß*, Standard 1, höchstens 4) erscheinen groß. Wer gerade spricht, wandert nach zwei Sekunden nach vorn – ein kurzes Räuspern wirft niemanden aus dem großen Bild. Knopf oben im Kanal: Konferenz-Ansicht ein/aus, Doppelklick = Vollbild.
 - **Kamera einschalten:** Kamera-Knopf in der Sprachleiste; die Kamera wählt man in den Spracheinstellungen.
-- **Auflösung nach Bandbreite:** Jede Kamera sendet zwei Ebenen (Simulcast) – eine Miniansicht (320×180, 12 Bilder/s, 150 kbit/s) und das große Bild bis zur eingestellten Qualität. Der Relay schickt das große Bild nur von den gerade großen Personen. Der Browser passt die Bitrate laufend an die eigene Leitung an; kommt ein Zuschauer nicht hinterher, bekommt er 15 Sekunden lang nur Miniansichten (die Sprache bleibt).
+- **Auflösung nach Bandbreite:** Jede Kamera sendet zwei Ebenen (Simulcast) – eine Miniansicht (320×180, 15 Bilder/s, 180 kbit/s) und das große Bild bis zur eingestellten Qualität (mit zeitlichen Ebenen wie beim Bildschirm). Der Relay schickt das große Bild nur von den gerade großen Personen. Der Browser passt die Bitrate laufend an die eigene Leitung an; kommt ein Zuschauer nicht hinterher, bekommt er 15 Sekunden lang nur Miniansichten (die Sprache bleibt).
 
 | *Großes Bild* | Auflösung | Bilder/s | höchstens |
 |---|---|---|---|
-| SD | 640×360 | 24 | 600 kbit/s |
-| HD (Standard) | 1280×720 | 30 | 1,5 Mbit/s |
-| Full HD | 1920×1080 | 30 | 2,8 Mbit/s |
+| SD | 640×360 | 30 | 700 kbit/s |
+| HD (Standard) | 1280×720 | 30 | 1,8 Mbit/s |
+| Full HD | 1920×1080 | 30 | 3,2 Mbit/s |
+| Full HD 60 | 1920×1080 | 60 | 5 Mbit/s |
 
 - **Moderation:** wie bei der Bildschirmfreigabe – *Kamera beenden* sperrt die Kamera der Person, *Kamera erlauben* hebt das auf.
 - Braucht WebCodecs (aktueller Chrome, Edge, Firefox ab 130, Safari ab 17). Am effizientesten sendet Chrome/Edge; andere Browser greifen auf ein Video-Element zurück und brauchen etwas mehr CPU. Ansichten anheften gibt es noch nicht – groß sind immer die zuletzt Sprechenden.
@@ -637,11 +641,27 @@ CHAT_URL=http://chat-intern:8080 AGENT_TOKEN='langer-zufälliger-schlüssel' \
 | `AGENT_ID` | Rechnername | Name in der Übersicht |
 | `ADDR` | `:8090` | Listen-Adresse |
 | `MAX_PARTICIPANTS` / `MAX_MBIT` | `200` / `50` | Grenzen dieses Agenten |
-| `MAX_PER_IP` | `5` | Sprachverbindungen je IP-Adresse |
+| `MAX_PER_IP` | `12` | Verbindungen je IP-Adresse (je Person bis zu drei: Sprache, Bildschirm, Kameras) |
+| `ROLE` | leer | `media` = nur Bildschirm und Kameras (bekommt keine Sprachkanäle, nimmt ausgelagerte Medien zuerst) |
 | `ALLOWED_ORIGINS` | `PUBLIC_URL` des Chat-Servers | Seiten, von denen Browser verbinden dürfen |
 | `TRUST_PROXY`, `TRUSTED_PROXIES` | aus | wie beim Chat-Server |
 
 Wichtig: Beim Chat-Server muss `PUBLIC_URL` gesetzt sein – der Agent lässt nur Browser von dieser Adresse zu. Chat-Server und Agent sprechen am besten über ein internes Netz miteinander (`CHAT_URL`, `CONTROL_URL`); über das Internet nur per HTTPS – beide Richtungen sind mit dem Agenten-Schlüssel geschützt. Ein fertiges Compose-Beispiel (Agent auf demselben Server wie der Chat oder auf einem eigenen) liegt in `deploy/voice/`. Schritt für Schritt: [docs/voice-deployment.md](docs/voice-deployment.md).
+
+### Lastverteilung in einem Kanal
+
+Ein Kanal kann von mehreren Sprach-Servern zugleich bedient werden. Die **Sprache bleibt immer** auf dem Server, dem der Kanal zugewiesen ist. **Bildschirm** und **Kameras** laufen über eigene Verbindungen und werden ausgelagert, wenn der Sprach-Server sonst zu voll würde – der Bildschirm zuerst, die Kameras danach:
+
+| Chat-Server | Standard | Bedeutung |
+|---|---|---|
+| `VOICE_OFFLOAD_SCREEN` | `50` | Bildschirm auslagern, wenn der Sprach-Server mit ihm über diese Auslastung (Prozent der Bandbreite) käme. `0` = immer auslagern, `100` = nie |
+| `VOICE_OFFLOAD_VIDEO` | `75` | ebenso für die Kameras |
+
+- **Wohin?** Auf den Sprach-Server mit der meisten Luft; Agenten mit `ROLE=media` (reine Medien-Server) zuerst. Gibt es keinen anderen, bleibt alles beim Sprach-Server.
+- **Wann?** Wenn die erste Person im Kanal eine Medienverbindung braucht, und erneut, wenn jemand zu senden beginnt, während in dieser Art gerade niemand sendet. Dann zieht die Art ohne Unterbrechung um – die Browser im Kanal verbinden sich von selbst neu. Laufende Freigaben werden nicht verschoben.
+- **Freiwerdende Kapazität:** Was ausgelagert ist, zählt beim Sprach-Server sofort nicht mehr; er nimmt also wieder mehr Personen auf. Die Übersicht im Admin-Bereich zeigt je Server Teilnehmer, Medienverbindungen und laufende Freigaben.
+- **Ausfall:** Fällt ein Medien-Server aus, verbinden sich Bildschirm und Kameras nach etwa 15 Sekunden mit einem anderen; die Sprache läuft weiter.
+- Ältere Agenten (ohne Medienverbindungen) bekommen keine ausgelagerten Medien; gibt es nur solche, läuft alles wie früher über die Sprachverbindung.
 
 **Reverse-Proxy:** WebSockets brauchen die Upgrade-Kopfzeilen – bei nginx für den Chat-Server (eingebauter Relay unter `/api/voice/ws`) und für jeden Agenten (`/ws`):
 

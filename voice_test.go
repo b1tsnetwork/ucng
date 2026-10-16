@@ -361,7 +361,7 @@ func TestVoiceScreenRights(t *testing.T) {
 	}
 	res := post(t, ts.URL+"/api/voice/talk/join", anna, `{}`)
 	json.NewDecoder(res.Body).Decode(&ja)
-	if !ja.Screen || ja.ScreenKbps != 1500 || ja.ScreenFps != 5 {
+	if !ja.Screen || ja.ScreenKbps != 3000 || ja.ScreenFps != 15 {
 		t.Fatalf("Beitritt: %+v", ja)
 	}
 	ca, _ := voiceDial(t, ts.URL, ja.joinResp)

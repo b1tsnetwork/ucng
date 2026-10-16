@@ -71,6 +71,8 @@ type Config struct {
 	VoiceMaxParticipants int     // eingebauter Relay: Teilnehmer insgesamt
 	VoiceMaxMbit         float64 // eingebauter Relay: geschätzte ausgehende Bandbreite
 	VoiceAgentToken      string  // Schlüssel, mit dem sich Agenten anmelden (leer = keine Agenten)
+	VoiceOffloadScreen   int     // Bildschirm auf einen anderen Relay auslagern ab dieser Auslastung (Prozent) des Sprach-Relays
+	VoiceOffloadVideo    int     // Kameras ebenso (Prozent)
 }
 
 func env(key, def string) string {
@@ -127,6 +129,8 @@ func loadConfig() Config {
 	flag.BoolVar(&c.VoiceNoBuiltin, "voice-no-builtin", env("VOICE_BUILTIN", "1") == "0", "Keinen eingebauten Sprach-Relay starten (nur Agenten, cmd/ucng-voice)")
 	flag.IntVar(&c.VoiceMaxParticipants, "voice-max-participants", envInt("VOICE_MAX_PARTICIPANTS", 200), "Eingebauter Sprach-Relay: Teilnehmer insgesamt")
 	flag.Float64Var(&c.VoiceMaxMbit, "voice-max-mbit", envFloat("VOICE_MAX_MBIT", 50), "Eingebauter Sprach-Relay: höchstens so viel ausgehende Bandbreite (Mbit/s, geschätzt)")
+	flag.IntVar(&c.VoiceOffloadScreen, "voice-offload-screen", envInt("VOICE_OFFLOAD_SCREEN", 50), "Bildschirmfreigaben auf einen anderen Sprach-Server auslagern, wenn der Server der Sprache sonst über diese Auslastung käme (Prozent; 0 = immer auslagern, 100 = nie)")
+	flag.IntVar(&c.VoiceOffloadVideo, "voice-offload-video", envInt("VOICE_OFFLOAD_VIDEO", 75), "Kameras ebenso (Prozent)")
 	flag.StringVar(&c.VoiceAgentToken, "voice-agent-token", env("VOICE_AGENT_TOKEN", ""), "Schlüssel für Sprach-Agenten (cmd/ucng-voice); leer = keine Agenten")
 	flag.Parse()
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))

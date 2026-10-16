@@ -37,11 +37,19 @@ type Ticket struct {
 	Featured    int    `json:"fe,omitempty"`  // so viele Sprecher groß
 	Music       int    `json:"mu,omitempty"`  // Musik eines Bots: Lautstärke in Prozent (1–100); eigener Datenstrom
 	ModUser     bool   `json:"mo,omitempty"`  // darf im Kanal moderieren (nur Anzeige)
+	Kind        string `json:"k,omitempty"`   // "" = Sprache; KindScreen/KindVideo = eigene Medienverbindung
 	Exp         int64  `json:"e"`             // Unix-Sekunden
 	Nonce       string `json:"x"`
 }
 
 const ticketContext = "ucng-voice-ticket-v1\x00"
+
+// Medienverbindungen: Bildschirm und Kameras laufen über eigene Verbindungen – auf Wunsch des
+// Chat-Servers auch auf einem anderen Relay als die Sprache (Lastverteilung).
+const (
+	KindScreen = "screen"
+	KindVideo  = "video"
+)
 
 var (
 	ErrTicket        = errors.New("Ungültige oder abgelaufene Zutrittskarte – bitte erneut beitreten")
@@ -85,7 +93,8 @@ func VerifyTicket(pub ed25519.PublicKey, token string, now time.Time) (Ticket, e
 	if t.Exp < now.Unix() {
 		return t, ErrTicketExpired
 	}
-	if t.Exp > now.Add(10*time.Minute).Unix() || t.Channel == "" || t.User == "" || t.Nonce == "" {
+	if t.Exp > now.Add(10*time.Minute).Unix() || t.Channel == "" || t.User == "" || t.Nonce == "" ||
+		strings.ContainsRune(t.Channel, 0) || (t.Kind != "" && t.Kind != KindScreen && t.Kind != KindVideo) {
 		return t, ErrTicket
 	}
 	return t, nil

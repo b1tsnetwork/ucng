@@ -19,7 +19,7 @@
   let featured = [];
   let degraded = false;
 
-  const supported = () => !!(window.VideoEncoder && window.VideoDecoder && navigator.mediaDevices);
+  const supported = () => !!(window.VideoEncoder && window.VideoDecoder && navigator.mediaDevices && window.UCNGMedia);
 
   // ---------- eigene Kamera ----------
 
@@ -28,15 +28,9 @@
     const scale = Math.min(1, p.height / h);
     return { w: even(w * scale), h: even(h * scale), kbps: layer === 0 ? p.kbps : (cam ? cam.kbps : p.kbps), fps: p.fps };
   }
-  function encConfig(codec, c) {
-    return { codec, width: c.w, height: c.h, bitrate: c.kbps * 1000, framerate: c.fps, latencyMode: "realtime", bitrateMode: "variable" };
-  }
-
-  async function pickCodec() {
-    for (const codec of ["vp8", "vp09.00.10.08"]) {
-      try { if ((await VideoEncoder.isConfigSupported(encConfig(codec, { w: 640, h: 360, kbps: 600, fps: 24 }))).supported) return codec; } catch { /* nächster */ }
-    }
-    return "";
+  // Ebene 1 (groß) mit zeitlichen Ebenen, die Miniansicht ohne
+  function encConfig(c, conf, layer) {
+    return UCNGMedia.config({ codec: c.codec, hw: c.hw }, conf.w, conf.h, conf.fps, conf.kbps, layer === 1 ? c.svc : "", { hint: "motion" });
   }
 
   async function startCam() {
@@ -44,7 +38,7 @@
     if (!supported()) { L.toast(t("voice.video_unsupported")); return; }
     const vp = L.cfg.videoPreset;
     const prefs = L.prefs();
-    const video = { width: { ideal: vp.width }, height: { ideal: vp.height }, frameRate: { ideal: vp.fps, max: 30 } };
+    const video = { width: { ideal: vp.width }, height: { ideal: vp.height }, frameRate: { ideal: vp.fps, max: vp.fps } };
     if (prefs.camera) video.deviceId = { exact: prefs.camera };
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ video, audio: false }); }
@@ -52,12 +46,18 @@
       if (prefs.camera && e.name === "OverconstrainedError") { prefs.camera = ""; L.savePrefs(); return startCam(); }
       L.toast(t("voice.camera_denied")); return;
     }
-    if (!L) { stream.getTracks().forEach((x) => x.stop()); return; }
-    const codec = await pickCodec();
-    if (!codec) { stream.getTracks().forEach((x) => x.stop()); L.toast(t("voice.video_unsupported")); return; }
+    // Medienverbindung vorbereiten (der Chat-Server kann die Kameras jetzt auf einen anderen
+    // Sprach-Server legen); danach ist L womöglich eine neue Verbindung
+    if (L && L.prepare && !(await L.prepare())) { stream.getTracks().forEach((x) => x.stop()); return; }
+    if (!L || cam) { stream.getTracks().forEach((x) => x.stop()); return; }
     const track = stream.getVideoTracks()[0];
-    cam = { stream, track, codec, enc: [null, null], conf: [null, null], high: false, seq: [0, 0], ts: [0, 0], last: [0, 0],
-      forceKey: [true, true], kbps: vp.kbps, on: false, canvas: [null, null] };
+    const st = track.getSettings();
+    const hc = { w: even(Math.min(vp.width, st.width || vp.width)), h: even(Math.min(vp.height, st.height || vp.height)) };
+    const enc = await UCNGMedia.pick(hc.w, hc.h, vp.fps, vp.kbps, { hint: "motion" });
+    if (!enc || !L) { stream.getTracks().forEach((x) => x.stop()); if (L) L.toast(t("voice.video_unsupported")); return; }
+    const codec = enc.codec;
+    cam = { stream, track, codec, hw: enc.hw, svc: enc.svc, enc: [null, null], conf: [null, null], high: false, seq: [0, 0], ts: [0, 0], last: [0, 0],
+      forceKey: [true, true], kbps: vp.kbps, on: false, canvas: [null, null], drops: 0 };
     track.addEventListener("ended", () => stopCam());
     L.sendText({ t: "cam", on: true, codec });
     render();
@@ -67,9 +67,10 @@
     const c = cam;
     c.on = true;
     c.high = !!high;
+    if (L.hint) L.hint(c.codec);
     const loop = (frame) => { if (cam === c) encodeFrame(c, frame); else frame.close(); };
     if (window.MediaStreamTrackProcessor) {
-      c.reader = new MediaStreamTrackProcessor({ track: c.track }).readable.getReader();
+      c.reader = new MediaStreamTrackProcessor({ track: c.track, maxBufferSize: 1 }).readable.getReader();
       (async () => {
         for (;;) {
           let r;
@@ -97,11 +98,13 @@
     if (!ws || !c.high) return;
     const max = L.cfg.videoPreset.kbps, min = Math.max(150, Math.round(max / 5));
     let k = c.kbps;
-    if (ws.bufferedAmount > 400000) k = Math.max(min, Math.round(k * 0.7));
-    else if (ws.bufferedAmount < 50000) k = Math.min(max, Math.round(k * 1.15));
-    if (k !== c.kbps) {
+    const budget = UCNGMedia.sendBudget(max + L.cfg.thumbPreset.kbps);
+    if (c.drops > 2 || ws.bufferedAmount > budget * 0.6) k = Math.max(min, Math.round(k * 0.75));
+    else if (c.drops === 0 && ws.bufferedAmount < budget * 0.1) k = Math.min(max, Math.round(k * 1.15));
+    c.drops = 0;
+    if (Math.abs(k - c.kbps) / c.kbps >= 0.1) {
       c.kbps = k;
-      if (c.enc[1] && c.conf[1]) { c.conf[1].kbps = k; try { c.enc[1].configure(encConfig(c.codec, c.conf[1])); c.forceKey[1] = true; } catch { /* egal */ } }
+      if (c.enc[1] && c.conf[1]) { c.conf[1].kbps = k; try { c.enc[1].configure(encConfig(c, c.conf[1], 1)); } catch { /* egal */ } }
     }
   }
 
@@ -109,10 +112,10 @@
     const conf = layerConf(layer, w, h);
     if (c.enc[layer] && c.conf[layer] && c.conf[layer].w === conf.w && c.conf[layer].h === conf.h) return c.enc[layer];
     if (!c.enc[layer]) {
-      c.enc[layer] = new VideoEncoder({ output: (chunk) => sendChunk(c, layer, chunk), error: () => { c.enc[layer] = null; } });
+      c.enc[layer] = new VideoEncoder({ output: (chunk, meta) => sendChunk(c, layer, chunk, meta), error: () => { c.enc[layer] = null; } });
     }
     c.conf[layer] = conf;
-    c.enc[layer].configure(encConfig(c.codec, conf));
+    c.enc[layer].configure(encConfig(c, conf, layer));
     c.forceKey[layer] = true;
     return c.enc[layer];
   }
@@ -125,11 +128,13 @@
         if (layer === 1 && !c.high) continue;
         const conf = layerConf(layer, frame.displayWidth, frame.displayHeight);
         if (now - c.last[layer] < 1000 / conf.fps * 0.9) continue;
-        if (!ws || ws.bufferedAmount > (layer === 0 ? 1.5e6 : 6e5)) continue; // Leitung voll: Bild auslassen
+        // Leitung voll: Bild auslassen (die Miniansicht hat Vorrang, ≈ 250 ms Puffer)
+        const budget = UCNGMedia.sendBudget(c.kbps + L.cfg.thumbPreset.kbps);
+        if (!ws || ws.bufferedAmount > (layer === 0 ? budget : budget * 0.6)) { if (layer === 1) c.drops++; continue; }
         const enc = ensureEncoder(c, layer, frame.displayWidth, frame.displayHeight);
-        if (!enc || enc.state !== "configured" || enc.encodeQueueSize > 2) continue;
+        if (!enc || enc.state !== "configured" || enc.encodeQueueSize > 1) continue;
         c.last[layer] = now;
-        c.ts[layer] += Math.round(1e6 / conf.fps);
+        c.ts[layer] = Math.round(now * 1000);
         let vf;
         if (frame.displayWidth === c.conf[layer].w && frame.displayHeight === c.conf[layer].h) {
           vf = new VideoFrame(frame, { timestamp: c.ts[layer] });
@@ -149,10 +154,10 @@
     }
   }
 
-  function sendChunk(c, layer, chunk) {
+  function sendChunk(c, layer, chunk, meta) {
     if (cam !== c || !c.on) return;
     const b = new Uint8Array(5 + chunk.byteLength);
-    b[0] = 3; b[1] = layer; b[2] = chunk.type === "key" ? 1 : 0;
+    b[0] = 3; b[1] = layer; b[2] = (chunk.type === "key" ? 1 : 0) | (UCNGMedia.tidOf(meta) << 1);
     c.seq[layer] = (c.seq[layer] + 1) & 0xffff;
     b[3] = c.seq[layer] >> 8; b[4] = c.seq[layer] & 255;
     chunk.copyTo(b.subarray(5));
@@ -168,6 +173,7 @@
     if (c.video) c.video.srcObject = null;
     c.stream.getTracks().forEach((x) => x.stop());
     for (const e of c.enc) if (e && e.state !== "closed") try { e.close(); } catch { /* egal */ }
+    if (L && L.hint) L.hint("");
     if (!fromRelay && L) L.sendText({ t: "cam", on: false });
     render();
   }
@@ -198,14 +204,13 @@
         if (L) L.sendText({ t: "camkey", i: idx, l: layer });
       },
     });
-    d.configure({ codec: tl.codec, optimizeForLatency: true });
-    d.ts = 0;
+    d.configure(UCNGMedia.decoderConfig(tl.codec));
     return d;
   }
 
   function onCam(b) {
     if (b.length < 8) return;
-    const idx = (b[1] << 8) | b[2], layer = b[3] & 1, key = (b[4] & 1) === 1;
+    const idx = (b[1] << 8) | b[2], layer = b[3] & 1, key = (b[4] & 1) === 1, tid = (b[4] >> 1) & 3;
     const p = L && L.peer(idx);
     if (!p || !p.cm) return;
     const tl = tileFor(idx);
@@ -215,13 +220,19 @@
       tl.dec = [null, null]; tl.needKey = [true, true];
     }
     if (tl.needKey[layer] && !key) return;
+    if (!tl.skip) tl.skip = [null, null];
+    if (tl.skip[layer] != null) { // Zeitebene ausgelassen: alles darüber auch
+      if (tid >= tl.skip[layer] && !key) return;
+      tl.skip[layer] = null;
+    }
     tl.needKey[layer] = false;
     try {
       if (!tl.dec[layer] || tl.dec[layer].state === "closed") tl.dec[layer] = makeDecoder(idx, tl, layer);
       const d = tl.dec[layer];
-      if (d.decodeQueueSize > 8) { tl.needKey[layer] = true; L.sendText({ t: "camkey", i: idx, l: layer }); return; }
-      d.ts += 33333;
-      d.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: d.ts, data: b.subarray(7) }));
+      const q = d.decodeQueueSize;
+      if (q > 2 && tid > 0 && !key) { tl.skip[layer] = tid; return; }
+      if (q > 5) { tl.needKey[layer] = true; L.sendText({ t: "camkey", i: idx, l: layer }); return; }
+      d.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: b.subarray(7) }));
     } catch { tl.needKey[layer] = true; L.sendText({ t: "camkey", i: idx, l: layer }); }
   }
 

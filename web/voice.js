@@ -126,11 +126,18 @@
       teardown();
       return;
     }
-    const url = j.url.startsWith("/") ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host + j.url : j.url;
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(absURL(j.url));
     ws.binaryType = "arraybuffer";
     S.ws = ws;
+    S.media = {};
     const mine = S;
+    if (j.mediaConn) { // Bildschirm und Kameras über eigene Verbindungen (nach dem „hello“)
+      ws.onopen = () => ws.send(JSON.stringify({ t: "auth", ticket: j.ticket }));
+      ws.onmessage = (e) => { if (S === mine) onMessage(e.data); };
+      ws.onclose = (e) => { if (S === mine) onClose(e); };
+      return;
+    }
+    // ältere Relays: alles über die Sprachverbindung
     if (window.UCNGScreen) {
       UCNGScreen.attach({
         cfg: j, toast: deps.toast, render: () => { if (S === mine) renderAll(); },
@@ -138,6 +145,7 @@
         sendText: (o) => { if (S === mine && ws.readyState === 1) ws.send(JSON.stringify(o)); },
         sendBin: (b) => { if (S === mine && ws.readyState === 1) ws.send(b); },
         peer: (idx) => mine.peers.get(idx),
+        peers: () => [...mine.peers.values()],
         screenOK: () => S === mine && !!mine.screenOK,
       });
     }
@@ -158,6 +166,147 @@
     ws.onopen = () => ws.send(JSON.stringify({ t: "auth", ticket: j.ticket }));
     ws.onmessage = (e) => { if (S === mine) onMessage(e.data); };
     ws.onclose = (e) => { if (S === mine) onClose(e); };
+  }
+
+  function absURL(u) { return u.startsWith("/") ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host + u : u; }
+
+  // ---------- Medienverbindungen (Bildschirm, Kameras) ----------
+  // Je Art eine eigene WebSocket – getrennt von der Sprache, damit ein großes Bild nie die Sprache
+  // aufhält, und auf Wunsch des Chat-Servers auf einem anderen Sprach-Server (Lastverteilung).
+
+  const MOD = { screen: () => window.UCNGScreen, video: () => window.UCNGVideo };
+
+  function mediaLink(s, m) {
+    const kind = m.kind;
+    const open = () => S === s && s.media[kind] === m && m.ws && m.ws.readyState === 1;
+    return {
+      cfg: s.cfg, toast: deps.toast,
+      render: () => { if (S === s) { if (kind === "video") renderBar(); else renderAll(); } },
+      ws: () => (S === s && s.media[kind] === m ? m.ws : null),
+      sendText: (o) => { if (open()) m.ws.send(JSON.stringify(o)); },
+      sendBin: (b) => { if (open()) m.ws.send(b); },
+      peer: (idx) => m.peers.get(idx),
+      peers: () => [...m.peers.values()],
+      you: () => m.you,
+      screenOK: () => S === s && !!m.screenOK,
+      videoOK: () => S === s && !!m.videoOK,
+      speaking: (uid) => speaking.has(uid),
+      prefs: () => prefs, savePrefs,
+      prepare: () => prepareMedia(s, kind),
+      hint: (codec) => sendHint(s, kind, codec),
+    };
+  }
+
+  // openMedia verbindet eine Art (neu). pre: schon geholte Zutrittskarte. Liefert, ob es klappte.
+  async function openMedia(s, kind, pre, publish) {
+    if (S !== s) return false;
+    const old = s.media[kind];
+    if (old) closeMedia(s, kind);
+    const m = { kind, peers: new Map(), you: 0, status: "connecting", retries: old ? old.retries : 0 };
+    s.media[kind] = m;
+    let j = pre;
+    if (!j) {
+      try {
+        j = await deps.api(`/api/voice/${encodeURIComponent(s.room)}/media`, { method: "POST", body: JSON.stringify({ kind, publish: !!publish }) });
+      } catch (e) {
+        if (S === s && s.media[kind] === m) retryMedia(s, m);
+        return false;
+      }
+    }
+    if (S !== s || s.media[kind] !== m) return false;
+    m.relay = j.relay; m.offloaded = !!j.offloaded;
+    const ws = new WebSocket(absURL(j.url));
+    ws.binaryType = "arraybuffer";
+    m.ws = ws;
+    const mod = MOD[kind]();
+    if (mod) mod.attach(mediaLink(s, m));
+    return new Promise((resolve) => {
+      m.ready = resolve;
+      ws.onopen = () => ws.send(JSON.stringify({ t: "auth", ticket: j.ticket }));
+      ws.onmessage = (e) => { if (S === s && s.media[kind] === m) onMediaMessage(s, m, e.data); };
+      ws.onclose = (e) => { resolve(false); if (S === s && s.media[kind] === m) onMediaClose(s, m, e); };
+    });
+  }
+
+  function closeMedia(s, kind) {
+    const m = s.media[kind];
+    if (!m) return;
+    delete s.media[kind];
+    clearTimeout(m.timer);
+    const mod = MOD[kind]();
+    if (mod && S === s) mod.detach();
+    if (m.ws) { m.ws.onclose = null; m.ws.onmessage = null; try { m.ws.close(1000); } catch { /* egal */ } }
+    if (m.ready) m.ready(false);
+    sendHint(s, kind, "");
+  }
+
+  function retryMedia(s, m) {
+    if (m.retries >= 6) { m.status = "failed"; deps.toast(t("voice.media_lost")); return; }
+    m.retries++;
+    m.status = "reconnecting";
+    const wait = Math.min(15000, 600 * 2 ** m.retries) * (0.7 + Math.random() * 0.6);
+    m.timer = setTimeout(() => { if (S === s && s.media[m.kind] === m) openMedia(s, m.kind); }, wait);
+  }
+
+  // Vor dem Senden: Der Chat-Server darf die Art jetzt umziehen lassen (dann neu verbinden).
+  async function prepareMedia(s, kind) {
+    const m = s.media[kind];
+    let j;
+    try {
+      j = await deps.api(`/api/voice/${encodeURIComponent(s.room)}/media`, { method: "POST", body: JSON.stringify({ kind, publish: true }) });
+    } catch (e) { deps.toast(e.message); return false; }
+    if (S !== s) return false;
+    if (m && s.media[kind] === m && m.status === "connected" && j.relay === m.relay) return true;
+    return openMedia(s, kind, j);
+  }
+
+  // Hinweis auf der Sprachverbindung: „teile den Bildschirm“ / „Kamera an“ (für die Seitenleiste)
+  function sendHint(s, kind, codec) {
+    if (S !== s || !s.ws || s.ws.readyState !== 1 || !s.cfg || !s.cfg.mediaConn) return;
+    s.ws.send(JSON.stringify(kind === "screen" ? { t: "state", sc: codec || "" } : { t: "state", cm: codec || "" }));
+  }
+
+  function onMediaMessage(s, m, data) {
+    const mod = MOD[m.kind]();
+    if (typeof data !== "string") {
+      const b = new Uint8Array(data);
+      if (!mod) return;
+      if (b[0] === 2 && m.kind === "screen") mod.onVideo(b);
+      else if (b[0] === 3 && m.kind === "video") mod.onCam(b);
+      return;
+    }
+    let msg;
+    try { msg = JSON.parse(data); } catch { return; }
+    switch (msg.t) {
+      case "hello":
+        m.status = "connected"; m.you = msg.you; m.retries = 0;
+        m.screenOK = !!msg.screen; m.videoOK = !!msg.video;
+        for (const p of msg.peers || []) m.peers.set(p.i, p);
+        if (m.kind === "video" && mod) mod.setFeatured(msg.featured);
+        if (mod) for (const p of m.peers.values()) mod.onPeer(p);
+        if (m.ready) { m.ready(true); m.ready = null; }
+        break;
+      case "peer": m.peers.set(msg.peer.i, msg.peer); if (mod) mod.onPeer(msg.peer); break;
+      case "leave": m.peers.delete(msg.i); if (mod) mod.onLeave(msg.i); break;
+      case "you":
+        m.screenOK = !!msg.screen; m.videoOK = !!msg.video;
+        if (m.kind === "video" && !msg.video && mod && mod.on) mod.stopCam();
+        break;
+      case "bye": m.bye = msg.reason || "kicked"; break;
+      case "pong": break;
+      default: if (mod) mod.onText(msg);
+    }
+    renderAll();
+  }
+
+  function onMediaClose(s, m, e) {
+    const mod = MOD[m.kind]();
+    if (mod) mod.detach();
+    sendHint(s, m.kind, "");
+    if (m.bye || e.code === 4003 || e.code === 4000 || e.code === 1000) { m.status = "closed"; renderAll(); return; }
+    if (e.code === 4409) deps.toast(t("voice.media_busy"));
+    retryMedia(s, m);
+    renderAll();
   }
 
   function onMessage(data) {
@@ -184,6 +333,13 @@
         S.pinger = setInterval(() => { if (S && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) })); }, 5000);
         S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) }));
         deps.toast(t("voice.joined", { room: S.room }));
+        if (S.cfg.mediaConn) {
+          if (S.cfg.screenOn) openMedia(S, "screen");
+          if (S.cfg.videoOn) openMedia(S, "video");
+        }
+        break;
+      case "media": // eine Art ist auf einen anderen Sprach-Server umgezogen
+        if (S.media && S.media[m.kind] && S.media[m.kind].relay !== m.relay) openMedia(S, m.kind);
         break;
       case "peer": upsertPeer(m.peer); if (window.UCNGScreen) UCNGScreen.onPeer(m.peer); if (window.UCNGVideo) UCNGVideo.onPeer(m.peer); break;
       case "leave": removePeer(m.i); if (window.UCNGScreen) UCNGScreen.onLeave(m.i); if (window.UCNGVideo) UCNGVideo.onLeave(m.i); break;
@@ -248,6 +404,12 @@
     clearInterval(s.pinger);
     if (window.UCNGScreen) UCNGScreen.detach();
     if (window.UCNGVideo) UCNGVideo.detach();
+    for (const m of Object.values(s.media || {})) {
+      clearTimeout(m.timer);
+      if (m.ws) { m.ws.onclose = null; m.ws.onmessage = null; try { m.ws.close(1000); } catch { /* egal */ } }
+      if (m.ready) m.ready(false);
+    }
+    s.media = {};
     if (s.ws) { s.ws.onclose = null; s.ws.onmessage = null; try { s.ws.close(1000); } catch { /* egal */ } }
     stopMicOf(s);
     for (const d of (s.decoders || new Map()).values()) try { d.close(); } catch { /* egal */ }
@@ -369,6 +531,12 @@
     const ad = new AudioData({ format: "f32-planar", sampleRate: 48000, numberOfFrames: FRAME, numberOfChannels: ch, timestamp: s.ts, data });
     s.ts += 20000;
     s.lastLevel = Math.max(0, Math.min(255, Math.round((db + 60) / 60 * 255)));
+    // Kamera an und hörbar: der Medienverbindung sagen, dass ich spreche (für die großen Bilder)
+    const mv = s.media && s.media.video;
+    if (s.lastLevel >= 64 && mv && mv.ws && mv.ws.readyState === 1 && window.UCNGVideo && UCNGVideo.on) {
+      const now = performance.now();
+      if (!s.lastSpk || now - s.lastSpk > 400) { s.lastSpk = now; mv.ws.send('{"t":"spk"}'); }
+    }
     try { s.enc.encode(ad); } catch { /* Encoder neu */ }
     ad.close();
   }
@@ -580,11 +748,11 @@
     li.append(b);
     if (p.sc) { // teilt den Bildschirm: Knopf „Ansehen“ (nur im eigenen Sprachkanal)
       const here = S && S.room === room && S.status === "connected";
-      const watching = here && window.UCNGScreen && UCNGScreen.watching === p.i;
+      const watching = here && window.UCNGScreen && UCNGScreen.watchingUser === p.u;
       const isMe = here && p.i === S.you;
       const w = deps.iconBtn("voice-watch" + (watching ? " on" : ""), isMe ? t("voice.screen_you_share") : here ? t("voice.screen_watch", { name: p.n }) : t("voice.screen_join_to_watch"), ICON.screen);
       w.disabled = !here || isMe;
-      w.addEventListener("click", (e) => { e.stopPropagation(); if (watching) UCNGScreen.unwatch(); else UCNGScreen.watch(p.i); });
+      w.addEventListener("click", (e) => { e.stopPropagation(); if (watching) UCNGScreen.unwatch(); else UCNGScreen.watchUser(p.u); });
       li.classList.add("sharing");
       li.append(w);
     }
@@ -643,7 +811,7 @@
     const here = S && S.room === room && S.moderate;
     const acts = [];
     if (p.sc && !isMe && S && S.room === room && window.UCNGScreen) {
-      acts.push(UCNGScreen.watching === p.i ? [t("voice.screen_unwatch"), "", "", () => UCNGScreen.unwatch()] : [t("voice.screen_watch", { name: p.n }), "", "", () => UCNGScreen.watch(p.i)]);
+      acts.push(UCNGScreen.watchingUser === p.u ? [t("voice.screen_unwatch"), "", "", () => UCNGScreen.unwatch()] : [t("voice.screen_watch", { name: p.n }), "", "", () => UCNGScreen.watchUser(p.u)]);
     }
     if (here && !isMe) {
       acts.push(p.m ? [t("voice.unmute"), "unmute"] : [t("voice.server_mute"), "mute"]);

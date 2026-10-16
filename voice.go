@@ -45,12 +45,12 @@ type VoiceConfig struct {
 	// Bildschirm teilen: "" (aus), "speakers" (alle, die sprechen dürfen) oder "roles" (Team und ScreenRoles)
 	Screen        string   `json:"screen,omitempty"`
 	ScreenRoles   []string `json:"screenRoles,omitempty"`
-	ScreenQuality string   `json:"screenQuality,omitempty"` // text, standard, motion
+	ScreenQuality string   `json:"screenQuality,omitempty"` // text, standard, motion, high, max
 	MaxScreens    int      `json:"maxScreens,omitempty"`    // gleichzeitige Freigaben
 	// Kamera (Konferenz): "" (aus), "speakers" oder "roles" (Team und VideoRoles)
 	Video        string   `json:"video,omitempty"`
 	VideoRoles   []string `json:"videoRoles,omitempty"`
-	VideoQuality string   `json:"videoQuality,omitempty"` // sd, hd, fhd (großes Bild)
+	VideoQuality string   `json:"videoQuality,omitempty"` // sd, hd, fhd, fhd60 (großes Bild)
 	Featured     int      `json:"featured,omitempty"`     // so viele Sprecher groß (1–9)
 	BotMusic     bool     `json:"botMusic,omitempty"`     // Bots dürfen Musik einspielen
 }
@@ -64,12 +64,13 @@ type videoPreset struct {
 }
 
 var videoPresets = map[string]videoPreset{
-	"sd":  {Kbps: 600, Width: 640, Height: 360, FPS: 24},
-	"hd":  {Kbps: 1500, Width: 1280, Height: 720, FPS: 30},
-	"fhd": {Kbps: 2800, Width: 1920, Height: 1080, FPS: 30},
+	"sd":    {Kbps: 700, Width: 640, Height: 360, FPS: 30},
+	"hd":    {Kbps: 1800, Width: 1280, Height: 720, FPS: 30},
+	"fhd":   {Kbps: 3200, Width: 1920, Height: 1080, FPS: 30},
+	"fhd60": {Kbps: 5000, Width: 1920, Height: 1080, FPS: 60},
 }
 
-var thumbPreset = videoPreset{Kbps: 150, Width: 320, Height: 180, FPS: 12}
+var thumbPreset = videoPreset{Kbps: 180, Width: 320, Height: 180, FPS: 15}
 
 // screenPreset: Qualität einer Bildschirmfreigabe.
 type screenPreset struct {
@@ -78,10 +79,14 @@ type screenPreset struct {
 	Height int `json:"height"` // höchstens so viele Zeilen (Breite folgt dem Seitenverhältnis)
 }
 
+// Mit Hardware-Kodierung (H.264, VP9 oder AV1 über die Grafikkarte) und zeitlichen Ebenen: Kommt
+// ein Zuschauer nicht mit, bekommt er weniger Bilder je Sekunde statt ein stehendes Bild.
 var screenPresets = map[string]screenPreset{
-	"text":     {Kbps: 1500, FPS: 5, Height: 1080},  // Folien, Code, Dokumente: scharf, wenig Bewegung
-	"standard": {Kbps: 2500, FPS: 15, Height: 1080}, // Allgemein
-	"motion":   {Kbps: 4000, FPS: 30, Height: 720},  // Videos, Spiele: flüssig
+	"text":     {Kbps: 3000, FPS: 15, Height: 1440},  // Folien, Code, Dokumente: gestochen scharf
+	"standard": {Kbps: 4500, FPS: 30, Height: 1080},  // Allgemein
+	"motion":   {Kbps: 8000, FPS: 60, Height: 1080},  // Videos, Spiele: flüssig
+	"high":     {Kbps: 12000, FPS: 60, Height: 1440}, // flüssig und scharf
+	"max":      {Kbps: 16000, FPS: 30, Height: 2160}, // 4K
 }
 
 const (
@@ -353,6 +358,7 @@ type voiceMgr struct {
 	token    string            // für Agenten (VOICE_AGENT_TOKEN)
 	conns    *streamLimiter    // Verbindungen zum eingebauten Relay je IP
 	ticketRL *rateLimiter      // Zutrittskarten je IP
+	mediaRL  *rateLimiter      // Zutrittskarten für Medienverbindungen je IP
 	client   *http.Client
 	csp      atomic.Value // string: zusätzliche connect-src-Quellen (Agenten)
 	stop     chan struct{}
@@ -371,6 +377,7 @@ type voiceRoom struct {
 	noScreen map[string]bool      // vom Team: darf hier nicht (mehr) teilen
 	noVideo  map[string]bool      // vom Team: Kamera hier gesperrt
 	movedIn  map[string]time.Time // vom Team hierher verschoben: Zutritt bis (verlängert, solange drin)
+	media    map[string]string    // Medienart (screen/video) → Relay (mediaroute.go)
 }
 
 type voiceAgent struct {
@@ -380,6 +387,7 @@ type voiceAgent struct {
 	Stats      voicerelay.Stats    `json:"stats"`
 	Seen       time.Time           `json:"seen"`
 	Version    string              `json:"version,omitempty"`
+	Role       string              `json:"role,omitempty"` // "media" = nur Bildschirm und Kameras
 	rooms      map[string]struct{} // Kanäle laut letzter Meldung
 }
 
@@ -387,8 +395,9 @@ func newVoiceMgr(s *Server) *voiceMgr {
 	priv := s.hub.VoiceKey()
 	v := &voiceMgr{
 		s: s, priv: priv, pub: priv.Public().(ed25519.PublicKey), token: s.cfg.VoiceAgentToken,
-		conns:    newStreamLimiter(max(s.cfg.VoiceMaxParticipants, 1)*2, 5),
+		conns:    newStreamLimiter(max(s.cfg.VoiceMaxParticipants, 1)*4, 12), // je Person bis zu drei Verbindungen
 		ticketRL: newRateLimiter(30, time.Minute),
+		mediaRL:  newRateLimiter(90, time.Minute),
 		client:   &http.Client{Timeout: 5 * time.Second},
 		rooms:    map[string]*voiceRoom{}, agents: map[string]*voiceAgent{}, stop: make(chan struct{}),
 	}
@@ -447,6 +456,28 @@ func (v *voiceMgr) setPeers(relay, name string, peers []VoicePeer) {
 		v.mu.Unlock()
 		return
 	}
+	// Wer die Sprache verlassen hat, verliert auch die Medienverbindungen
+	stay := map[string]bool{}
+	for _, p := range peers {
+		stay[p.User] = true
+	}
+	var left []string
+	for _, p := range st.peers {
+		if !stay[p.User] {
+			left = append(left, p.User)
+		}
+	}
+	mediaRelays := st.mediaRelays()
+	if len(peers) == 0 {
+		st.media = nil
+	}
+	defer func() {
+		for _, rel := range mediaRelays {
+			for _, u := range left {
+				v.sendControl(rel, name, u, "mediakick", false, "left")
+			}
+		}
+	}()
 	st.peers = append([]VoicePeer(nil), peers...)
 	for _, p := range peers { // Verschobene: Zutritt gilt, solange sie drin sind
 		if _, ok := st.movedIn[p.User]; ok {
@@ -481,6 +512,7 @@ func (v *voiceMgr) janitor() {
 		case <-t.C:
 		}
 		v.ticketRL.cleanup()
+		v.mediaRL.cleanup()
 		now := time.Now()
 		type gone struct{ relay, room string }
 		var stale []gone
@@ -741,13 +773,32 @@ func (v *voiceMgr) roomChanged(oldName, newName string) {
 
 // --- Relays ---
 
-// control schickt einen Steuerbefehl an den Relay des Kanals.
+// control schickt einen Steuerbefehl an den Relay des Kanals – und an die Relays seiner
+// Medienverbindungen, soweit er sie betrifft.
 func (v *voiceMgr) control(room, user, action string, value bool, reason string) {
 	v.mu.Lock()
 	relay := ""
+	var media []string
 	if st := v.rooms[room]; st != nil {
 		relay = st.relay
+		media = st.mediaRelays()
 	}
+	v.mu.Unlock()
+	switch action {
+	case "speak", "hand", "move", "remedia": // nur die Sprache
+		media = nil
+	}
+	v.sendControl(relay, room, user, action, value, reason)
+	for _, m := range media {
+		if m != relay {
+			v.sendControl(m, room, user, action, value, reason)
+		}
+	}
+}
+
+// sendControl schickt einen Steuerbefehl an einen bestimmten Relay.
+func (v *voiceMgr) sendControl(relay, room, user, action string, value bool, reason string) {
+	v.mu.Lock()
 	var agent *voiceAgent
 	if a, ok := v.agents[relay]; ok {
 		cp := *a
@@ -822,7 +873,7 @@ func (v *voiceMgr) pick(room string, cfg VoiceConfig) (relayChoice, error) {
 	}
 	sort.Strings(ids) // gleich ausgelastet: immer derselbe
 	for _, id := range ids {
-		if a := v.agents[id]; now.Sub(a.Seen) < voiceAgentStale {
+		if a := v.agents[id]; now.Sub(a.Seen) < voiceAgentStale && a.Role != "media" { // reine Medien-Relays bekommen keine Sprache
 			consider(relayChoice{id: a.ID, url: a.WSURL}, a.Stats)
 		}
 	}
@@ -954,6 +1005,7 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 		"screen": d.Screen, "screenOn": d.Cfg.Screen != ScreenOff, "screenKbps": sp.Kbps, "screenFps": sp.FPS, "screenHeight": sp.Height,
 		"video": d.Video, "videoOn": d.Cfg.Video != ScreenOff, "videoPreset": vp, "thumbPreset": thumbPreset,
 		"featured": d.Cfg.Featured, "owner": d.Owner,
+		"mediaConn": v.mediaCapable(), // Bildschirm und Kameras über eigene Verbindungen (/media)
 	})
 	_ = who
 }
@@ -1115,6 +1167,7 @@ type agentReport struct {
 	Version    string                 `json:"version"`
 	Stats      voicerelay.Stats       `json:"stats"`
 	Rooms      map[string][]VoicePeer `json:"rooms"`
+	Role       string                 `json:"role"`
 }
 
 func (v *voiceMgr) agentAuth(r *http.Request) bool {
@@ -1164,6 +1217,10 @@ func (s *Server) handleVoiceAgentReport(w http.ResponseWriter, r *http.Request) 
 		log.Printf("Sprache: Agent %s angemeldet (%s)", id, in.WSURL)
 	}
 	a.WSURL, a.ControlURL, a.Stats, a.Seen, a.Version = in.WSURL, in.ControlURL, in.Stats, time.Now(), in.Version
+	a.Role = ""
+	if in.Role == "media" {
+		a.Role = "media"
+	}
 	prev := a.rooms
 	a.rooms = map[string]struct{}{}
 	for name := range in.Rooms {
@@ -1203,6 +1260,7 @@ func (s *Server) handleAdminVoice(w http.ResponseWriter, r *http.Request) {
 		URL     string           `json:"url,omitempty"`
 		Version string           `json:"version,omitempty"`
 		Healthy bool             `json:"healthy"`
+		Role    string           `json:"role,omitempty"`
 		Seen    *time.Time       `json:"seen,omitempty"`
 		Stats   voicerelay.Stats `json:"stats"`
 	}
@@ -1214,7 +1272,7 @@ func (s *Server) handleAdminVoice(w http.ResponseWriter, r *http.Request) {
 	v.mu.Lock()
 	for _, a := range v.agents {
 		seen := a.Seen
-		relays = append(relays, relayInfo{ID: a.ID, URL: a.WSURL, Version: a.Version, Seen: &seen,
+		relays = append(relays, relayInfo{ID: a.ID, URL: a.WSURL, Version: a.Version, Seen: &seen, Role: a.Role,
 			Healthy: time.Since(a.Seen) < voiceAgentStale, Stats: a.Stats})
 	}
 	for name, st := range v.rooms {
@@ -1235,6 +1293,7 @@ func (s *Server) voiceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/voice/{room}/join", s.handleVoiceJoin)
 	mux.HandleFunc("POST /api/voice/{room}/mod", s.handleVoiceMod)
 	mux.HandleFunc("POST /api/voice/{room}/move", s.handleVoiceMove)
+	mux.HandleFunc("POST /api/voice/{room}/media", s.handleVoiceMedia)
 	mux.HandleFunc("POST /api/voice/agents/report", s.handleVoiceAgentReport)
 	mux.HandleFunc("GET /api/admin/voice", s.requireMod(s.handleAdminVoice))
 }

@@ -1278,6 +1278,8 @@
                 <option value="text" data-i18n="admin.screen_q_text">Text und Folien</option>
                 <option value="standard" data-i18n="admin.screen_q_standard">Standard</option>
                 <option value="motion" data-i18n="admin.screen_q_motion">Bewegung</option>
+                <option value="high" data-i18n="admin.screen_q_high">Flüssig und scharf</option>
+                <option value="max" data-i18n="admin.screen_q_max">Maximum (4K)</option>
               </select>
               <small id="roomScreenQualityHint"></small>
             </label>
@@ -1295,9 +1297,10 @@
             <label class="field" id="roomVideoQualityRow">
               <span data-i18n="admin.video_quality">Großes Bild</span>
               <select id="roomVideoQuality">
-                <option value="sd">360p · 0,6 Mbit/s</option>
-                <option value="hd">720p · 1,5 Mbit/s</option>
-                <option value="fhd">1080p · 2,8 Mbit/s</option>
+                <option value="sd">360p · 30 fps · 0,7 Mbit/s</option>
+                <option value="hd">720p · 30 fps · 1,8 Mbit/s</option>
+                <option value="fhd">1080p · 30 fps · 3,2 Mbit/s</option>
+                <option value="fhd60">1080p · 60 fps · 5 Mbit/s</option>
               </select>
               <small data-i18n="admin.video_quality_hint">Höchstens – das Bild wird kleiner, wenn die Leitung nicht reicht.</small>
             </label>

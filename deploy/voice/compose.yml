@@ -35,7 +35,8 @@ services:
       AGENT_ID: ${AGENT_ID:-ucng-voice}
       MAX_PARTICIPANTS: ${MAX_PARTICIPANTS:-200}
       MAX_MBIT: ${MAX_MBIT:-50}
-      MAX_PER_IP: ${MAX_PER_IP:-5}
+      MAX_PER_IP: ${MAX_PER_IP:-12}
+      ROLE: ${ROLE:-}            # "media" = nur Bildschirm und Kameras (ausgelagert)
       TRUST_PROXY: "1"
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     networks:
