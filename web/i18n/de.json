@@ -2159,6 +2159,8 @@
   "voice.lost": "Die Sprachverbindung ist abgebrochen",
   "voice.lower_hand": "Meldung zurücknehmen",
   "voice.lower_my_hand": "Meldung zurücknehmen",
+  "voice.media_resize": "Größe ändern",
+  "voice.media_resize_hint": "Ziehen: Größe ändern · Doppelklick: zurücksetzen",
   "voice.mic_denied": "Kein Zugriff aufs Mikrofon – bitte im Browser erlauben",
   "voice.mic_rate": "Das Mikrofon liefert keine 48 kHz – bitte ein anderes Mikrofon wählen oder Chrome/Edge verwenden",
   "voice.mode": "Sprechen",

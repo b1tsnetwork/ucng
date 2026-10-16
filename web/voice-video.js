@@ -285,8 +285,17 @@
     box.hidden = !L || !L.cfg.videoOn || !anyCam || hiddenByUser;
     $("confToggle").hidden = !L || !L.cfg.videoOn || !anyCam;
     $("confToggle").classList.toggle("on", !box.hidden);
-    if (box.hidden) return;
+    const screenOn = !!($("screenView") && !$("screenView").hidden);
+    box.classList.toggle("mini", screenOn);
+    if (box.hidden) { layoutMedia(); return; }
     const stage = $("confStage"), strip = $("confStrip");
+    if (screenOn) { // Bildschirm hat die Bühne: alle Kameras klein
+      const all = peers.filter((p) => p.i !== me).map((p) => tileEl(p, tileFor(p.i).canvas[0], "conf-tile"));
+      if (cam) all.unshift(selfTile("conf-tile self"));
+      stage.replaceChildren(); strip.replaceChildren(...all);
+      layoutMedia();
+      return;
+    }
     // groß: Featured (ohne mich selbst, außer ich bin allein)
     let big = featured.filter((i) => i !== me && peers.some((p) => p.i === i));
     if (!big.length && peers.length) big = peers.filter((p) => p.i !== me).slice(0, 1).map((p) => p.i);
@@ -303,6 +312,52 @@
     if (cam && bigTiles[0] && !bigTiles[0].classList.contains("self")) small.unshift(selfTile("conf-tile self"));
     strip.replaceChildren(...small);
     $("confNote").textContent = degraded ? t("voice.video_degraded") : "";
+    layoutMedia();
+  }
+
+  // Nur die Kamera-Leiste sichtbar (ohne Bildschirm)? Dann braucht der Bereich keine feste Höhe.
+  function layoutMedia() {
+    const area = $("mediaArea");
+    if (!area) return;
+    const sv = $("screenView"), cv = $("confView");
+    area.classList.toggle("mini-only", (!sv || sv.hidden) && !!cv && !cv.hidden && cv.classList.contains("mini"));
+  }
+
+  // Höhe des Bereichs mit dem Trenner einstellen (gemerkt), Doppelklick setzt zurück
+  function bindSplit() {
+    const sp = $("mediaSplit"), area = $("mediaArea");
+    if (!sp || sp.dataset.bound) return;
+    sp.dataset.bound = "1";
+    const KEY = "ucng:mediaH";
+    const apply = (px) => { if (px) area.style.setProperty("--media-h", px + "px"); else area.style.removeProperty("--media-h"); };
+    try { apply(+localStorage.getItem(KEY) || 0); } catch { /* egal */ }
+    const save = (px) => { try { if (px) localStorage.setItem(KEY, String(px)); else localStorage.removeItem(KEY); } catch { /* egal */ } };
+    const limit = (px) => { const chat = area.parentElement.clientHeight; return Math.round(Math.max(140, Math.min(chat - 260, px))); };
+    sp.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      sp.setPointerCapture(e.pointerId);
+      sp.classList.add("drag");
+      const top = area.getBoundingClientRect().top;
+      const move = (ev) => apply(limit(ev.clientY - top - 4));
+      const up = () => {
+        sp.classList.remove("drag");
+        sp.removeEventListener("pointermove", move);
+        save(Math.round(area.getBoundingClientRect().height));
+      };
+      sp.addEventListener("pointermove", move);
+      sp.addEventListener("pointerup", up, { once: true });
+      sp.addEventListener("pointercancel", up, { once: true });
+    });
+    sp.addEventListener("dblclick", () => { apply(0); save(0); });
+    sp.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      const px = limit(area.getBoundingClientRect().height + (e.key === "ArrowUp" ? -40 : 40));
+      apply(px); save(px);
+    });
+    // Bildschirm an/aus → Kameras zwischen Bühne und Leiste umstellen
+    const sv = $("screenView");
+    if (sv) new MutationObserver(() => draw()).observe(sv, { attributes: true, attributeFilter: ["hidden"] });
   }
 
   function tileEl(p, canvas, cls) {
@@ -336,6 +391,7 @@
     const tg = $("confToggle");
     if (!tg || tg.dataset.bound) return;
     tg.dataset.bound = "1";
+    bindSplit();
     tg.addEventListener("click", () => { hiddenByUser = !hiddenByUser; draw(); });
     $("confFull").addEventListener("click", () => {
       const box = $("confView");

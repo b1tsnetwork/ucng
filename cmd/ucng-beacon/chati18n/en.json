@@ -2159,6 +2159,8 @@
   "voice.lost": "The voice connection was lost",
   "voice.lower_hand": "Lower hand",
   "voice.lower_my_hand": "Lower hand",
+  "voice.media_resize": "Resize",
+  "voice.media_resize_hint": "Drag to resize · double-click to reset",
   "voice.mic_denied": "No access to the microphone – please allow it in your browser",
   "voice.mic_rate": "The microphone does not deliver 48 kHz – please choose another microphone or use Chrome/Edge",
   "voice.mode": "Speaking",
