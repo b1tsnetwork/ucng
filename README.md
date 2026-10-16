@@ -2,7 +2,7 @@
 
 # UCNG – Unified Chat Network Gateway
 
-Echtzeit-Chat in Go – mit vollständiger Weboberfläche und einem einbettbaren Widget (JS + CSS) für beliebige andere Webseiten. Instanzen verbinden sich über Föderation und Beacons zu einem Netz („Unified Chat Network“).
+Echtzeit-Chat in Go – mit vollständiger Weboberfläche und einem einbettbaren Widget (JS + CSS) für beliebige andere Webseiten. Instanzen verbinden sich über Föderation und Beacons zu einem Netz („Unified Chat Network“); jede Instanz ist dabei das Tor („Gateway“) für ihre Mitglieder. Früher hieß das Projekt *GoChat* – siehe [Name und frühere Bezeichnungen](#name-und-frühere-bezeichnungen).
 
 - **Zwei Betriebsarten in einem Programm** (`MODE=simple|hosted`): *simple* für Intranet und private Nutzung (Namen ohne Konto), *hosted* für öffentlich gehostete Chats mit **Nutzerkonten, Zwei-Faktor-Anmeldung, Ende-zu-Ende-verschlüsselten Direktnachrichten und Föderation** (`name@andere-instanz`) – siehe [Modus „hosted“](#modus-hosted)
 - **Speicher wählbar:** Dateien (Standard), **SQLite** oder **MySQL/MariaDB** – beide Treiber in reinem Go, ohne cgo

@@ -464,10 +464,10 @@
   <dialog id="voiceDialog" class="voice-dialog">
     <form method="dialog">
       <h2 data-i18n="voice.settings">Spracheinstellungen</h2>
-      <label class="voice-field"><span data-i18n="voice.input">Mikrofon</span><select id="voiceInput"></select></label>
+      <div class="voice-field"><label for="voiceInput" data-i18n="voice.input">Mikrofon</label><select id="voiceInput"></select>
+        <div class="voice-meter" id="voiceMeter" aria-hidden="true"><span></span></div></div>
       <label class="voice-field" id="voiceOutputRow"><span data-i18n="voice.output">Ausgabe</span><select id="voiceOutput"></select></label>
-      <label class="voice-field"><span data-i18n="voice.camera">Kamera</span><select id="voiceCamera"></select></label>
-      <div class="voice-meter" id="voiceMeter" aria-hidden="true"><span></span></div>
+      <label class="voice-field" id="voiceCameraRow"><span data-i18n="voice.camera">Kamera</span><select id="voiceCamera"></select></label>
       <div class="seg wide voice-mode" role="radiogroup" aria-label="Sprechen" data-i18n-aria-label="voice.mode">
         <label><input type="radio" name="voiceMode" id="voiceModeVad"> <span data-i18n="voice.mode_vad">Sprachaktivierung</span></label>
         <label><input type="radio" name="voiceMode" id="voiceModePtt"> <span data-i18n="voice.mode_ptt">Push-to-Talk</span></label>
