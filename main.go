@@ -221,6 +221,8 @@ type Server struct {
 	acctRL      *rateLimiter  // Anmeldung/Registrierung je IP (Modus „hosted“)
 	mailRL      *rateLimiter  // E-Mails je IP
 	tempRL      *rateLimiter  // neue temporäre Kanäle je Person bzw. Bot
+	unlockRL    *rateLimiter  // Passwort-Versuche je IP und Person
+	music       *musicPlayers // Musik von Bots in Sprachkanälen
 	storageKind string        // files, sqlite, mysql (Anzeige im Admin-Bereich)
 	fedRL       *rateLimiter  // Föderation: Eingang je Domain, Abfragen je Person
 	fedOnce     sync.Once
@@ -265,6 +267,8 @@ func NewServer(cfg Config, hub *Hub, users *Users) *Server {
 		acctRL:      newRateLimiter(10, time.Minute),
 		mailRL:      newRateLimiter(5, time.Hour),
 		tempRL:      newRateLimiter(5, 10*time.Minute),
+		unlockRL:    newRateLimiter(8, time.Minute),
+		music:       newMusicPlayers(),
 		fedRL:       newRateLimiter(120, time.Minute),
 		storageKind: cfg.Storage,
 		accounts:    hub.Accounts(),
@@ -389,6 +393,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/rooms/{room}/messages/{id}/mod", s.handleChatModDelete)
 	mux.HandleFunc("POST /api/users/{id}/mute", s.handleChatMute)
 	mux.HandleFunc("POST /api/rooms/{room}/upload", s.handleUpload)
+	mux.HandleFunc("POST /api/rooms/{room}/unlock", s.handleRoomUnlock)
+	mux.HandleFunc("PATCH /api/rooms/{room}/settings", s.handleRoomOwnerSettings)
 	mux.HandleFunc("GET /api/profiles", s.readGate(s.handleProfiles))
 	mux.HandleFunc("GET /api/dms", s.handleDMs)
 	mux.HandleFunc("POST /api/dms", s.handleDMOpen)
@@ -527,6 +533,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/bot/rooms", s.requireBot(s.handleBotRoomCreate))
 	mux.HandleFunc("PATCH /api/bot/rooms/{room}", s.requireBot(s.handleBotRoomUpdate))
 	mux.HandleFunc("DELETE /api/bot/rooms/{room}", s.requireBot(s.handleBotRoomDelete))
+	mux.HandleFunc("GET /api/bot/voice/{room}", s.requireBot(s.handleBotMusicStatus))
+	mux.HandleFunc("POST /api/bot/voice/{room}/play", s.requireBot(s.handleBotMusicPlay))
+	mux.HandleFunc("POST /api/bot/voice/{room}/stop", s.requireBot(s.handleBotMusicStop))
 	mux.HandleFunc("GET /api/admin/temprooms", mod(s.handleAdminTempGet))
 	mux.HandleFunc("PUT /api/admin/temprooms", adm(s.handleAdminTempPut))
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
@@ -603,7 +612,7 @@ func (s *Server) withHeaders(next http.Handler) http.Handler {
 		if s.voice != nil {
 			mic = "(self)" // Sprachkanäle
 		}
-		hd.Set("Permissions-Policy", "camera=(), microphone="+mic+", geolocation=(), payment=(), usb=()")
+		hd.Set("Permissions-Policy", "camera="+mic+", microphone="+mic+", geolocation=(), payment=(), usb=()") // Kamera: Konferenzen
 		// Content Security Policy: nur eigene Skripte (keine eingebetteten), damit eine
 		// eingeschleuste Zeichenkette nie als Code läuft. Bilder auch von https (GIF-Quellen).
 		// Die Beispielseite /demo.html enthält absichtlich Inline-Code und ist ausgenommen.
@@ -790,6 +799,7 @@ func main() {
 			srv.acctRL.cleanup()
 			srv.mailRL.cleanup()
 			srv.tempRL.cleanup()
+			srv.unlockRL.cleanup()
 			srv.fedRL.cleanup()
 			if time.Since(lastRetention) >= time.Hour {
 				lastRetention = time.Now()

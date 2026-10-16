@@ -53,6 +53,7 @@ type BotPerms struct {
 	Ban    bool `json:"ban"`    // zeitlich ausschließen
 	// Kanäle
 	Rooms      bool `json:"rooms"`      // Kanäle anlegen (auch temporäre) und die eigenen ändern und löschen
+	Music      bool `json:"music"`      // Musik in Sprachkanäle einspielen (wo der Kanal es erlaubt)
 	MaxMinutes int  `json:"maxMinutes"` // längste Sperre, die der Bot verhängen darf
 }
 

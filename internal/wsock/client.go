@@ -6,6 +6,7 @@ package wsock
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -26,13 +27,30 @@ type Client struct {
 	wmu sync.Mutex
 }
 
-// Dial verbindet sich mit ws://host/pfad.
+// NewClientConn macht aus einer bestehenden Verbindung die Client-Seite (ohne Handshake).
+func NewClientConn(c net.Conn) *Client { return &Client{c: c, r: bufio.NewReader(c)} }
+
+// Dial verbindet sich mit ws://host/pfad oder wss://host/pfad.
 func Dial(rawURL string, header http.Header) (*Client, error) {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "ws" {
-		return nil, errors.New("wsock: nur ws:// wird unterstützt")
+	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") {
+		return nil, errors.New("wsock: nur ws:// und wss:// werden unterstützt")
 	}
-	c, err := net.DialTimeout("tcp", u.Host, 5*time.Second)
+	host := u.Host
+	if u.Port() == "" {
+		if u.Scheme == "wss" {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+	var c net.Conn
+	if u.Scheme == "wss" {
+		d := &net.Dialer{Timeout: 5 * time.Second}
+		c, err = tls.DialWithDialer(d, "tcp", host, &tls.Config{ServerName: u.Hostname(), MinVersion: tls.VersionTLS12})
+	} else {
+		c, err = net.DialTimeout("tcp", host, 5*time.Second)
+	}
 	if err != nil {
 		return nil, err
 	}

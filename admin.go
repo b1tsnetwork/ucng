@@ -109,14 +109,27 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/admin/rooms {"name": "...", "description": "...", "slowMode": 0, "links": "all"}
 func (s *Server) handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
-	var in RoomInput
+	var in struct {
+		RoomInput
+		Password string `json:"password"`
+	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	info, err := s.hub.CreateRoomWith(in)
+	if in.Password != "" { // vorab prüfen, damit kein Kanal ohne Passwort entsteht
+		if n := len([]rune(in.Password)); n < 4 || n > 64 {
+			fail(w, ErrRoomPassLen)
+			return
+		}
+	}
+	info, err := s.hub.CreateRoomWith(in.RoomInput)
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	if in.Password != "" {
+		s.hub.SetRoomPassword(info.Name, in.Password, "")
+		info.HasPassword = true
 	}
 	s.log(r, AuditEntry{Action: "room.create", Room: info.Name})
 	writeJSON(w, http.StatusCreated, info)
@@ -137,6 +150,8 @@ func (s *Server) handleAdminUpdateRoom(w http.ResponseWriter, r *http.Request) {
 		WriteRoles *[]string `json:"writeRoles"`
 		// Sprachkanal: fehlt das Feld, bleibt er unverändert; null = nur Text.
 		Voice json.RawMessage `json:"voice"`
+		// Passwort: fehlt = unverändert, "" = entfernen
+		Password *string `json:"password"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -204,6 +219,21 @@ func (s *Server) handleAdminUpdateRoom(w http.ResponseWriter, r *http.Request) {
 			detail += ", "
 		}
 		detail += "Zugang: " + s.roleListText(info.ReadRoles) + "; Schreiben: " + s.roleListText(info.WriteRoles)
+	}
+	if in.Password != nil {
+		if err := s.hub.SetRoomPassword(info.Name, *in.Password, ""); err != nil {
+			fail(w, err)
+			return
+		}
+		info.HasPassword = *in.Password != ""
+		if detail != "" {
+			detail += ", "
+		}
+		if *in.Password == "" {
+			detail += "Passwort entfernt"
+		} else {
+			detail += "Passwort gesetzt"
+		}
 	}
 	if (info.Voice == nil) != (cur.Voice == nil) || (info.Voice != nil && !info.Voice.equal(cur.Voice)) {
 		if detail != "" {

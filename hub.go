@@ -185,11 +185,13 @@ type room struct {
 	history     []Message                // nach ID aufsteigend sortiert, ohne Längenbegrenzung
 	clients     map[chan Event]*Viewer
 	last        time.Time
-	presenceDue bool         // Online-Liste wird gleich verschickt (gebündelt)
-	voice       *VoiceConfig // Sprachkanal (nil = nur Text)
-	temp        *TempInfo    // temporärer Kanal (nil = dauerhaft), siehe temprooms.go
-	createdBy   string       // "bot:<id>", wenn ein Bot den Kanal angelegt hat (darf ihn dann verwalten)
-	emptySince  time.Time    // temporäre Kanäle: seit wann niemand mehr drin ist
+	presenceDue bool            // Online-Liste wird gleich verschickt (gebündelt)
+	voice       *VoiceConfig    // Sprachkanal (nil = nur Text)
+	temp        *TempInfo       // temporärer Kanal (nil = dauerhaft), siehe temprooms.go
+	createdBy   string          // "bot:<id>", wenn ein Bot den Kanal angelegt hat (darf ihn dann verwalten)
+	emptySince  time.Time       // temporäre Kanäle: seit wann niemand mehr drin ist
+	passHash    string          // Passwort ("salt:hash", leer = keins), siehe roompass.go
+	unlocked    map[string]bool // Nutzer-IDs, die das Passwort eingegeben haben
 }
 
 // find liefert die Position einer Nachricht (Binärsuche über die aufsteigenden IDs).
@@ -231,6 +233,7 @@ func (r *room) info() RoomInfo {
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, Automod: r.amMode,
 		ReadRoles: append([]string{}, r.readRoles...), WriteRoles: append([]string{}, r.writeRoles...), Kind: r.kind,
 		Pins: len(r.pins), Group: r.group, Pos: r.pos, Voice: r.voice, Temp: r.temp, CreatedBy: r.createdBy,
+		HasPassword: r.passHash != "",
 	}
 	if n := len(r.history); n > 0 {
 		ri.LastID = r.history[n-1].ID
@@ -263,6 +266,8 @@ type RoomInfo struct {
 	Voice       *VoiceConfig `json:"voice,omitempty"`   // Sprachkanal (nil = nur Text)
 	Temp        *TempInfo    `json:"temp,omitempty"`    // temporärer Kanal
 	CreatedBy   string       `json:"createdBy,omitempty"`
+	HasPassword bool         `json:"password,omitempty"` // mit Passwort geschützt
+	Locked      bool         `json:"locked,omitempty"`   // nur in RoomsFor: Passwort noch nicht eingegeben
 }
 
 // RoomInput sind die im Admin-Bereich änderbaren Werte eines Kanals.
@@ -1510,7 +1515,7 @@ func (h *Hub) SendToReaders(roomName string, ev Event) {
 			if v != nil {
 				a = v.access()
 			}
-			if !target.canRead(a) {
+			if !target.canSee(a) { // Teilnehmer sieht, wer den Kanal sieht (auch mit Passwort)
 				continue
 			}
 			e := ev
@@ -1873,13 +1878,15 @@ type roomMeta struct {
 	Pos         int              `json:"pos,omitempty"`
 	Temp        *TempInfo        `json:"temp,omitempty"`
 	CreatedBy   string           `json:"createdBy,omitempty"`
+	PassHash    string           `json:"passHash,omitempty"`
+	Unlocked    []string         `json:"unlocked,omitempty"`
 }
 
 func metaOfRoom(r *room) roomMeta {
 	m := roomMeta{Name: r.name, Description: r.description, Created: r.created, SlowMode: r.slowMode, Links: r.links,
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, ReadRoles: r.readRoles, WriteRoles: r.writeRoles,
 		Kind: r.kind, Members: r.members, Cleared: r.cleared, Voice: r.voice, Pins: r.pins, Group: r.group, Pos: r.pos,
-		Temp: r.temp, CreatedBy: r.createdBy}
+		Temp: r.temp, CreatedBy: r.createdBy, PassHash: r.passHash, Unlocked: unlockedList(r.unlocked)}
 	if a := r.automodLocked(); a.Mode != AutomodGlobal || len(a.Patterns) > 0 {
 		m.Automod = &a
 	}
@@ -1925,7 +1932,11 @@ func (h *Hub) putRoom(meta roomMeta, msgs []Message) {
 		links: links, botSlow: meta.BotSlowMode, botLinks: botLinks, amMode: AutomodGlobal,
 		history: msgs, clients: make(map[chan Event]*Viewer),
 		readRoles: meta.ReadRoles, writeRoles: meta.WriteRoles, kind: meta.Kind, members: meta.Members, cleared: meta.Cleared, blocks: h.blocks, voice: meta.Voice, pins: meta.Pins,
-		group: meta.Group, pos: meta.Pos, temp: meta.Temp, createdBy: meta.CreatedBy, emptySince: time.Now()}
+		group: meta.Group, pos: meta.Pos, temp: meta.Temp, createdBy: meta.CreatedBy, emptySince: time.Now(),
+		passHash: meta.PassHash, unlocked: map[string]bool{}}
+	for _, id := range meta.Unlocked {
+		r.unlocked[id] = true
+	}
 	if meta.Automod != nil {
 		if mode, am, err := compileRoomAutomod(*meta.Automod); err == nil {
 			r.amMode, r.am = mode, am

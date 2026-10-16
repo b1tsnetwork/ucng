@@ -27,7 +27,7 @@
   const adminToken = store.get("gochat:admin") || "";
 
   // Einstellungen für Benachrichtigungen (gehören zum Profil, werden mit exportiert).
-  const DEFAULT_PREFS = { sound: "mentions", notify: "off" };
+  const DEFAULT_PREFS = { sound: "mentions", notify: "off", density: "cozy" };
   let prefs = Object.assign({}, DEFAULT_PREFS, store.json("gochat:prefs", {}));
   // Zuletzt gelesene Nachricht je Kanal.
   let lastRead = store.json("gochat:read", {});
@@ -757,6 +757,7 @@
     box.title = _t("app.wer_ist_online");
     box.setAttribute("aria-label", _t("app.online_liste_anzeigen", { online: presence.online }));
     if (!$("presencePop").hidden) fillPresencePop();
+    renderMembers();
   }
 
   function fillPresencePop() {
@@ -786,12 +787,7 @@
     pop.replaceChildren(...parts);
   }
 
-  $("people").addEventListener("click", (e) => {
-    e.stopPropagation();
-    const pop = $("presencePop");
-    pop.hidden = !pop.hidden;
-    if (!pop.hidden) fillPresencePop();
-  });
+  $("people").addEventListener("click", (e) => { e.stopPropagation(); toggleMembers(); });
   document.addEventListener("click", (e) => { if (!$("presencePop").contains(e.target)) $("presencePop").hidden = true; });
 
   // ---------- Verbindung ----------
@@ -828,6 +824,18 @@
     if (loginRequired()) {
       setStatus("err", _t("app.anmeldung_noetig"));
       showEmpty(_t("app.bitte_melde_dich_an"), _t("app.dieser_chat_ist_nur_fuer_angemeldete"));
+      return;
+    }
+    if (roomLocked(room)) { // Passwort fehlt noch
+      setStatus("err", _t("app.locked_status"));
+      showEmpty(_t("app.locked_title", { room }), _t("app.locked_text"));
+      const b = h("button", "btn-primary locked-btn", _t("app.unlock"));
+      b.type = "button";
+      b.addEventListener("click", () => unlockRoom(room).then((ok) => { if (ok) connect(); }));
+      const empty = list.querySelector(".empty");
+      (empty || list).append(b);
+      if (me.name) unlockRoom(room).then((ok) => { if (ok) connect(); });
+      else askName();
       return;
     }
     setStatus("", _t("app.verbinde"));
@@ -1158,6 +1166,7 @@
     a.append(h("span", "hash", "#"), h("span", "room-name", r.name));
     if (r.readRoles && r.readRoles.length) a.append(Object.assign(h("span", "room-flag", "🔒"), { title: _t("app.privater_kanal") }));
     else if (r.writeRoles && r.writeRoles.length) a.append(Object.assign(h("span", "room-flag", "📣"), { title: r.canWrite ? _t("app.hier_duerfen_nur_bestimmte_rollen") : _t("app.nur_lesen") }));
+    if (r.password) a.append(Object.assign(h("span", "room-flag", r.locked ? "🔑" : "🔓"), { title: r.locked ? _t("app.locked_flag") : _t("app.unlocked_flag") }));
     if (r.temp) a.append(Object.assign(h("span", "room-flag temp", "⏳"), { title: r.temp.ownerName ? _t("app.temp_room_of", { name: r.temp.ownerName, min: r.temp.idleMinutes }) : _t("app.temp_room", { min: r.temp.idleMinutes }) }));
     const u = unreadOf(r.name);
     if (u) {
@@ -1203,7 +1212,87 @@
   }
 
   // Sprachkanal: Knopf „Beitreten“ in der Kopfzeile
+  // Passwortgeschützte Kanäle
+  const roomLocked = (name) => { const r = rooms.find((x) => x.name === name); return !!(r && r.locked); };
+  let unlockWait = null;
+  function unlockRoom(name) {
+    if (!me.name) { askName(); return Promise.resolve(false); }
+    return new Promise((resolve) => {
+      unlockWait = { name, resolve };
+      $("unlockTitle").textContent = _t("app.locked_title", { room: name });
+      $("unlockInput").value = "";
+      $("unlockError").textContent = "";
+      const d = $("unlockDialog");
+      if (!d.open) d.showModal();
+      $("unlockInput").focus();
+    });
+  }
+  $("unlockForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!unlockWait) return;
+    try {
+      await api(`/api/rooms/${encodeURIComponent(unlockWait.name)}/unlock`, { method: "POST", body: JSON.stringify({ password: $("unlockInput").value }) });
+      const w = unlockWait;
+      unlockWait = null;
+      $("unlockDialog").close();
+      await loadRooms();
+      toast(_t("app.unlocked", { room: w.name }));
+      w.resolve(true);
+    } catch (err) { $("unlockError").textContent = err.message; }
+  });
+  $("unlockDialog").addEventListener("close", () => { if (unlockWait) { const w = unlockWait; unlockWait = null; w.resolve(false); } });
+
+  // Besitzer eines temporären Kanals: Einstellungen
+  const isRoomOwner = (r) => !!(r && r.temp && me.id && (r.temp.owner === me.id || me.team));
+  function openRoomSettings(name) {
+    const r = rooms.find((x) => x.name === name);
+    if (!isRoomOwner(r)) return;
+    const f = $("roomSettingsForm");
+    f.dataset.room = name;
+    $("rsName").value = r.name;
+    $("rsDesc").value = r.description || "";
+    $("rsPassword").value = "";
+    $("rsNoPass").checked = false;
+    $("rsNoPassRow").hidden = !r.password;
+    $("rsVoice").hidden = !r.voice;
+    if (r.voice) {
+      $("rsSlots").value = r.voice.maxPeers;
+      $("rsSlots").max = me.team ? "1000" : "99";
+      $("rsGuests").value = r.voice.guests || "speak";
+      $("rsStage").checked = !!r.voice.stage;
+      $("rsScreen").checked = r.voice.screen === "speakers";
+      $("rsVideo").checked = r.voice.video === "speakers";
+      $("rsScreen").disabled = r.voice.screen === "roles";
+      $("rsVideo").disabled = r.voice.video === "roles";
+    }
+    $("rsError").textContent = "";
+    $("roomSettingsDialog").showModal();
+  }
+  $("roomSettingsForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = e.target.dataset.room;
+    const r = rooms.find((x) => x.name === name);
+    const body = { name: $("rsName").value.trim(), description: $("rsDesc").value };
+    if ($("rsNoPass").checked) body.password = "";
+    else if ($("rsPassword").value) body.password = $("rsPassword").value;
+    if (r && r.voice) {
+      body.voice = { maxPeers: parseInt($("rsSlots").value, 10) || r.voice.maxPeers, guests: $("rsGuests").value, stage: $("rsStage").checked };
+      if (!$("rsScreen").disabled) body.voice.screen = $("rsScreen").checked ? "speakers" : "";
+      if (!$("rsVideo").disabled) body.voice.video = $("rsVideo").checked ? "speakers" : "";
+    }
+    try {
+      const out = await api(`/api/rooms/${encodeURIComponent(name)}/settings`, { method: "PATCH", body: JSON.stringify(body) });
+      $("roomSettingsDialog").close();
+      toast(_t("app.room_settings_saved"));
+      await loadRooms();
+      if (out.name !== room) switchRoom(out.name);
+    } catch (err) { $("rsError").textContent = err.message; }
+  });
+  $("roomSettingsBtn").addEventListener("click", () => openRoomSettings(room));
+
   function updateVoiceHead() {
+    const rs = $("roomSettingsBtn");
+    if (rs) rs.hidden = !isRoomOwner(rooms.find((x) => x.name === room));
     const b = $("voiceHeadBtn");
     if (!b) return;
     const r = rooms.find((x) => x.name === room);
@@ -1308,6 +1397,7 @@
     if (window.UCNGVoice && "voice" in s && UCNGVoice.enabled !== !!s.voice) {
       UCNGVoice.setEnabled(s.voice);
       UCNGVoice.load();
+      updateUserPanel();
     }
   }
 
@@ -2440,6 +2530,7 @@
     $("renameInput").value = me.name;
     $("renameError").textContent = "";
     $("prefSound").value = prefs.sound;
+    $("prefDensity").value = prefs.density || "cozy";
     $("prefNotify").value = prefs.notify;
     updateNotifyHint();
     const days = settings.retentionDays;
@@ -2465,6 +2556,11 @@
     prefs.sound = $("prefSound").value;
     savePrefs();
     if (prefs.sound !== "off") ping(true);
+  });
+  $("prefDensity").addEventListener("change", () => {
+    prefs.density = $("prefDensity").value === "compact" ? "compact" : "cozy";
+    savePrefs();
+    applyDensity();
   });
   $("prefNotify").addEventListener("change", async () => {
     prefs.notify = $("prefNotify").value;
@@ -2694,10 +2790,279 @@
     return !!(res && res.ok);
   }
 
+
+  // ---------- Bedienung wie bei Discord: Kontextmenüs, Mitgliederliste, Nutzerleiste, Kürzel ----------
+
+  // Menü an der Mausposition
+  function openMenuAt(x, y, items) {
+    if (!items.length) return;
+    openMenu({ getBoundingClientRect: () => ({ left: x, right: x, top: y, bottom: y }) }, items);
+    menu.style.left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, x)) + "px";
+    menu.style.top = Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, y)) + "px";
+  }
+  const ICON2 = {
+    copy: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="9.5" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13 6.5V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v7.5A1.5 1.5 0 0 0 5.5 14H6.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+    link: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9M11.5 8.5a3 3 0 0 0-4.2 0l-2.6 2.6a3 3 0 0 0 4.2 4.2l.9-.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    user: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="7" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.8 16.5a6.2 6.2 0 0 1 12.4 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    at: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13 10v1.2a2.3 2.3 0 0 0 4.5.6A7.5 7.5 0 1 0 14 16.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    check: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4.5 10.5 3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    gear: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5v2M10 15.5v2M17.5 10h-2M4.5 10h-2M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4M15.3 15.3l-1.4-1.4M6.1 6.1 4.7 4.7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    head: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 13v-3a6.5 6.5 0 0 1 13 0v3" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="2.5" y="11.5" width="4" height="5.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="11.5" width="4" height="5.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>',
+    key: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="7" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m9.5 9.5 6-6M13.5 5.5l2 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  };
+  async function copyText(text, done) {
+    try { await navigator.clipboard.writeText(text); toast(done); } catch { toast(_t("app.copy_failed")); }
+  }
+  function mention(name) {
+    input.value = (input.value && !/\s$/.test(input.value) ? input.value + " " : input.value) + "@" + name + " ";
+    input.focus();
+    autosize();
+  }
+
+  // Menü für eine Person (Nachrichten, Mitgliederliste, Profilkarte)
+  function userMenuItems(u) {
+    const items = [[ICON2.user, _t("app.profil_anzeigen"), () => openProfileCard(u, lastPointer.x, lastPointer.y)]];
+    if (u.id === me.id) return items;
+    if (me.name) items.push([ICON2.at, _t("app.erwaehnen"), () => mention(u.name)]);
+    if (dmsEnabled && me.name && !isBlocked(u.id)) items.push([ICON.mail, _t("app.direktnachricht_an", { name: u.name }), () => startDM(u.id)]);
+    if (me.name) items.push(isBlocked(u.id)
+      ? [ICON.block, _t("app.blockierung_von_aufheben", { name: u.name }), () => setBlocked(u.id, u.name, false)]
+      : [ICON.block, _t("app.name_blockieren", { name: u.name }), () => openBlock(u.id, u.name)]);
+    if (me.perms.mute && (!u.team || me.team)) items.push([ICON.mute, _t("app.stummschalten", { name: u.name }), () => openMute({ userId: u.id, name: u.name }), "danger"]);
+    items.push([ICON2.copy, _t("app.id_kopieren"), () => copyText(u.id, _t("app.kopiert"))]);
+    return items;
+  }
+
+  // Menü für eine Nachricht (Rechtsklick): die Aktionen der Leiste plus das Menü „Mehr“
+  function messageMenuItems(m) {
+    const items = [];
+    if (!m.deleted && writable()) items.push([ICON.reply, _t("app.antworten"), () => startReply(m)]);
+    if (!m.deleted) items.push([ICON.smile, _t("app.reagieren"), () => { const row = list.querySelector(`.msg[data-id="${m.id}"]`); openReactPicker(row || list, m); }]);
+    if (!m.deleted && !isDM(room)) items.push([ICON.thread, _t("app.thread"), () => openThread(m)]);
+    if (canEdit(m)) items.push([ICON.edit, _t("app.bearbeiten"), () => startEdit(m)]);
+    if (!m.deleted && textOf(m)) items.push([ICON2.copy, _t("app.text_kopieren"), () => copyText(textOf(m), _t("app.kopiert"))]);
+    items.push([ICON2.link, _t("app.link_kopieren"), () => copyText(location.origin + location.pathname + "#" + encodeURIComponent(room), _t("app.link_kopiert"))]);
+    items.push(...msgMenuItems(m));
+    if (isOwn(m) && !m.deleted) items.push([ICON.trash, _t("app.loeschen"), () => deleteOwn(m), "danger"]);
+    return items;
+  }
+
+  // Menü für einen Kanal
+  function roomMenuItems(name) {
+    const r = rooms.find((x) => x.name === name) || { name };
+    const items = [];
+    if (unread[name]) items.push([ICON2.check, _t("app.als_gelesen"), () => { if (r.lastId) { lastRead[name] = r.lastId; store.setJSON("gochat:read", lastRead); } delete unread[name]; renderRoomList(); updateTitle(); }]);
+    const pinned = myPins().includes(name);
+    items.push([ICON.pin, pinned ? _t("app.loesen") : _t("app.oben_anpinnen"), () => togglePin(name)]);
+    items.push([ICON2.link, _t("app.link_kopieren"), () => copyText(location.origin + location.pathname + "#" + encodeURIComponent(name), _t("app.link_kopiert"))]);
+    if (r.locked) items.push([ICON2.key, _t("app.unlock"), () => unlockRoom(name).then((ok) => { if (ok && name === room) connect(); })]);
+    if (r.voice && window.UCNGVoice && UCNGVoice.enabled) {
+      items.push(UCNGVoice.room === name ? [ICON2.head, _t("voice.leave"), () => UCNGVoice.leave()] : [ICON2.head, _t("voice.join"), () => UCNGVoice.join(name)]);
+    }
+    if (isRoomOwner(r)) items.push([ICON2.gear, _t("app.room_settings"), () => openRoomSettings(name)]);
+    return items;
+  }
+
+  const lastPointer = { x: 0, y: 0 };
+  document.addEventListener("pointerdown", (e) => { lastPointer.x = e.clientX; lastPointer.y = e.clientY; }, true);
+
+  // Rechtsklick (auf Touch-Geräten: langes Drücken löst ebenfalls contextmenu aus)
+  document.addEventListener("contextmenu", (e) => {
+    if (e.target.closest("input, textarea, dialog, a[href^='http']") || e.shiftKey) return; // Shift+Rechtsklick: Menü des Browsers
+    lastPointer.x = e.clientX; lastPointer.y = e.clientY;
+    const userEl = e.target.closest("[data-user-id]");
+    const msgRow = e.target.closest(".msg[data-id]");
+    const roomA = e.target.closest("#roomList .room-row > a");
+    let items = null;
+    if (userEl) {
+      items = userMenuItems({ id: userEl.dataset.userId, name: userEl.dataset.userName || "", team: userEl.dataset.team === "1" });
+    } else if (msgRow) {
+      const m = (thread && thread.msgs || []).concat(loaded).find((x) => String(x.id) === msgRow.dataset.id);
+      if (m && e.target.closest(".avatar, .meta b") && m.userId && !m.bot) items = userMenuItems({ id: m.userId, name: m.name, team: m.team });
+      else if (m) items = messageMenuItems(m);
+    } else if (roomA) {
+      const name = decodeURIComponent(roomA.getAttribute("href").slice(1));
+      items = roomMenuItems(name);
+    }
+    if (items && items.length) { e.preventDefault(); openMenuAt(e.clientX, e.clientY, items); }
+  });
+
+  // Mitgliederliste rechts: nach Rollen gruppiert, wie bei Discord
+  let membersOpen = store.get("gochat:members");
+  membersOpen = membersOpen == null ? window.innerWidth >= 1200 : membersOpen === "1";
+  function toggleMembers(force) {
+    membersOpen = force == null ? !membersOpen : !!force;
+    store.set("gochat:members", membersOpen ? "1" : "0");
+    renderMembers();
+  }
+  function renderMembers() {
+    const panel = $("memberPanel");
+    if (!panel) return;
+    panel.hidden = !membersOpen || !room;
+    $("people").classList.toggle("on", membersOpen);
+    document.body.classList.toggle("members-open", !panel.hidden);
+    if (panel.hidden) return;
+    const groups = new Map(); // Überschrift → Personen
+    const order = [];
+    const add = (key, label, u) => { if (!groups.has(key)) { groups.set(key, { label, users: [] }); order.push(key); } groups.get(key).users.push(u); };
+    const roleOrder = [...roles.byId.keys()];
+    const sorted = presence.users.slice().sort((a, b) => a.name.localeCompare(b.name, GoChatI18n.locale));
+    for (const u of sorted) {
+      const rs = userRoles(u.id);
+      const top = rs.slice().sort((a, b) => roleOrder.indexOf(a.id) - roleOrder.indexOf(b.id))[0];
+      if (u.team) add("team", _t("app.team"), u);
+      else if (top) add("r:" + top.id, top.name, u);
+      else add("online", _t("app.online_gruppe"), u);
+    }
+    const keys = ["team", ...roleOrder.map((id) => "r:" + id), "online"].filter((k) => groups.has(k));
+    const parts = [];
+    for (const k of keys) {
+      const g = groups.get(k);
+      parts.push(h("h3", "members-head", `${g.label} — ${g.users.length}`));
+      for (const u of g.users) parts.push(memberRow(u));
+    }
+    if (presence.guests) parts.push(h("p", "members-foot", presence.guests === 1 ? _t("app.und_1_gast_ohne_namen") : _t("app.und_gaeste_ohne_namen", { guests: presence.guests })));
+    if (!presence.users.length && !presence.guests) parts.push(h("p", "members-foot", _t("app.gerade_ist_niemand_hier")));
+    $("memberList").replaceChildren(...parts);
+  }
+  function memberRow(u) {
+    const b = h("button", "member");
+    b.type = "button";
+    b.dataset.userId = u.id; b.dataset.userName = u.name; b.dataset.team = u.team ? "1" : "";
+    const name = h("span", "member-name", u.name);
+    const tint = userRoles(u.id).find((r) => r.colorName);
+    if (tint) { name.classList.add("role-name"); name.style.setProperty("--role", tint.color); }
+    const txt = h("span", "member-text");
+    txt.append(name);
+    const p = profiles[u.id];
+    if (p && p.text) txt.append(h("span", "member-status", p.text));
+    b.append(avatar(u.name, u.id), txt);
+    if (u.id === me.id) b.classList.add("self");
+    b.addEventListener("click", (e) => { e.stopPropagation(); const r = b.getBoundingClientRect(); openProfileCard(u, r.left - 8, r.top); });
+    return b;
+  }
+
+  // Profilkarte
+  function openProfileCard(u, x, y) {
+    const card = $("profileCard");
+    const p = profiles[u.id] || {};
+    const head = h("div", "pc-head");
+    const av = avatar(u.name, u.id);
+    av.classList.add("pc-avatar");
+    head.append(av);
+    const name = h("div", "pc-name", u.name);
+    const body = h("div", "pc-body");
+    body.append(name);
+    if (p.status || p.text) body.append(h("div", "pc-status", [p.status === "away" ? _t("app.abwesend") : p.status === "busy" ? _t("app.beschaeftigt") : "", p.text || ""].filter(Boolean).join(" · ")));
+    const badges = h("div", "pc-roles");
+    if (u.team) badges.append(h("span", "badge team-badge", _t("app.team")));
+    addRoleBadges(badges, u.id, name);
+    if (badges.childNodes.length) { body.append(h("div", "pc-label", _t("app.rollen")), badges); }
+    const acts = h("div", "pc-actions");
+    if (u.id !== me.id && dmsEnabled && me.name && !isBlocked(u.id)) {
+      const dm = h("button", "btn-primary", _t("app.nachricht"));
+      dm.type = "button";
+      dm.addEventListener("click", () => { card.hidden = true; startDM(u.id); });
+      acts.append(dm);
+    }
+    if (u.id !== me.id && me.name) {
+      const at = h("button", "btn-quiet", _t("app.erwaehnen"));
+      at.type = "button";
+      at.addEventListener("click", () => { card.hidden = true; mention(u.name); });
+      acts.append(at);
+      const more = iconBtn("btn-quiet pc-more", _t("app.mehr"), ICON.more);
+      more.addEventListener("click", (e) => { e.stopPropagation(); card.hidden = true; const r = more.getBoundingClientRect(); openMenuAt(r.left, r.bottom, userMenuItems(u).slice(1)); });
+      acts.append(more);
+    }
+    if (acts.childNodes.length) body.append(acts);
+    card.replaceChildren(head, body);
+    card.hidden = false;
+    const w = card.offsetWidth, ch = card.offsetHeight;
+    card.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, x - w)) + "px";
+    card.style.top = Math.max(8, Math.min(window.innerHeight - ch - 8, y)) + "px";
+  }
+  document.addEventListener("click", (e) => { const c = $("profileCard"); if (c && !c.hidden && !c.contains(e.target)) c.hidden = true; });
+
+  // Profil aus Nachrichten öffnen (Klick auf Avatar oder Namen)
+  list.addEventListener("click", (e) => {
+    const t = e.target.closest(".msg > .avatar, .msg .meta > b");
+    if (!t) return;
+    const row = t.closest(".msg[data-id]");
+    const m = row && loaded.find((x) => String(x.id) === row.dataset.id);
+    if (!m || m.bot || !m.userId) return;
+    e.stopPropagation();
+    const r = t.getBoundingClientRect();
+    openProfileCard({ id: m.userId, name: m.name, team: m.team }, r.right + 300 + 12, r.top);
+  });
+
+  // Nutzerleiste unten: Mikrofon, Kopfhörer, Einstellungen – immer sichtbar
+  function updateUserPanel() {
+    const V = window.UCNGVoice;
+    const mic = $("upMic"), deaf = $("upDeaf"), gear = $("upSettings");
+    if (!mic) return;
+    const on = !!(V && V.enabled);
+    mic.hidden = deaf.hidden = !on;
+    if (!on) return;
+    const st = V.state, ic = V.icons;
+    const micOff = st.selfMute || st.deaf || !st.canTalk;
+    mic.innerHTML = micOff ? ic.micOff : ic.mic;
+    mic.classList.toggle("off", micOff);
+    mic.setAttribute("aria-pressed", String(st.selfMute));
+    mic.title = st.serverMuted ? _t("voice.muted_by_team") : st.listenOnly ? _t("voice.listen_only") : (st.selfMute ? _t("voice.unmute_me") : _t("voice.mute_me"));
+    deaf.innerHTML = st.deaf ? ic.headOff : ic.head;
+    deaf.classList.toggle("off", st.deaf);
+    deaf.setAttribute("aria-pressed", String(st.deaf));
+    deaf.title = (st.deaf ? _t("voice.undeafen") : _t("voice.deafen"));
+    gear.title = _t("app.einstellungen");
+  }
+  $("upMic").addEventListener("click", () => { if (window.UCNGVoice) UCNGVoice.toggleMute(); updateUserPanel(); });
+  $("upDeaf").addEventListener("click", () => { if (window.UCNGVoice) UCNGVoice.toggleDeaf(); updateUserPanel(); });
+  $("upSettings").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    const items = [[ICON2.user, _t("app.profil"), () => (me.name ? openProfile() : askName())]];
+    if (window.UCNGVoice && UCNGVoice.enabled) items.push([ICON2.head, _t("voice.settings"), () => UCNGVoice.openSettings()]);
+    items.push([ICON2.key, _t("app.tastenkuerzel"), () => $("keysDialog").showModal()]);
+    openMenuAt(r.left, r.top - 4 - 3 * 40, items);
+  });
+
+  // Darstellung: gemütlich oder kompakt
+  function applyDensity() { document.body.classList.toggle("compact", prefs.density === "compact"); }
+  applyDensity();
+
+  // Tastenkürzel
+  function roomOrder() { return [...document.querySelectorAll("#roomList .room-row > a, #dmList a")].map((a) => decodeURIComponent(a.getAttribute("href").slice(1))).filter((x, i, l) => l.indexOf(x) === i); }
+  document.addEventListener("keydown", (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target !== input;
+    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && !typing) {
+      const order = roomOrder();
+      if (!order.length) return;
+      e.preventDefault();
+      const dir = e.key === "ArrowUp" ? -1 : 1;
+      let i = order.indexOf(room);
+      for (let n = 0; n < order.length; n++) {
+        i = (i + dir + order.length) % order.length;
+        if (!e.shiftKey || unread[order[i]]) { switchRoom(order[i]); return; }
+      }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "m" && window.UCNGVoice && UCNGVoice.enabled) { e.preventDefault(); UCNGVoice.toggleMute(); updateUserPanel(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "d" && window.UCNGVoice && UCNGVoice.enabled) { e.preventDefault(); UCNGVoice.toggleDeaf(); updateUserPanel(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key === "/") { e.preventDefault(); $("keysDialog").showModal(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "u" && !e.shiftKey) { e.preventDefault(); toggleMembers(); return; }
+    if (e.key === "Escape" && !typing && !document.querySelector("dialog[open]") && $("composeBar").hidden && menu.hidden && $("profileCard").hidden) {
+      if (thread) { closeThread(); return; }
+      if (unread[room] || unseenHere) { markRead(); list.scrollTop = list.scrollHeight; }
+    }
+  });
+
   if (window.UCNGVoice) {
     UCNGVoice.init({ api, toast, h, iconBtn, avatar, me: () => me, token: () => token, isBlocked,
       requireName: () => { if (me.name) return true; askName(); return false; },
-      switchRoom: (r) => { switchRoom(r); $("sidebar").classList.remove("open"); }, render: renderVoice });
+      canModerate: () => !!(me.team || (me.perms && me.perms.mute)),
+      voiceRooms: () => rooms.filter((r) => r.voice).map((r) => r.name),
+      isLocked: roomLocked, unlock: unlockRoom,
+      switchRoom: (r) => { switchRoom(r); $("sidebar").classList.remove("open"); }, render: () => { renderVoice(); updateUserPanel(); } });
     $("voiceHeadBtn").addEventListener("click", () => {
       if (UCNGVoice.room === room) UCNGVoice.leave(); else UCNGVoice.join(room);
     });

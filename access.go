@@ -59,7 +59,8 @@ func contains(list []string, s string) bool {
 // restricted: Sehen nicht alle diesen Kanal?
 func (r *room) restricted() bool { return r.kind == RoomDM || len(r.readRoles) > 0 }
 
-func (r *room) canRead(a *Access) bool {
+// canSee: Darf a den Kanal sehen (Rollen)? Mit Passwort steht er dann mit Schloss in der Liste.
+func (r *room) canSee(a *Access) bool {
 	if r.kind == RoomDM {
 		return a != nil && contains(r.members, a.ID)
 	}
@@ -68,6 +69,9 @@ func (r *room) canRead(a *Access) bool {
 	}
 	return a != nil && (a.Team || intersects(r.readRoles, a.Roles))
 }
+
+// canRead: sehen und – bei einem Passwort – schon entsperrt.
+func (r *room) canRead(a *Access) bool { return r.canSee(a) && r.passOK(a) }
 
 func (r *room) canWrite(a *Access) bool {
 	if !r.canRead(a) {
@@ -107,9 +111,10 @@ func (h *Hub) RoomsFor(a *Access) []RoomInfo {
 	defer h.mu.Unlock()
 	out := []RoomInfo{}
 	for _, r := range h.rooms {
-		if r.kind == "" && r.canRead(a) {
+		if r.kind == "" && r.canSee(a) {
 			ri := r.info()
 			ri.CanWrite = r.canWrite(a)
+			ri.Locked = !r.passOK(a)
 			ri.Group = h.groupOf(r)
 			ri.Threads = r.activeThreadsLocked(now)
 			out = append(out, ri)

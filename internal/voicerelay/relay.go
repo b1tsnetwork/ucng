@@ -34,6 +34,13 @@ import (
 //	Relay → Browser  [1][n u8] n × ([Teilnehmer u16][seq u16][Länge u16][Opus-Rahmen])
 //	Browser → Relay  [2][flags u8][seq u16][Video-Rahmen]           (Bildschirm; flags&1 = Schlüsselbild)
 //	Relay → Browser  [2][Teilnehmer u16][flags u8][seq u16][Video-Rahmen]
+//	Browser → Relay  [3][Ebene u8][flags u8][seq u16][Video-Rahmen]  (Kamera; Ebene 0 = Miniansicht, 1 = groß)
+//	Relay → Browser  [3][Teilnehmer u16][Ebene u8][flags u8][seq u16][Video-Rahmen]
+//
+// Kamera (Konferenz): Jede Kamera schickt eine kleine Miniansicht an alle. Die „Featured“
+// zuletzt sprechenden Personen schicken zusätzlich ein großes Bild – der Relay sagt ihnen, wann
+// ({"t":"layer","high":…}). Wird eine Verbindung zu langsam, bekommt sie vorübergehend nur die
+// Miniansichten.
 //
 // Steuerung als JSON-Text: zuerst {"t":"auth","ticket":"…"}; danach {"t":"state","mute":…,"hand":…},
 // {"t":"ping","ts":…}, {"t":"share","on":…,"codec":"vp8"}, {"t":"watch","i":…,"on":…} und
@@ -47,6 +54,9 @@ import (
 const (
 	MsgAudio      = 1
 	MsgVideo      = 2
+	MsgCam        = 3
+	featureHold   = 2 * time.Second // ein großes Bild bleibt mindestens so lange
+	degradeFor    = 15 * time.Second
 	maxVideoFrame = 1 << 20 // größtes Video-Bild (Schlüsselbild in hoher Auflösung)
 	keyReqGap     = time.Second
 	maxFrame      = 1275 // größter Opus-Rahmen
@@ -85,6 +95,10 @@ type PeerInfo struct {
 	Hand     bool   `json:"h,omitempty"`
 	Screen   string `json:"sc,omitempty"` // teilt den Bildschirm (Codec, z. B. "vp8")
 	ScreenOK bool   `json:"so,omitempty"` // darf den Bildschirm teilen
+	Cam      string `json:"cm,omitempty"` // Kamera an (Codec)
+	CamOK    bool   `json:"co,omitempty"` // darf die Kamera nutzen
+	Music    int    `json:"mu,omitempty"` // Musik eines Bots (Lautstärke in Prozent)
+	Mod      bool   `json:"mo,omitempty"` // moderiert hier
 }
 
 // Stats: Auslastung des Relays.
@@ -118,6 +132,11 @@ type channel struct {
 	bitrate     int
 	maxScreens  int
 	screenKbps  int
+	featuredN   int
+	videoKbps   int
+	thumbKbps   int
+	featured    []uint16 // große Bilder (Reihenfolge)
+	featAt      time.Time
 	active      map[uint16]*peer // gerade weitergeleitete Sprecher
 	frames      []frameRef       // im laufenden Takt eingegangen
 	ticking     bool
@@ -158,6 +177,18 @@ type peer struct {
 	vBytes    float64          // Video-Kontingent (Bytes)
 	vRefill   time.Time
 	lastKeyRq time.Time
+	// Kamera
+	videoOK    bool
+	cam        string              // Kamera an (Codec)
+	camNeedKey map[uint16]*[2]bool // je Kamera und Ebene: auf Schlüsselbild warten
+	camKeyRq   [2]time.Time
+	cBytes     float64
+	cRefill    time.Time
+	lastSpoke  time.Time
+	highOff    bool // zu langsam: vorübergehend nur Miniansichten
+	degradedAt time.Time
+	music      int // Musik-Datenstrom eines Bots (Lautstärke)
+	mod        bool
 }
 
 // New startet einen Relay.
@@ -238,6 +269,21 @@ func (r *Relay) estimateLocked() float64 {
 			if p.codec != "" {
 				total += float64(len(p.watchers)) * float64(ch.screenKbps) * 1.05
 			}
+			if p.cam != "" { // Miniansicht an alle, großes Bild an alle, die nicht gedrosselt sind
+				total += float64(len(ch.peers)-1) * float64(ch.thumbKbps) * 1.05
+				if ch.isFeatured(p.idx) {
+					full := 0.0
+					for _, q := range ch.peers {
+						if q != p && !q.highOff {
+							full++
+						}
+					}
+					total += full * float64(ch.videoKbps) * 1.05
+				}
+			}
+			if p.music > 0 {
+				total += float64(len(ch.peers)-1) * float64(p.bitrate) / 1000 * 1.1
+			}
 		}
 	}
 	return total / 1000
@@ -263,7 +309,8 @@ func (r *Relay) peersLocked(ch *channel) []PeerInfo {
 }
 
 func (p *peer) info() PeerInfo {
-	return PeerInfo{Idx: p.idx, User: p.user, Name: p.name, Speak: p.speak, Muted: p.muted, SelfMute: p.selfMute, Hand: p.hand, Screen: p.codec, ScreenOK: p.screenOK}
+	return PeerInfo{Idx: p.idx, User: p.user, Name: p.name, Speak: p.speak, Muted: p.muted, SelfMute: p.selfMute, Hand: p.hand, Screen: p.codec, ScreenOK: p.screenOK,
+		Cam: p.cam, CamOK: p.videoOK, Music: p.music, Mod: p.mod}
 }
 
 // --- Verbindung ---
@@ -276,6 +323,7 @@ type ctlMsg struct {
 	TS     int64  `json:"ts,omitempty"`
 	On     *bool  `json:"on,omitempty"`
 	I      uint16 `json:"i,omitempty"`
+	L      int    `json:"l,omitempty"`
 	Codec  string `json:"codec,omitempty"`
 }
 
@@ -285,6 +333,11 @@ func (r *Relay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		return
 	}
+	r.ServeConn(conn)
+}
+
+// ServeConn betreut eine schon geöffnete Verbindung (z. B. Musik eines Bots im selben Prozess).
+func (r *Relay) ServeConn(conn *wsock.Conn) {
 	conn.SetReadDeadline(r.cfg.Now().Add(10 * time.Second))
 	op, data, err := conn.Read()
 	if err != nil || op != wsock.OpText {
@@ -339,8 +392,11 @@ func (r *Relay) join(t Ticket, conn *wsock.Conn) (*peer, error) {
 	if ch == nil {
 		ch = &channel{name: t.Channel, peers: map[uint16]*peer{}, active: map[uint16]*peer{}}
 	}
-	ch.maxSpeakers, ch.maxPeers, ch.bitrate = clamp(t.MaxSpeakers, 1, 16), clamp(t.MaxPeers, 1, 5000), clamp(t.Bitrate, 6000, 256000)
-	ch.maxScreens, ch.screenKbps = clamp(t.MaxScreens, 0, 16), clamp(t.ScreenKbps, 100, 20000)
+	if t.Music == 0 || len(ch.peers) == 0 { // Musik eines Bots ändert die Einstellungen des Kanals nicht
+		ch.maxSpeakers, ch.maxPeers, ch.bitrate = clamp(t.MaxSpeakers, 1, 16), clamp(t.MaxPeers, 1, 5000), clamp(t.Bitrate, 6000, 256000)
+		ch.maxScreens, ch.screenKbps = clamp(t.MaxScreens, 0, 16), clamp(t.ScreenKbps, 100, 20000)
+		ch.featuredN, ch.videoKbps, ch.thumbKbps = clamp(t.Featured, 1, 9), clamp(t.VideoKbps, 100, 20000), clamp(t.ThumbKbps, 50, 2000)
+	}
 	if len(ch.peers) >= ch.maxPeers {
 		r.mu.Unlock()
 		r.notifyReplaced(replaced)
@@ -363,13 +419,17 @@ func (r *Relay) join(t Ticket, conn *wsock.Conn) (*peer, error) {
 		}
 	}
 	p := &peer{idx: ch.next, ch: ch, user: t.User, name: t.Name, speak: t.Speak, muted: t.Muted, hand: t.Hand,
-		bitrate: ch.bitrate, conn: conn, out: make(chan []byte, outQueue), tokens: 10, refill: now,
+		bitrate: ch.bitrate, conn: conn, videoOK: t.Video, camNeedKey: map[uint16]*[2]bool{}, mod: t.ModUser, out: make(chan []byte, outQueue), tokens: 10, refill: now,
 		screenOK: t.Screen && ch.maxScreens > 0, watchers: map[uint16]*peer{}, watching: map[uint16]bool{}, needKey: map[uint16]bool{}}
+	if t.Music > 0 { // eigener Datenstrom: eigene Bitrate, kein Sprecherplatz
+		p.music, p.bitrate, p.speak = clamp(t.Music, 1, 100), clamp(t.Bitrate, 6000, 256000), true
+	}
 	p.bytesTok = float64(p.bitrate) / 8 * 1.5 / 2
 	ch.peers[p.idx] = p
 	r.total++
 	hello, _ := json.Marshal(map[string]any{"t": "hello", "you": p.idx, "peers": r.peersLocked(ch),
-		"maxSpeakers": ch.maxSpeakers, "speak": p.speak, "muted": p.muted, "screen": p.screenOK, "screenKbps": ch.screenKbps})
+		"maxSpeakers": ch.maxSpeakers, "speak": p.speak, "muted": p.muted, "screen": p.screenOK, "screenKbps": ch.screenKbps,
+		"video": p.videoOK, "featured": ch.featured, "featuredN": ch.featuredN})
 	p.out <- textMsg(hello)
 	join, _ := json.Marshal(map[string]any{"t": "peer", "peer": p.info()})
 	r.broadcastLocked(ch, textMsg(join), p)
@@ -438,6 +498,8 @@ func (r *Relay) reader(p *peer) {
 				r.audio(p, binary.BigEndian.Uint16(data[1:3]), data[3], data[4:])
 			} else if len(data) > 4 && data[0] == MsgVideo {
 				r.video(p, data[1], binary.BigEndian.Uint16(data[2:4]), data[4:])
+			} else if len(data) > 5 && data[0] == MsgCam {
+				r.camFrame(p, int(data[1]&1), data[2], binary.BigEndian.Uint16(data[3:5]), data[5:])
 			}
 			continue
 		}
@@ -471,6 +533,15 @@ func (r *Relay) reader(p *peer) {
 			r.mu.Lock()
 			if s := p.ch.peers[m.I]; s != nil && s.codec != "" && p.watching[m.I] {
 				r.keyReqLocked(s)
+			}
+			r.mu.Unlock()
+		case "cam":
+			r.camOn(p, m.On != nil && *m.On, m.Codec)
+		case "camkey":
+			r.mu.Lock()
+			if s := p.ch.peers[m.I]; s != nil && s.cam != "" && s != p {
+				p.camKeys(m.I)[m.L&1] = true
+				r.camKeyReqLocked(s, m.L&1)
 			}
 			r.mu.Unlock()
 		}
@@ -508,7 +579,13 @@ func (r *Relay) removeLocked(p *peer) {
 		delete(w.watching, p.idx)
 		delete(w.needKey, p.idx)
 	}
+	for _, q := range ch.peers {
+		delete(q.camNeedKey, p.idx)
+	}
 	delete(ch.peers, p.idx)
+	if ch.isFeatured(p.idx) {
+		r.refeatureLocked(ch, r.cfg.Now(), true)
+	}
 	delete(ch.active, p.idx)
 	r.total--
 	close(p.out)
@@ -560,6 +637,24 @@ func (r *Relay) audio(p *peer, seq uint16, level uint8, data []byte) {
 	if p.gone || !p.speak || p.muted || p.selfMute {
 		return
 	}
+	if p.music > 0 { // Musik eines Bots: eigener Strom, kein Sprecherplatz
+		dt := now.Sub(p.refill).Seconds()
+		p.refill = now
+		p.tokens = minF(20, p.tokens+dt*120)
+		maxBytes := float64(p.bitrate) / 8 * 1.5
+		p.bytesTok = minF(maxBytes, p.bytesTok+dt*maxBytes)
+		if p.tokens < 1 || p.bytesTok < float64(len(data)) {
+			return
+		}
+		p.tokens--
+		p.bytesTok -= float64(len(data))
+		p.ch.frames = append(p.ch.frames, frameRef{from: p, seq: seq, data: append([]byte(nil), data...)})
+		if !p.ch.ticking {
+			p.ch.ticking = true
+			go r.ticker(p.ch)
+		}
+		return
+	}
 	// Grenzen: höchstens 60 Rahmen/s und 1,5 × Bitrate (kleiner Vorrat für Spitzen)
 	dt := now.Sub(p.refill).Seconds()
 	p.refill = now
@@ -595,6 +690,12 @@ func (r *Relay) audio(p *peer, seq uint16, level uint8, data []byte) {
 		ch.active[p.idx] = p
 	}
 	p.last, p.level = now, level
+	if level >= 64 { // spricht hörbar (über etwa −45 dB): für die großen Bilder
+		p.lastSpoke = now
+		if p.cam != "" && !ch.isFeatured(p.idx) && now.Sub(ch.featAt) > 300*time.Millisecond {
+			r.refeatureLocked(ch, now, false)
+		}
+	}
 	ch.frames = append(ch.frames, frameRef{from: p, seq: seq, data: append([]byte(nil), data...)})
 	if !ch.ticking {
 		ch.ticking = true
@@ -714,6 +815,17 @@ func (r *Relay) Control(channel, user, action string, value bool, reason string)
 			if !p.screenOK && p.codec != "" {
 				r.stopShareLocked(p)
 			}
+		case "video": // Recht für die Kamera; false schaltet sie aus
+			p.videoOK = value
+			if !value && p.cam != "" {
+				r.camOffLocked(p)
+			}
+		case "mod":
+			p.mod = value
+		case "move": // in einen anderen Kanal schicken (reason = Ziel); der Browser tritt dort bei
+			b, _ := json.Marshal(map[string]any{"t": "move", "room": reason})
+			r.enqueueLocked(p, textMsg(b))
+			continue
 		case "kick", "close":
 			closeList = append(closeList, p)
 			continue
@@ -721,7 +833,7 @@ func (r *Relay) Control(channel, user, action string, value bool, reason string)
 		if !p.speak || p.muted {
 			delete(ch.active, p.idx)
 		}
-		you, _ := json.Marshal(map[string]any{"t": "you", "speak": p.speak, "muted": p.muted, "hand": p.hand, "screen": p.screenOK, "sharing": p.codec != ""})
+		you, _ := json.Marshal(map[string]any{"t": "you", "speak": p.speak, "muted": p.muted, "hand": p.hand, "screen": p.screenOK, "sharing": p.codec != "", "video": p.videoOK, "mod": p.mod})
 		r.enqueueLocked(p, textMsg(you))
 		upd, _ := json.Marshal(map[string]any{"t": "peer", "peer": p.info()})
 		r.broadcastLocked(ch, textMsg(upd), p)

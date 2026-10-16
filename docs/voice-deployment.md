@@ -62,6 +62,8 @@ Gemessen auf 2 CPU-Kernen: 200 Teilnehmer mit 99,8 % zugestellten Rahmen bei 20 
 
 **Bildschirmfreigaben** laufen über denselben Relay wie der Sprachkanal und kommen dazu – aber nur je Person, die tatsächlich zusieht: 1,5 Mbit/s (Text und Folien), 2,5 Mbit/s (Standard) oder 4 Mbit/s (Bewegung). Sehen 20 Personen einer Standard-Freigabe zu, sind das 50 Mbit/s. Ist die Grenze erreicht, nimmt der Relay keine weiteren Zuschauer an; die Sprache läuft weiter.
 
+**Kameras (Konferenzraum)** kommen ebenfalls dazu. Jede Person mit Kamera schickt eine Miniansicht (150 kbit/s) an alle und – solange sie zu den großen Sprechern gehört – das große Bild (bis 0,6 / 1,5 / 2,8 Mbit/s bei SD / HD / Full HD). Je Zuschauer ausgehend also etwa `Kameras × 150 kbit/s + große Sprecher × Qualität`: 10 Kameras, 1 Sprecher groß in HD ≈ 3 Mbit/s je Person, bei 10 Teilnehmern ≈ 30 Mbit/s. Langsame Zuschauer bekommen automatisch nur Miniansichten. **Musik von Bots** braucht je Zuhörer so viel wie ein Sprecher mit der Klang-Einstellung *Musik* (≈ 100 kbit/s).
+
 Das sind vorsichtige Schätzungen (gemessen wurde etwa ein Viertel weniger). Setze `MAX_MBIT` auf etwa 70–80 % der Upload-Bandbreite des Servers. Der Agent nimmt keine neuen Teilnehmer mehr an, wenn die Schätzung diese Grenze überschreiten würde.
 
 ---

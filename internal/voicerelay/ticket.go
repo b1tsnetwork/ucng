@@ -31,6 +31,12 @@ type Ticket struct {
 	Screen      bool   `json:"sc,omitempty"`  // darf den Bildschirm teilen
 	ScreenKbps  int    `json:"sk,omitempty"`  // Bitrate einer Bildschirmfreigabe (kbit/s)
 	MaxScreens  int    `json:"msc,omitempty"` // gleichzeitige Freigaben im Kanal
+	Video       bool   `json:"vd,omitempty"`  // darf die Kamera nutzen (Konferenz)
+	VideoKbps   int    `json:"vk,omitempty"`  // Bitrate des großen Bildes (kbit/s)
+	ThumbKbps   int    `json:"tk,omitempty"`  // Bitrate der Miniansicht (kbit/s)
+	Featured    int    `json:"fe,omitempty"`  // so viele Sprecher groß
+	Music       int    `json:"mu,omitempty"`  // Musik eines Bots: Lautstärke in Prozent (1–100); eigener Datenstrom
+	ModUser     bool   `json:"mo,omitempty"`  // darf im Kanal moderieren (nur Anzeige)
 	Exp         int64  `json:"e"`             // Unix-Sekunden
 	Nonce       string `json:"x"`
 }

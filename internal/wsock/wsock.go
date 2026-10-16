@@ -86,6 +86,15 @@ func Upgrade(w http.ResponseWriter, r *http.Request, originOK func(string) bool,
 	return &Conn{c: c, r: rw.Reader, maxMsg: maxMsg}, nil
 }
 
+// NewServerConn macht aus einer bestehenden Verbindung (z. B. net.Pipe) die Server-Seite eines
+// WebSockets – ohne HTTP-Handshake (für Verbindungen im selben Prozess).
+func NewServerConn(c net.Conn, maxMsg int) *Conn {
+	if maxMsg <= 0 {
+		maxMsg = 64 << 10
+	}
+	return &Conn{c: c, r: bufio.NewReader(c), maxMsg: maxMsg}
+}
+
 func hasToken(v, t string) bool {
 	for _, x := range strings.Split(v, ",") {
 		if strings.EqualFold(strings.TrimSpace(x), t) {

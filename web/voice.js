@@ -43,6 +43,9 @@
     join: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 13v-3a6.5 6.5 0 0 1 13 0v3" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="2.5" y="11.5" width="4" height="5.5" rx="1.6" fill="currentColor"/><rect x="13.5" y="11.5" width="4" height="5.5" rx="1.6" fill="currentColor"/></svg>',
     screen: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M10 13.5V17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
     screenOff: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M10 13.5V17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="m7.5 6 5 5m0-5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    cam: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5.5" width="10.5" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m13 9 4.5-2.5v7L13 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+    camOff: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5.5" width="10.5" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m13 9 4.5-2.5v7L13 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m3 3 14 14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+    music: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 15V4.5l9-2V13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="5.5" cy="15" r="2" fill="currentColor"/><circle cx="14.5" cy="13" r="2" fill="currentColor"/></svg>',
     stage: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 16.5h15M4.5 16.5V9l5.5-4.5L15.5 9v7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="10" cy="10.5" r="1.8" fill="currentColor"/></svg>',
   };
 
@@ -56,10 +59,12 @@
 
   // ---------- Lautstärke je Person ----------
 
+  const musicVol = {}; // Musik von Bots: voreingestellte Lautstärke (0–1)
   function gainFor(uid) {
     if (deps.isBlocked(uid) || prefs.mute[uid]) return 0;
     const v = prefs.vol[uid];
-    return v == null ? 1 : v;
+    if (v != null) return v;
+    return musicVol[uid] != null ? musicVol[uid] : 1;
   }
   function setVolume(uid, v) {
     if (Math.abs(v - 1) < 0.01) delete prefs.vol[uid]; else prefs.vol[uid] = Math.round(v * 100) / 100;
@@ -79,11 +84,14 @@
 
   // ---------- Verbinden ----------
 
-  async function join(room) {
+  async function join(room, moved) {
     const why = unsupported();
     if (why) { deps.toast(why); return; }
     if (S && S.room === room) return;
     if (deps.requireName && !deps.requireName()) return;
+    if (!moved && deps.isLocked && deps.isLocked(room)) { // Passwort zuerst
+      if (!(await deps.unlock(room))) return;
+    }
     await leave(true);
     wantRoom = room;
     retries = 0;
@@ -133,6 +141,20 @@
         screenOK: () => S === mine && !!mine.screenOK,
       });
     }
+    if (window.UCNGVideo) {
+      UCNGVideo.attach({
+        cfg: j, toast: deps.toast, render: () => { if (S === mine) renderBar(); },
+        ws: () => (S === mine ? mine.ws : null),
+        sendText: (o) => { if (S === mine && ws.readyState === 1) ws.send(JSON.stringify(o)); },
+        sendBin: (b) => { if (S === mine && ws.readyState === 1) ws.send(b); },
+        peer: (idx) => mine.peers.get(idx),
+        peers: () => [...mine.peers.values()],
+        you: () => mine.you,
+        videoOK: () => S === mine && !!mine.videoOK,
+        speaking: (uid) => speaking.has(uid),
+        prefs: () => prefs, savePrefs,
+      });
+    }
     ws.onopen = () => ws.send(JSON.stringify({ t: "auth", ticket: j.ticket }));
     ws.onmessage = (e) => { if (S === mine) onMessage(e.data); };
     ws.onclose = (e) => { if (S === mine) onClose(e); };
@@ -141,7 +163,9 @@
   function onMessage(data) {
     if (typeof data !== "string") {
       const b = new Uint8Array(data);
-      if (b[0] === 2) { if (window.UCNGScreen) UCNGScreen.onVideo(b); } else onAudio(b);
+      if (b[0] === 2) { if (window.UCNGScreen) UCNGScreen.onVideo(b); }
+      else if (b[0] === 3) { if (window.UCNGVideo) UCNGVideo.onCam(b); }
+      else onAudio(b);
       return;
     }
     let m;
@@ -150,8 +174,9 @@
       case "hello":
         S.status = "connected";
         S.you = m.you;
-        S.speak = m.speak; S.muted = m.muted; S.screenOK = !!m.screen;
+        S.speak = m.speak; S.muted = m.muted; S.screenOK = !!m.screen; S.videoOK = !!m.video;
         retries = 0;
+        if (window.UCNGVideo) UCNGVideo.setFeatured(m.featured);
         for (const p of m.peers || []) upsertPeer(p);
         sendState();
         if (S.speak) startMic();
@@ -160,8 +185,14 @@
         S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) }));
         deps.toast(t("voice.joined", { room: S.room }));
         break;
-      case "peer": upsertPeer(m.peer); if (window.UCNGScreen) UCNGScreen.onPeer(m.peer); break;
-      case "leave": removePeer(m.i); if (window.UCNGScreen) UCNGScreen.onLeave(m.i); break;
+      case "peer": upsertPeer(m.peer); if (window.UCNGScreen) UCNGScreen.onPeer(m.peer); if (window.UCNGVideo) UCNGVideo.onPeer(m.peer); break;
+      case "leave": removePeer(m.i); if (window.UCNGScreen) UCNGScreen.onLeave(m.i); if (window.UCNGVideo) UCNGVideo.onLeave(m.i); break;
+      case "cam": case "layer": case "camkey": case "featured": case "degraded":
+        if (window.UCNGVideo) UCNGVideo.onText(m);
+        break;
+      case "move": // vom Team in einen anderen Sprachkanal geschickt
+        if (m.room) { deps.toast(t("voice.moved", { room: m.room })); const to = m.room; setTimeout(() => { leave(true).then(() => join(to, true)); }, 50); }
+        break;
       case "share": case "watch": case "keyreq":
         if (window.UCNGScreen) UCNGScreen.onText(m);
         break;
@@ -169,7 +200,9 @@
         if (m.speak && !S.speak) deps.toast(t("voice.you_can_speak"));
         if (!m.speak && S.speak) deps.toast(t("voice.you_cannot_speak"));
         if (m.muted && !S.muted) deps.toast(t("voice.you_were_muted"));
-        S.speak = m.speak; S.muted = m.muted; S.hand = m.hand; S.screenOK = !!m.screen;
+        S.speak = m.speak; S.muted = m.muted; S.hand = m.hand; S.screenOK = !!m.screen; S.videoOK = !!m.video;
+        if (m.mod != null) S.moderate = !!m.mod;
+        if (!m.video && window.UCNGVideo && UCNGVideo.on) UCNGVideo.stopCam();
         if (S.peers.has(S.you)) Object.assign(S.peers.get(S.you), { s: m.speak, m: m.muted, h: m.hand }); // eigene Zeile
         if (S.speak) startMic(); else stopMic();
         break;
@@ -214,6 +247,7 @@
     S = null;
     clearInterval(s.pinger);
     if (window.UCNGScreen) UCNGScreen.detach();
+    if (window.UCNGVideo) UCNGVideo.detach();
     if (s.ws) { s.ws.onclose = null; s.ws.onmessage = null; try { s.ws.close(1000); } catch { /* egal */ } }
     stopMicOf(s);
     for (const d of (s.decoders || new Map()).values()) try { d.close(); } catch { /* egal */ }
@@ -232,6 +266,7 @@
   // ---------- Teilnehmer ----------
 
   function upsertPeer(p) {
+    if (p.mu) musicVol[p.u] = p.mu / 100;
     const old = S.peers.get(p.i);
     S.peers.set(p.i, p);
     if (!old && S.play) S.play.port.postMessage({ type: "gain", idx: p.i, gain: gainFor(p.u) });
@@ -355,7 +390,8 @@
     let d = S.decoders.get(idx);
     if (d && d.state !== "closed") return d;
     const s = S;
-    const channels = s.cfg.stereo ? 2 : 1;
+    const pp = S.peers.get(idx);
+    const channels = s.cfg.stereo || (pp && pp.mu) ? 2 : 1; // Musik von Bots in Stereo
     d = new AudioDecoder({
       output: (ad) => {
         if (S !== s || !s.play) { ad.close(); return; }
@@ -456,6 +492,14 @@
     catch (e) { deps.toast(e.message); }
   }
 
+  // Team: Person in einen anderen Sprachkanal schicken
+  async function moveUser(user, name, from, to) {
+    try {
+      await deps.api(`/api/voice/${encodeURIComponent(from)}/move`, { method: "POST", body: JSON.stringify({ userId: user, to }) });
+      deps.toast(t("voice.moved_other", { name, room: to }));
+    } catch (e) { deps.toast(e.message); }
+  }
+
   // ---------- Darstellung ----------
 
   function myPeer() { return S && S.you ? S.peers.get(S.you) : null; }
@@ -470,8 +514,22 @@
     li.classList.add("voice-room");
     const a = li.querySelector(".room-row > a");
     const hash = a && a.querySelector(".hash");
-    if (hash) { hash.innerHTML = ICON.speaker; hash.classList.add("voice-icon"); }
+    if (hash) { hash.innerHTML = r.voice.video ? ICON.cam : ICON.speaker; hash.classList.add("voice-icon"); }
     const row = li.querySelector(".room-row");
+    if (deps.canModerate && deps.canModerate()) { // Ziel für Drag-and-Drop
+      li.addEventListener("dragover", (e) => {
+        if (!e.dataTransfer.types.includes("text/x-ucng-voice")) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = "move"; li.classList.add("drop-target");
+      });
+      li.addEventListener("dragleave", (e) => { if (!li.contains(e.relatedTarget)) li.classList.remove("drop-target"); });
+      li.addEventListener("drop", (e) => {
+        li.classList.remove("drop-target");
+        let d;
+        try { d = JSON.parse(e.dataTransfer.getData("text/x-ucng-voice")); } catch { return; }
+        e.preventDefault();
+        if (d && d.from !== r.name) moveUser(d.user, d.name, d.from, r.name);
+      });
+    }
     const here = S && S.room === r.name;
     const b = deps.iconBtn("voice-join" + (here ? " on" : ""), here ? t("voice.leave") : t("voice.join_room", { room: r.name }), here ? ICON.leave : ICON.join);
     b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); here ? leave() : join(r.name); });
@@ -491,12 +549,23 @@
   function peerItem(room, p, cfg) {
     const li = deps.h("li", "voice-peer");
     li.dataset.user = p.u;
+    if (deps.canModerate && deps.canModerate() && !p.mu) { // Team: per Drag-and-Drop in einen anderen Sprachkanal
+      li.draggable = true;
+      li.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/x-ucng-voice", JSON.stringify({ user: p.u, name: p.n, from: room }));
+        e.dataTransfer.effectAllowed = "move";
+        document.body.classList.add("voice-dragging");
+      });
+      li.addEventListener("dragend", () => document.body.classList.remove("voice-dragging"));
+    }
     const b = deps.h("button", "voice-peer-btn");
     b.type = "button";
     const av = deps.avatar(p.n, p.u);
     av.classList.add("voice-av");
     b.append(av, deps.h("span", "voice-name", p.n));
     const flags = deps.h("span", "voice-flags");
+    if (p.mu) flags.append(flag(ICON.music, t("voice.music_bot"), "music"));
+    if (p.cm) flags.append(flag(ICON.cam, t("voice.camera_on"), "cam"));
     if (p.h) flags.append(flag(ICON.hand, t("voice.hand_raised"), "hand"));
     if (cfg && cfg.stage && p.s) flags.append(flag(ICON.stage, t("voice.on_stage"), "stage"));
     if (p.m) flags.append(flag(ICON.micOff, t("voice.muted_by_team"), "srv"));
@@ -578,9 +647,13 @@
     }
     if (here && !isMe) {
       acts.push(p.m ? [t("voice.unmute"), "unmute"] : [t("voice.server_mute"), "mute"]);
+      if (S.cfg && S.cfg.videoOn) acts.push(p.co || p.cm ? [t("voice.video_stop_other"), "stopvideo"] : [t("voice.video_allow"), "allowvideo"]);
       if (S.cfg && S.cfg.screenOn) acts.push(p.so || p.sc ? [t("voice.screen_stop_other"), "stopscreen"] : [t("voice.screen_allow"), "allowscreen"]);
       if (S.stage) acts.push(p.s ? [t("voice.revoke_speak"), "nospeak"] : [t("voice.grant_speak"), "speak"]);
       if (p.h) acts.push([t("voice.lower_hand"), "lowerhand"]);
+      if (deps.canModerate && deps.canModerate() && deps.voiceRooms) {
+        for (const to of deps.voiceRooms()) if (to !== room) acts.push([t("voice.move_to", { room: to }), "", "", () => moveUser(p.u, p.n, room, to)]);
+      }
       acts.push([t("voice.kick"), "kick", "danger"]);
     } else if (here && isMe && S.stage && !p.s) {
       acts.push([t("voice.grant_speak"), "speak"]);
@@ -623,20 +696,19 @@
     st.addEventListener("click", () => deps.switchRoom(S.room));
     head.append(st);
     const btns = deps.h("div", "voice-bar-btns");
-    const canTalk = S.speak && !S.muted;
-    const mic = deps.iconBtn("vb" + (selfMute || deaf || !canTalk ? " off" : ""), selfMute ? t("voice.unmute_me") : t("voice.mute_me"), selfMute || deaf || !canTalk ? ICON.micOff : ICON.mic);
-    mic.setAttribute("aria-pressed", String(selfMute));
-    if (!canTalk) { mic.disabled = true; mic.title = S.muted ? t("voice.muted_by_team") : t("voice.listen_only"); }
-    mic.addEventListener("click", toggleMute);
-    const hd = deps.iconBtn("vb" + (deaf ? " off" : ""), deaf ? t("voice.undeafen") : t("voice.deafen"), deaf ? ICON.headOff : ICON.head);
-    hd.setAttribute("aria-pressed", String(deaf));
-    hd.addEventListener("click", toggleDeaf);
-    btns.append(mic, hd);
+    const canTalk = S.speak && !S.muted; // Mikrofon und Kopfhörer sitzen in der Nutzerleiste darunter
     if (S.stage && !S.speak) {
       const hb = deps.iconBtn("vb" + (S.hand ? " on" : ""), S.hand ? t("voice.lower_my_hand") : t("voice.raise_hand"), ICON.hand);
       hb.setAttribute("aria-pressed", String(!!S.hand));
       hb.addEventListener("click", toggleHand);
       btns.append(hb);
+    }
+    if (S.videoOK && window.UCNGVideo && UCNGVideo.supported()) {
+      const on = UCNGVideo.on;
+      const cb = deps.iconBtn("vb" + (on ? " sharing" : ""), on ? t("voice.camera_off") : t("voice.camera_start"), on ? ICON.camOff : ICON.cam);
+      cb.setAttribute("aria-pressed", String(on));
+      cb.addEventListener("click", () => UCNGVideo.toggleCam());
+      btns.append(cb);
     }
     if (S.screenOK && window.UCNGScreen && UCNGScreen.supported()) {
       const on = UCNGScreen.sharing;
@@ -693,6 +765,7 @@
     };
     fill(inSel, "audioinput", prefs.input);
     fill(outSel, "audiooutput", prefs.output);
+    if ($("voiceCamera")) fill($("voiceCamera"), "videoinput", prefs.camera || "");
     $("voiceOutputRow").hidden = !("setSinkId" in AudioContext.prototype);
     $("voiceModeVad").checked = prefs.mode !== "ptt";
     $("voiceModePtt").checked = prefs.mode === "ptt";
@@ -753,6 +826,7 @@
       if (testStream) { stopTestMeter(); startTestMeter(); }
       restartMic();
     });
+    if ($("voiceCamera")) $("voiceCamera").addEventListener("change", (e) => { prefs.camera = e.target.value; savePrefs(); });
     $("voiceOutput").addEventListener("change", (e) => {
       prefs.output = e.target.value; savePrefs();
       if (S && S.ctx && S.ctx.setSinkId) S.ctx.setSinkId(prefs.output).catch(() => deps.toast(t("voice.output_failed")));
@@ -797,6 +871,7 @@
     },
     // Ereignis „voice“ aus dem Live-Stream
     onEvent(ev) {
+      for (const p of ev.voice || []) if (p.mu) musicVol[p.u] = p.mu / 100;
       roomPeers[ev.room] = ev.voice || [];
       if (!roomPeers[ev.room].length) delete roomPeers[ev.room];
       deps.render();
@@ -805,5 +880,11 @@
     join, leave,
     get room() { return S ? S.room : ""; },
     refreshGains() { applyGains(); },
+    // Nutzerleiste (immer sichtbar, wie bei Discord): gilt auch vor dem Beitreten
+    toggleMute, toggleDeaf, openSettings,
+    get state() {
+      return { selfMute, deaf, connected: !!(S && S.status === "connected"), canTalk: !S || (S.speak && !S.muted), serverMuted: !!(S && S.muted), listenOnly: !!(S && !S.speak) };
+    },
+    icons: ICON,
   };
 })();

@@ -47,7 +47,29 @@ type VoiceConfig struct {
 	ScreenRoles   []string `json:"screenRoles,omitempty"`
 	ScreenQuality string   `json:"screenQuality,omitempty"` // text, standard, motion
 	MaxScreens    int      `json:"maxScreens,omitempty"`    // gleichzeitige Freigaben
+	// Kamera (Konferenz): "" (aus), "speakers" oder "roles" (Team und VideoRoles)
+	Video        string   `json:"video,omitempty"`
+	VideoRoles   []string `json:"videoRoles,omitempty"`
+	VideoQuality string   `json:"videoQuality,omitempty"` // sd, hd, fhd (großes Bild)
+	Featured     int      `json:"featured,omitempty"`     // so viele Sprecher groß (1–9)
+	BotMusic     bool     `json:"botMusic,omitempty"`     // Bots dürfen Musik einspielen
 }
+
+// videoPreset: Qualität des großen Kamerabildes; Miniansichten haben immer thumbPreset.
+type videoPreset struct {
+	Kbps   int `json:"kbps"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	FPS    int `json:"fps"`
+}
+
+var videoPresets = map[string]videoPreset{
+	"sd":  {Kbps: 600, Width: 640, Height: 360, FPS: 24},
+	"hd":  {Kbps: 1500, Width: 1280, Height: 720, FPS: 30},
+	"fhd": {Kbps: 2800, Width: 1920, Height: 1080, FPS: 30},
+}
+
+var thumbPreset = videoPreset{Kbps: 150, Width: 320, Height: 180, FPS: 12}
 
 // screenPreset: Qualität einer Bildschirmfreigabe.
 type screenPreset struct {
@@ -108,6 +130,8 @@ var (
 	ErrVoiceBusy    = errors.New("Der Sprach-Server ist gerade ausgelastet – bitte später noch einmal")
 	ErrScreenMode   = errors.New("Bildschirmfreigabe muss leer, speakers oder roles sein")
 	ErrScreenPreset = errors.New("Unbekannte Qualität für die Bildschirmfreigabe")
+	ErrVideoMode    = errors.New("Kamera muss leer, speakers oder roles sein")
+	ErrVideoPreset  = errors.New("Unbekannte Qualität für die Kamera")
 )
 
 // validVoice prüft die Einstellungen eines Sprachkanals (nil = nur Text) und ergänzt Standards.
@@ -150,6 +174,31 @@ func (h *Hub) validVoice(in *VoiceConfig) (*VoiceConfig, error) {
 	default:
 		return nil, ErrScreenMode
 	}
+	switch v.Video {
+	case "off":
+		v.Video = ScreenOff
+	case ScreenOff, ScreenSpeakers, ScreenRoles:
+	default:
+		return nil, ErrVideoMode
+	}
+	if v.Video == ScreenOff {
+		v.VideoRoles, v.VideoQuality, v.Featured = nil, "", 0
+	} else {
+		if v.VideoQuality == "" {
+			v.VideoQuality = "hd"
+		}
+		if _, ok := videoPresets[v.VideoQuality]; !ok {
+			return nil, ErrVideoPreset
+		}
+		if v.Featured <= 0 {
+			v.Featured = 1
+		}
+		v.Featured = min(v.Featured, 9)
+		v.VideoRoles = h.roles.Filter(v.VideoRoles)
+		if len(v.VideoRoles) == 0 {
+			v.VideoRoles = nil
+		}
+	}
 	if v.Screen == ScreenOff {
 		v.ScreenRoles, v.ScreenQuality, v.MaxScreens = nil, "", 0
 		return &v, nil
@@ -190,6 +239,12 @@ func (v *VoiceConfig) describe() string {
 	if v.Screen != ScreenOff {
 		s += fmt.Sprintf(", Bildschirm: %s (%s, %d)", v.Screen, v.ScreenQuality, v.MaxScreens)
 	}
+	if v.Video != ScreenOff {
+		s += fmt.Sprintf(", Kamera: %s (%s, %d groß)", v.Video, v.VideoQuality, v.Featured)
+	}
+	if v.BotMusic {
+		s += ", Musik von Bots"
+	}
 	return s
 }
 
@@ -197,15 +252,33 @@ func (v *VoiceConfig) preset() voicePreset { return voicePresets[v.Preset] }
 
 func (v *VoiceConfig) screenPreset() screenPreset { return screenPresets[v.ScreenQuality] }
 
+func (v *VoiceConfig) videoPreset() videoPreset { return videoPresets[v.VideoQuality] }
+
 // voiceAccess: Einstellungen und Zugang eines Kanals für a.
 func (h *Hub) voiceAccess(name string, a *Access) (cfg *VoiceConfig, exists, read, write bool) {
+	acc := h.voiceAccessFull(name, a)
+	return acc.Cfg, acc.Exists, acc.Read, acc.Write
+}
+
+type voiceRoomAccess struct {
+	Cfg                      *VoiceConfig
+	Exists, See, Read, Write bool
+	Locked                   bool   // Passwort fehlt noch
+	Owner                    string // Besitzer eines temporären Kanals
+}
+
+func (h *Hub) voiceAccessFull(name string, a *Access) voiceRoomAccess {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	r, ok := h.rooms[name]
 	if !ok || r.kind != "" {
-		return nil, false, false, false
+		return voiceRoomAccess{}
 	}
-	return r.voice, true, r.canRead(a), r.canWrite(a)
+	acc := voiceRoomAccess{Cfg: r.voice, Exists: true, See: r.canSee(a), Read: r.canRead(a), Write: r.canWrite(a), Locked: !r.passOK(a)}
+	if r.temp != nil {
+		acc.Owner = r.temp.Owner
+	}
+	return acc
 }
 
 // voiceRoomsFor: Sprachkanäle, die a sehen darf.
@@ -214,7 +287,7 @@ func (h *Hub) voiceRoomsFor(a *Access) []string {
 	defer h.mu.Unlock()
 	var out []string
 	for name, r := range h.rooms {
-		if r.kind == "" && r.voice != nil && r.canRead(a) {
+		if r.kind == "" && r.voice != nil && r.canSee(a) {
 			out = append(out, name)
 		}
 	}
@@ -296,6 +369,8 @@ type voiceRoom struct {
 	muted    map[string]bool      // vom Team stummgeschaltet (bleibt beim erneuten Beitreten)
 	kicked   map[string]time.Time // entfernt: Wiedereintritt erst danach
 	noScreen map[string]bool      // vom Team: darf hier nicht (mehr) teilen
+	noVideo  map[string]bool      // vom Team: Kamera hier gesperrt
+	movedIn  map[string]time.Time // vom Team hierher verschoben: Zutritt bis (verlängert, solange drin)
 }
 
 type voiceAgent struct {
@@ -349,7 +424,8 @@ func (v *voiceMgr) Close() {
 func (v *voiceMgr) room(name string) *voiceRoom {
 	st := v.rooms[name]
 	if st == nil {
-		st = &voiceRoom{grants: map[string]bool{}, muted: map[string]bool{}, kicked: map[string]time.Time{}, noScreen: map[string]bool{}}
+		st = &voiceRoom{grants: map[string]bool{}, muted: map[string]bool{}, kicked: map[string]time.Time{}, noScreen: map[string]bool{},
+			noVideo: map[string]bool{}, movedIn: map[string]time.Time{}}
 		v.rooms[name] = st
 	}
 	return st
@@ -372,6 +448,11 @@ func (v *voiceMgr) setPeers(relay, name string, peers []VoicePeer) {
 		return
 	}
 	st.peers = append([]VoicePeer(nil), peers...)
+	for _, p := range peers { // Verschobene: Zutritt gilt, solange sie drin sind
+		if _, ok := st.movedIn[p.User]; ok {
+			st.movedIn[p.User] = time.Now().Add(2 * time.Minute)
+		}
+	}
 	if len(peers) == 0 {
 		clear(st.grants) // Freischaltungen der Bühne gelten bis der Kanal leer ist
 	}
@@ -418,12 +499,17 @@ func (v *voiceMgr) janitor() {
 			}
 		}
 		for name, st := range v.rooms {
+			for u, until := range st.movedIn {
+				if now.After(until) {
+					delete(st.movedIn, u)
+				}
+			}
 			for u, until := range st.kicked {
 				if now.After(until) {
 					delete(st.kicked, u)
 				}
 			}
-			if len(st.peers) == 0 && len(st.muted) == 0 && len(st.kicked) == 0 && len(st.noScreen) == 0 {
+			if len(st.peers) == 0 && len(st.muted) == 0 && len(st.kicked) == 0 && len(st.noScreen) == 0 && len(st.noVideo) == 0 && len(st.movedIn) == 0 {
 				delete(v.rooms, name)
 			}
 		}
@@ -455,18 +541,33 @@ type voiceDecision struct {
 	Muted  bool
 	Guest  bool
 	Screen bool // darf den Bildschirm teilen
+	Video  bool // darf die Kamera nutzen
+	Mod    bool // moderiert hier (Team, Recht „Stummschalten“ oder Besitzer des temporären Kanals)
+	Owner  bool
 }
 
 // decide: Darf w dem Sprachkanal beitreten, sprechen, ist w stummgeschaltet?
 func (v *voiceMgr) decide(name string, w voiceWho) (voiceDecision, error) {
 	var d voiceDecision
-	cfg, exists, read, write := v.s.hub.voiceAccess(name, w.access())
-	if !exists || !read {
+	acc := v.s.hub.voiceAccessFull(name, w.access())
+	v.mu.Lock()
+	moved := false
+	if st := v.rooms[name]; st != nil {
+		_, moved = st.movedIn[w.ID]
+	}
+	v.mu.Unlock()
+	cfg, write := acc.Cfg, acc.Write || moved
+	if !acc.Exists || (!acc.Read && !moved) {
+		if acc.See && acc.Locked {
+			return d, ErrRoomNeedsPass
+		}
 		return d, ErrNoRoom
 	}
 	if cfg == nil {
 		return d, ErrNoVoice
 	}
+	d.Owner = acc.Owner != "" && acc.Owner == w.ID
+	d.Mod = v.canModerate(w) || d.Owner
 	d.Cfg = *cfg
 	ip := w.IPHash
 	if w.Team {
@@ -478,7 +579,7 @@ func (v *voiceMgr) decide(name string, w voiceWho) (voiceDecision, error) {
 		}
 		d.Muted = true
 	}
-	d.Guest = w.guest()
+	d.Guest = w.guest() && !moved
 	if d.Guest && cfg.Guests == VoiceGuestsNone {
 		return d, ErrVoiceNoGuest
 	}
@@ -487,7 +588,7 @@ func (v *voiceMgr) decide(name string, w voiceWho) (voiceDecision, error) {
 		d.Speak = false
 	}
 	if cfg.Stage {
-		d.Speak = w.Team || intersects(cfg.StageRoles, w.Roles)
+		d.Speak = w.Team || d.Owner || intersects(cfg.StageRoles, w.Roles)
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -507,10 +608,21 @@ func (v *voiceMgr) decide(name string, w voiceWho) (voiceDecision, error) {
 	case ScreenSpeakers:
 		d.Screen = d.Speak && !d.Muted
 	case ScreenRoles:
-		d.Screen = d.Speak && !d.Muted && (w.Team || intersects(cfg.ScreenRoles, w.Roles))
+		d.Screen = d.Speak && !d.Muted && (w.Team || d.Owner || intersects(cfg.ScreenRoles, w.Roles))
 	}
-	if st := v.rooms[name]; st != nil && st.noScreen[w.ID] {
-		d.Screen = false
+	switch cfg.Video {
+	case ScreenSpeakers:
+		d.Video = d.Speak && !d.Muted
+	case ScreenRoles:
+		d.Video = d.Speak && !d.Muted && (w.Team || d.Owner || intersects(cfg.VideoRoles, w.Roles))
+	}
+	if st := v.rooms[name]; st != nil {
+		if st.noScreen[w.ID] {
+			d.Screen = false
+		}
+		if st.noVideo[w.ID] {
+			d.Video = false
+		}
 	}
 	return d, nil
 }
@@ -536,6 +648,9 @@ func (s *Server) voiceWhoOf(me Identity, ipHash string) voiceWho {
 // reconcile gleicht die Rechte einer Person in einem Kanal ab (nach Sperren, Rollen- oder
 // Kanaländerungen): ohne Zutritt → entfernen, sonst Sprechen/Stumm anpassen.
 func (v *voiceMgr) reconcile(room string, p VoicePeer) {
+	if strings.HasPrefix(p.User, "bot:") { // Musik eines Bots: eigener Ablauf (music.go)
+		return
+	}
 	w, ok := v.whoByID(p.User)
 	if !ok {
 		v.control(room, p.User, "kick", false, "session")
@@ -555,6 +670,12 @@ func (v *voiceMgr) reconcile(room string, p VoicePeer) {
 	if d.Screen != p.ScreenOK {
 		v.control(room, p.User, "screen", d.Screen, "")
 	}
+	if d.Video != p.CamOK {
+		v.control(room, p.User, "video", d.Video, "")
+	}
+	if d.Mod != p.Mod {
+		v.control(room, p.User, "mod", d.Mod, "")
+	}
 }
 
 // byeCode: Grund fürs Entfernen als Kennung (der Browser zeigt den Text in seiner Sprache).
@@ -569,6 +690,8 @@ func byeCode(err error) string {
 		return "novoice"
 	case errors.Is(err, ErrVoiceKicked):
 		return "kicked"
+	case errors.Is(err, ErrRoomNeedsPass):
+		return "password"
 	}
 	return "noaccess"
 }
@@ -748,7 +871,7 @@ func (s *Server) voiceConnectSrc(r *http.Request) string {
 func voiceStatus(err error) int {
 	var se *SanctionError
 	switch {
-	case errors.As(err, &se), errors.Is(err, ErrVoiceNoGuest), errors.Is(err, ErrVoiceKicked):
+	case errors.As(err, &se), errors.Is(err, ErrVoiceNoGuest), errors.Is(err, ErrVoiceKicked), errors.Is(err, ErrRoomNeedsPass):
 		return http.StatusForbidden
 	case errors.Is(err, ErrNoRoom), errors.Is(err, ErrNoVoice), errors.Is(err, ErrVoiceOff):
 		return http.StatusNotFound
@@ -813,11 +936,12 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 			v.control(rp.room, me.ID, "kick", false, "moved")
 		}
 	}
-	pr, sp := d.Cfg.preset(), d.Cfg.screenPreset()
+	pr, sp, vp := d.Cfg.preset(), d.Cfg.screenPreset(), d.Cfg.videoPreset()
 	ticket := voicerelay.SignTicket(v.priv, voicerelay.Ticket{
 		Channel: room, User: me.ID, Name: me.Name, Speak: d.Speak, Muted: d.Muted,
 		Bitrate: pr.Bitrate, Stereo: pr.Stereo, MaxSpeakers: d.Cfg.MaxSpeakers, MaxPeers: d.Cfg.MaxPeers,
 		Screen: d.Screen, ScreenKbps: sp.Kbps, MaxScreens: d.Cfg.MaxScreens,
+		Video: d.Video, VideoKbps: vp.Kbps, ThumbKbps: thumbPreset.Kbps, Featured: d.Cfg.Featured, ModUser: d.Mod,
 	}, time.Now())
 	u := choice.url
 	if u == "" {
@@ -826,9 +950,12 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"url": u, "ticket": ticket, "preset": d.Cfg.Preset, "bitrate": pr.Bitrate, "stereo": pr.Stereo, "music": pr.Music,
 		"maxSpeakers": d.Cfg.MaxSpeakers, "maxPeers": d.Cfg.MaxPeers, "speak": d.Speak, "muted": d.Muted,
-		"stage": d.Cfg.Stage, "guest": d.Guest, "moderate": v.canModerate(who),
+		"stage": d.Cfg.Stage, "guest": d.Guest, "moderate": d.Mod,
 		"screen": d.Screen, "screenOn": d.Cfg.Screen != ScreenOff, "screenKbps": sp.Kbps, "screenFps": sp.FPS, "screenHeight": sp.Height,
+		"video": d.Video, "videoOn": d.Cfg.Video != ScreenOff, "videoPreset": vp, "thumbPreset": thumbPreset,
+		"featured": d.Cfg.Featured, "owner": d.Owner,
 	})
+	_ = who
 }
 
 // GET /api/voice/ws – eingebauter Relay (WebSocket). Nur von der eigenen Seite.
@@ -889,7 +1016,8 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 	}
 	who := s.voiceWhoOf(me, "")
 	room := NormRoom(r.PathValue("room"))
-	if cfg, exists, read, _ := s.hub.voiceAccess(room, who.access()); !exists || !read || cfg == nil {
+	acc := s.hub.voiceAccessFull(room, who.access())
+	if !acc.Exists || !acc.Read || acc.Cfg == nil {
 		voiceFail(w, ErrNoVoice)
 		return
 	}
@@ -900,7 +1028,8 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if in.Action != "lowerhand" && !v.canModerate(who) || in.Action == "lowerhand" && in.UserID != me.ID && !v.canModerate(who) {
+	canMod := v.canModerate(who) || (acc.Owner != "" && acc.Owner == me.ID) // Besitzer eines temporären Kanals
+	if in.Action != "lowerhand" && !canMod || in.Action == "lowerhand" && in.UserID != me.ID && !canMod {
 		fail(w, ErrNoPerm)
 		return
 	}
@@ -931,6 +1060,10 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 		st.noScreen[in.UserID] = true
 	case "allowscreen":
 		delete(st.noScreen, in.UserID)
+	case "stopvideo":
+		st.noVideo[in.UserID] = true
+	case "allowvideo":
+		delete(st.noVideo, in.UserID)
 	case "lowerhand":
 	default:
 		v.mu.Unlock()
@@ -961,6 +1094,7 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 		if tw, ok := v.whoByID(in.UserID); ok {
 			if d, err := v.decide(room, tw); err == nil {
 				v.control(room, in.UserID, "screen", d.Screen, "")
+				v.control(room, in.UserID, "video", d.Video, "")
 			}
 		}
 	}
@@ -1100,6 +1234,68 @@ func (s *Server) voiceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/voice/ws", s.handleVoiceWS)
 	mux.HandleFunc("POST /api/voice/{room}/join", s.handleVoiceJoin)
 	mux.HandleFunc("POST /api/voice/{room}/mod", s.handleVoiceMod)
+	mux.HandleFunc("POST /api/voice/{room}/move", s.handleVoiceMove)
 	mux.HandleFunc("POST /api/voice/agents/report", s.handleVoiceAgentReport)
 	mux.HandleFunc("GET /api/admin/voice", s.requireMod(s.handleAdminVoice))
+}
+
+// POST /api/voice/{room}/move {"userId": "…", "to": "kanal"} – Person in einen anderen Sprachkanal
+// schicken (Team und Recht „Stummschalten“). Sie darf dort hinein, auch ohne Zugang, solange sie drin ist.
+func (s *Server) handleVoiceMove(w http.ResponseWriter, r *http.Request) {
+	v := s.voice
+	if v == nil {
+		voiceFail(w, ErrVoiceOff)
+		return
+	}
+	me, ok := s.users.Lookup(bearer(r))
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, ErrNoSession.Error())
+		return
+	}
+	who := s.voiceWhoOf(me, "")
+	if !v.canModerate(who) {
+		fail(w, ErrNoPerm)
+		return
+	}
+	var in struct {
+		UserID string `json:"userId"`
+		To     string `json:"to"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	room, to := NormRoom(r.PathValue("room")), NormRoom(in.To)
+	if room == to {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	if acc := s.hub.voiceAccessFull(to, who.access()); !acc.Exists || acc.Cfg == nil {
+		voiceFail(w, ErrNoVoice)
+		return
+	}
+	target, ok := s.users.Get(in.UserID)
+	if !ok {
+		fail(w, ErrNoUser)
+		return
+	}
+	if in.UserID != me.ID && (target.Team || s.hub.Roles().PermsOf(target.Roles, false).Mute) && !me.Team {
+		writeErr(w, http.StatusForbidden, "Team-Mitglieder und andere Moderierende kann nur das Team verschieben")
+		return
+	}
+	present := false
+	for _, p := range v.Peers(room) {
+		present = present || p.User == in.UserID
+	}
+	if !present {
+		writeErr(w, http.StatusNotFound, "Diese Person ist nicht in diesem Sprachkanal")
+		return
+	}
+	v.mu.Lock()
+	v.room(to).movedIn[in.UserID] = time.Now().Add(2 * time.Minute)
+	v.mu.Unlock()
+	v.control(room, in.UserID, "move", false, to)
+	actor, display := chatActor(me)
+	s.hub.AuditLog().Add(AuditEntry{Actor: actor, Display: display, Action: "voice.move", Room: to,
+		UserID: in.UserID, UserName: target.Name, Detail: "aus #" + room})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

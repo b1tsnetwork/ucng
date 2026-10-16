@@ -2,7 +2,7 @@
 
 # UCNG – Unified Chat Network Gateway
 
-Echtzeit-Chat in Go – mit vollständiger Weboberfläche und einem einbettbaren Widget (JS + CSS) für beliebige andere Webseiten. Instanzen verbinden sich über Föderation und Beacons zu einem Netz („Unified Chat Network“); jede Instanz ist dabei das Tor („Gateway“) für ihre Mitglieder. Früher hieß das Projekt *GoChat* – siehe [Name und frühere Bezeichnungen](#name-und-frühere-bezeichnungen).
+Echtzeit-Chat in Go – mit vollständiger Weboberfläche und einem einbettbaren Widget (JS + CSS) für beliebige andere Webseiten. Instanzen verbinden sich über Föderation und Beacons zu einem Netz („Unified Chat Network“).
 
 - **Zwei Betriebsarten in einem Programm** (`MODE=simple|hosted`): *simple* für Intranet und private Nutzung (Namen ohne Konto), *hosted* für öffentlich gehostete Chats mit **Nutzerkonten, Zwei-Faktor-Anmeldung, Ende-zu-Ende-verschlüsselten Direktnachrichten und Föderation** (`name@andere-instanz`) – siehe [Modus „hosted“](#modus-hosted)
 - **Speicher wählbar:** Dateien (Standard), **SQLite** oder **MySQL/MariaDB** – beide Treiber in reinem Go, ohne cgo
@@ -540,7 +540,7 @@ Jeder Kanal kann zusätzlich ein **Sprachkanal** sein (Admin → Kanäle → Kan
 
 - **Beitreten:** Knopf *Beitreten* oben im Kanal oder das Kopfhörer-Symbol in der Kanalliste. Die Teilnehmer stehen unter dem Kanal in der Seitenleiste (grüner Ring = spricht gerade) – auch für alle, die nicht beigetreten sind.
 - **Selbst abmischen:** Ein Klick auf einen Namen öffnet einen Regler von 0 bis 200 % und *Für mich stummschalten*. Die Einstellung gilt nur im eigenen Browser und bleibt gespeichert; blockierte Personen sind automatisch stumm. Doppelklick auf den Regler setzt ihn auf 100 % zurück.
-- **Unten in der Seitenleiste:** Mikrofon aus/an, *Nichts hören*, Melden (Bühne), Einstellungen (Mikrofon, Ausgabegerät, Sprachaktivierung mit Empfindlichkeit oder Push-to-Talk mit frei wählbarer Taste, Rauschunterdrückung) und Verlassen.
+- **Unten in der Seitenleiste:** Mikrofon aus/an und *Nichts hören* in der Nutzerleiste; in der Sprachleiste darüber Kamera, Bildschirm teilen, Melden (Bühne), Einstellungen (Mikrofon, Ausgabegerät, Sprachaktivierung mit Empfindlichkeit oder Push-to-Talk mit frei wählbarer Taste, Rauschunterdrückung) und Verlassen.
 - **Moderation:** Team und Rollen mit dem Recht *Stummschalten* können Teilnehmer im Sprachkanal stummschalten, entfernen (Wiedereintritt nach einer Minute) und auf der Bühne das Rederecht geben oder entziehen. Jede Aktion steht im Protokoll. Eine Sperre im Chat wirkt sofort: *Ausschließen* beendet die Sprachverbindung, *Stummschalten* schaltet auch die Sprache stumm. Geänderte Rollen oder Kanalrechte werden sofort übernommen.
 
 Einstellungen je Kanal:
@@ -575,6 +575,46 @@ In Sprachkanälen kann der Bildschirm (oder ein Fenster, ein Tab) geteilt werden
 - **Auf den Sprach-Servern:** Bildschirmfreigaben laufen über denselben Relay wie der Sprachkanal – mit Agenten (`ucng-voice`) also auch dort, nicht über den Chat-Server.
 - **Moderation:** Team und Rollen mit dem Recht *Stummschalten* können eine Freigabe beenden und das Teilen für die Person sperren (*Bildschirmfreigabe beenden und sperren*) bzw. wieder erlauben. Wer stummgeschaltet ist, kann nicht teilen.
 - Ton des Bildschirms wird nicht übertragen. In Chrome und Edge läuft das Teilen auch weiter, wenn das Chat-Fenster im Hintergrund ist; in Firefox kann es dann ruckeln.
+
+### Konferenzraum (Kameras)
+
+Ein Sprachkanal wird zum Konferenzraum, wenn unter *Kameras (Konferenz)* etwas anderes als *aus* gewählt ist (*Wer sprechen darf* oder *Team und gewählte Rollen*). Dann gibt es Audio, Kameras und Bildschirmfreigabe im selben Kanal.
+
+- **Ansicht:** Alle aktiven Kameras stehen als Miniansicht in einer Leiste; die *x* zuletzt Sprechenden (*Sprecher groß*, Standard 1, höchstens 4) erscheinen groß. Wer gerade spricht, wandert nach zwei Sekunden nach vorn – ein kurzes Räuspern wirft niemanden aus dem großen Bild. Knopf oben im Kanal: Konferenz-Ansicht ein/aus, Doppelklick = Vollbild.
+- **Kamera einschalten:** Kamera-Knopf in der Sprachleiste; die Kamera wählt man in den Spracheinstellungen.
+- **Auflösung nach Bandbreite:** Jede Kamera sendet zwei Ebenen (Simulcast) – eine Miniansicht (320×180, 12 Bilder/s, 150 kbit/s) und das große Bild bis zur eingestellten Qualität. Der Relay schickt das große Bild nur von den gerade großen Personen. Der Browser passt die Bitrate laufend an die eigene Leitung an; kommt ein Zuschauer nicht hinterher, bekommt er 15 Sekunden lang nur Miniansichten (die Sprache bleibt).
+
+| *Großes Bild* | Auflösung | Bilder/s | höchstens |
+|---|---|---|---|
+| SD | 640×360 | 24 | 600 kbit/s |
+| HD (Standard) | 1280×720 | 30 | 1,5 Mbit/s |
+| Full HD | 1920×1080 | 30 | 2,8 Mbit/s |
+
+- **Moderation:** wie bei der Bildschirmfreigabe – *Kamera beenden* sperrt die Kamera der Person, *Kamera erlauben* hebt das auf.
+- Braucht WebCodecs (aktueller Chrome, Edge, Firefox ab 130, Safari ab 17). Am effizientesten sendet Chrome/Edge; andere Browser greifen auf ein Video-Element zurück und brauchen etwas mehr CPU. Ansichten anheften gibt es noch nicht – groß sind immer die zuletzt Sprechenden.
+
+### Personen verschieben
+
+Team und Rollen mit dem Recht *Stummschalten* ziehen eine Person in der Seitenleiste mit der Maus auf einen anderen Sprachkanal (Drag-and-drop) oder wählen im Menü der Person *Verschieben nach #…*. Das geht auch in Kanäle, die die Person sonst nicht betreten dürfte – die Freigabe gilt, solange sie drin bleibt (danach noch zwei Minuten für einen Wiedereintritt). Die Person bekommt einen Hinweis; jede Verschiebung steht im Protokoll. API: `POST /api/voice/{room}/move` mit `{"userId":"…","to":"zielkanal"}`.
+
+### Musik von Bots
+
+In Kanälen mit *Musik von Bots* darf ein Bot mit dem Recht **Musik** Musik einspielen. Sie läuft als eigene, leise Quelle (Standard 20 %) und belegt keinen Sprecherplatz; jede Person regelt die Lautstärke selbst (Klick auf den Bot in der Teilnehmerliste) – wie jeden anderen Teilnehmer. Musik zählt nicht als Person: Ein temporärer Kanal mit nur Musik darin wird trotzdem gelöscht.
+
+| Methode | Pfad | Beschreibung |
+|---|---|---|
+| `GET`  | `/api/bot/voice/{room}` | läuft gerade etwas? `{"playing":true,"track":{"title","volume","loop","lengthSeconds",…}}` |
+| `POST` | `/api/bot/voice/{room}/play?volume=20&loop=1&title=Lounge` | Ogg-Opus-Datei als Inhalt (höchstens 32 MB), ersetzt ein laufendes Stück; `volume` 1–100 |
+| `POST` | `/api/bot/voice/{room}/stop` | anhalten |
+
+```bash
+# MP3/FLAC/… in Ogg-Opus umwandeln (Stereo, 96 kbit/s, 20-ms-Rahmen)
+ffmpeg -i musik.mp3 -c:a libopus -b:a 96k -ac 2 -ar 48000 -frame_duration 20 musik.opus
+curl -X POST -H "Authorization: Bearer gcb_…" --data-binary @musik.opus \
+  "https://chat.example.org/api/bot/voice/lounge/play?volume=15&loop=1&title=Lounge"
+```
+
+Das Stück wird in Echtzeit vom Chat-Server an den Relay des Kanals geschickt (auch an einen Agenten). Achte auf die Rechte an der Musik.
 
 ### Mehr Sprach-Server (Agenten)
 
@@ -619,6 +659,10 @@ location /api/voice/ws {          # beim Agenten: location /ws
 ```
 
 Caddy leitet WebSockets ohne weitere Einstellung weiter.
+
+## Passwortgeschützte Kanäle
+
+Unter Admin → Kanäle → *Passwort* bekommt ein Kanal ein Passwort (4–64 Zeichen). Er bleibt in der Liste sichtbar (mit 🔑); wer hinein will, gibt das Passwort **einmal** ein – danach ist der Kanal für die Person entsperrt (🔓), auch auf anderen Geräten. Lesen, Schreiben und der Sprachkanal gehen erst danach. Das Team braucht kein Passwort. Wird das Passwort geändert oder entfernt, müssen alle es neu eingeben; Personen ohne Freigabe fliegen aus dem Kanal. Das Passwort wird nur als PBKDF2-Hash gespeichert; Versuche sind begrenzt (`POST /api/rooms/{room}/unlock`).
 
 ## Temporäre Kanäle
 
@@ -666,6 +710,20 @@ Unter **Ankündigungen** (nur Admins) planst du Nachrichten, die der Befehls-Bot
 - **Anpinnen:** Die neue Ankündigung wird angepinnt, die vorige desselben Plans gelöst – praktisch für „Nächstes Treffen: …“.
 - „Jetzt senden“ schickt sie sofort (zum Testen); die Liste zeigt den nächsten Termin, den letzten Versand und Fehler (z. B. gelöschter Kanal).
 - Verpasste Termine (Server war aus) werden bis zu 10 Minuten nachgeholt, danach übersprungen.
+
+### Einstellungen für Besitzer
+
+Wer einen temporären Kanal angelegt hat, stellt ihn über das Zahnrad oben im Kanal selbst ein – ohne Admin-Rechte: Name, Beschreibung, Passwort, Plätze im Sprachkanal (bis 99), Gäste, Bühne, Bildschirm teilen und Kameras. Dauerhaft machen kann ihn nur das Team. Im eigenen Sprachkanal darf der Besitzer außerdem moderieren (stummschalten, entfernen, auf der Bühne freischalten). API: `PATCH /api/rooms/{room}/settings`.
+
+## Bedienung
+
+Die Oberfläche orientiert sich an Discord:
+
+- **Rechtsklick** auf eine Nachricht (Antworten, Reagieren, Thread, Bearbeiten, Text/Link kopieren, Anpinnen, Melden, Löschen …), auf eine Person (Profil, Erwähnen, Direktnachricht, Blockieren, Stummschalten, ID kopieren) oder auf einen Kanal (als gelesen markieren, anpinnen, Link kopieren, Sprache beitreten/verlassen, einstellen). Umschalt+Rechtsklick öffnet das normale Browser-Menü; auf Touch-Geräten langes Drücken.
+- **Mitgliederliste rechts**, nach Team und Rollen gruppiert (Reihenfolge wie im Admin-Bereich), mit Profilkarte beim Klick. Ein-/ausblenden mit dem Personen-Knopf oben oder `Strg+U`; auf schmalen Bildschirmen legt sie sich über den Chat.
+- **Nutzerleiste unten** mit Mikrofon, *Nichts hören* und Einstellungen – immer an derselben Stelle, auch außerhalb eines Sprachkanals.
+- **Darstellung** *Gemütlich* (Blöcke) oder *Kompakt* (dichte Zeilen ohne Blöcke) – im Profil unter *Darstellung*.
+- **Tastenkürzel** (`Strg+/` zeigt alle): `Alt+↑/↓` Kanal wechseln, `Alt+Umschalt+↑/↓` nächster ungelesener Kanal, `Esc` als gelesen markieren, `↑` letzte Nachricht bearbeiten, `Strg+K` suchen, `Strg+Umschalt+M` Mikrofon, `Strg+Umschalt+D` Nichts hören.
 
 ## Befehls-Bot
 
@@ -854,6 +912,8 @@ Alle Aufrufe mit `Authorization: Bearer gcb_…`:
 | `POST`  | `/api/bot/rooms`                       | **Kanäle anlegen:** Kanal anlegen `{"name","description","temporary":true,"idleMinutes":10,"forUser":"<userId>","voice":{…},"readRoles":[…],"writeRoles":[…]}` → `201`. `temporary`: löscht sich nach `idleMinutes` (Standard: Einstellung) ohne Personen; `forUser`: für diese Person (zählt zu ihrer Grenze). `voice` fehlt = Vorlage der temporären Kanäle bzw. nur Text, `null` = nur Text. Der Bot darf den Kanal danach nutzen. |
 | `PATCH` | `/api/bot/rooms/{room}`                | **Kanäle anlegen:** eigenen Kanal ändern (`name`, `description`, `voice`, `readRoles`, `writeRoles` – fehlende Felder bleiben) |
 | `DELETE`| `/api/bot/rooms/{room}`                | **Kanäle anlegen:** eigenen Kanal mit allen Nachrichten löschen |
+| `POST`  | `/api/bot/voice/{room}/play`           | **Musik:** Ogg-Opus-Datei leise im Sprachkanal abspielen (siehe [Musik von Bots](#musik-von-bots)) |
+| `POST`  | `/api/bot/voice/{room}/stop`           | **Musik:** anhalten |
 
 Fehler: `401` falscher oder deaktivierter Schlüssel, `403` Kanal nicht freigegeben, fehlendes Recht oder Link-Regel (bei Kanälen: nicht vom Bot angelegt), `404` Kanal oder Nachricht gibt es nicht, `409` die Person hat schon einen temporären Kanal, `429` zu viele Nachrichten oder Langsam-Modus, `503` zu viele temporäre Kanäle.
 

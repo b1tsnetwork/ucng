@@ -461,6 +461,8 @@
     if (r.botLinks === "none") stats.append(el("span", "rule", _t("admin.bots_ohne_links")));
     if (r.temp) stats.append(el("span", "rule temp", _t("admin.temp_badge", { min: r.temp.idleMinutes, owner: r.temp.ownerName || (r.temp.by || "").replace(/^bot:.*/, "Bot") })));
     else if (r.createdBy) stats.append(el("span", "rule", _t("admin.bot_created")));
+    if (r.password) stats.append(el("span", "rule", _t("admin.room_badge_password")));
+    if (r.voice && r.voice.video) stats.append(el("span", "rule voice", _t("admin.room_badge_video")));
     if (r.voice) stats.append(el("span", "rule voice", _t(r.voice.stage ? "admin.voice_badge_stage" : "admin.voice_badge", { n: (voicePeers[r.name] || 0) })));
     if (r.automod && r.automod !== "global") stats.append(el("span", "rule", AM_MODES[r.automod]));
     const actions = el("div", "room-actions");
@@ -608,6 +610,14 @@
     $("roomScreenQuality").value = v && v.screenQuality ? v.screenQuality : "standard";
     $("roomScreenMax").value = v && v.maxScreens ? v.maxScreens : 1;
     fillRolePicks("roomScreenRoles", v ? v.screenRoles || [] : [], true);
+    $("roomVideoMode").value = v ? v.video || "" : "";
+    $("roomVideoQuality").value = v && v.videoQuality ? v.videoQuality : "hd";
+    $("roomVideoFeatured").value = v && v.featured ? v.featured : 1;
+    fillRolePicks("roomVideoRoles", v ? v.videoRoles || [] : [], true);
+    $("roomBotMusic").checked = !!(v && v.botMusic);
+    $("roomPassword").value = "";
+    $("roomPasswordClear").checked = false;
+    $("roomPasswordClearRow").hidden = !(r && r.password);
     $("roomVoiceSet").hidden = !voiceAvailable;
     syncVoiceFields();
     $("roomDialogTitle").textContent = r ? _t("admin.x_edit", { name: "#" + r.name }) : _t("admin.kanal_anlegen");
@@ -683,6 +693,9 @@
     const scr = $("roomScreenMode").value;
     $("roomScreenQualityRow").hidden = $("roomScreenMore").hidden = !scr;
     $("roomScreenRolesRow").hidden = scr !== "roles";
+    const vid = $("roomVideoMode").value;
+    $("roomVideoQualityRow").hidden = $("roomVideoMore").hidden = !vid;
+    $("roomVideoRolesRow").hidden = vid !== "roles";
     const kb = VOICE_KBPS[$("roomVoicePreset").value] || 24;
     const sp = Math.max(1, Math.min(16, parseInt($("roomVoiceSpeakers").value, 10) || 4));
     const peers = Math.max(2, parseInt($("roomVoicePeers").value, 10) || 25);
@@ -695,8 +708,8 @@
       $("roomVoiceEstimate").textContent += " " + _t("admin.screen_estimate", { mbit: sk.toLocaleString(GoChatI18n.locale), total: (Math.round(sk * (peers - 1) * 10) / 10).toLocaleString(GoChatI18n.locale) });
     }
   }
-  ["roomVoiceOn", "roomVoicePreset", "roomVoicePeers", "roomVoiceSpeakers", "roomVoiceStage", "roomScreenMode", "roomScreenQuality"].forEach((id) => $(id).addEventListener("input", syncVoiceFields));
-  ["roomVoiceOn", "roomVoiceStage", "roomScreenMode", "roomScreenQuality"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
+  ["roomVoiceOn", "roomVoicePreset", "roomVoicePeers", "roomVoiceSpeakers", "roomVoiceStage", "roomScreenMode", "roomScreenQuality", "roomVideoMode"].forEach((id) => $(id).addEventListener("input", syncVoiceFields));
+  ["roomVoiceOn", "roomVoiceStage", "roomScreenMode", "roomScreenQuality", "roomVideoMode"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
   $("roomName").addEventListener("input", () => {
     $("renameWarn").hidden = !editing || $("roomName").value.trim().toLowerCase() === editing.name;
   });
@@ -715,8 +728,13 @@
         stage: $("roomVoiceStage").checked, stageRoles: pickedRoles("roomVoiceStageRoles"),
         screen: $("roomScreenMode").value, screenQuality: $("roomScreenQuality").value,
         maxScreens: parseInt($("roomScreenMax").value, 10) || 1, screenRoles: pickedRoles("roomScreenRoles"),
+        video: $("roomVideoMode").value, videoQuality: $("roomVideoQuality").value,
+        featured: parseInt($("roomVideoFeatured").value, 10) || 1, videoRoles: pickedRoles("roomVideoRoles"),
+        botMusic: $("roomBotMusic").checked,
       } : null;
     }
+    if ($("roomPasswordClear").checked) body.password = "";
+    else if ($("roomPassword").value) body.password = $("roomPassword").value;
     try {
       if (editing) await api("PATCH", "/api/admin/rooms/" + encodeURIComponent(editing.name), body);
       else await api("POST", "/api/admin/rooms", body);
@@ -1333,6 +1351,7 @@
     const extra = [p.react && "reagiert", p.editOwn && "bearbeitet eigene", p.automodExempt && _t("admin.ohne_automod")].filter(Boolean);
     if (extra.length) out.push([extra.join(", ")]);
     if (p.rooms) out.push([_t("admin.bot_chip_rooms")]);
+    if (p.music) out.push([_t("admin.bot_chip_music")]);
     const mod = [p.delete && _t("admin.loeschen_4"), p.mute && "stumm", p.ban && _t("admin.ausschliessen")].filter(Boolean);
     if (mod.length) {
       const max = p.maxMinutes >= 1440 ? `${p.maxMinutes / 1440} T` : p.maxMinutes >= 60 ? `${p.maxMinutes / 60} h` : `${p.maxMinutes} min`;
@@ -1377,6 +1396,7 @@
     $("permMute").checked = !!p.mute;
     $("permBan").checked = !!p.ban;
     $("permRooms").checked = !!p.rooms;
+    $("permMusic").checked = !!p.music;
     $("botRate").value = p.rateLimit || 0;
     setSelect("botMax", p.maxMinutes || 60, _t("admin.n_minutes", { n: p.maxMinutes || 60 }));
     syncPerms();
@@ -1406,7 +1426,7 @@
         receive: $("botRecvCmd").checked ? "commands" : "all",
         write: $("permWrite").checked, react: $("permReact").checked, editOwn: $("permEdit").checked,
         automodExempt: $("permAutomod").checked, history: $("permHistory").checked, presence: $("permPresence").checked,
-        delete: $("permDelete").checked, mute: $("permMute").checked, ban: $("permBan").checked, rooms: $("permRooms").checked,
+        delete: $("permDelete").checked, mute: $("permMute").checked, ban: $("permBan").checked, rooms: $("permRooms").checked, music: $("permMusic").checked,
         rateLimit: Math.max(0, parseInt($("botRate").value, 10) || 0), maxMinutes: parseInt($("botMax").value, 10),
       },
       enabled: $("botEnabled").checked,

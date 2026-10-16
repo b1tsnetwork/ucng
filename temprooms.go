@@ -303,8 +303,11 @@ func (v *voiceMgr) busyRooms() map[string]bool {
 	defer v.mu.Unlock()
 	out := map[string]bool{}
 	for name, st := range v.rooms {
-		if len(st.peers) > 0 {
-			out[name] = true
+		for _, p := range st.peers {
+			if !strings.HasPrefix(p.User, "bot:") { // Musik eines Bots zählt nicht als Person
+				out[name] = true
+				break
+			}
 		}
 	}
 	return out
@@ -577,5 +580,126 @@ func (s *Server) handleAdminTempPut(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log(r, AuditEntry{Action: "settings.temprooms", Detail: fmt.Sprintf("Befehl %s, löschen nach %d min, höchstens %d (je Person %d), Sprache: %s",
 		state, out.IdleMinutes, out.MaxTotal, out.MaxPerUser, out.Voice.describe())})
+	writeJSON(w, http.StatusOK, out)
+}
+
+// --- Einstellungen für Besitzer temporärer Kanäle ---
+
+// ownerMaxPeers: so viele Plätze darf die Person in ihrem temporären Kanal höchstens einstellen.
+const ownerMaxPeers = 99
+
+// PATCH /api/rooms/{room}/settings – Besitzer eines temporären Kanals (und das Team) ändern Name,
+// Beschreibung, Passwort und den Sprachkanal (Plätze, Gäste, Bühne, Bildschirm, Kamera). Dauerhaft
+// machen, Rollen oder Zugang ändern geht hier nicht.
+func (s *Server) handleRoomOwnerSettings(w http.ResponseWriter, r *http.Request) {
+	me, _, ok := s.me(w, r)
+	if !ok {
+		return
+	}
+	room := NormRoom(r.PathValue("room"))
+	info, found := s.hub.roomInfo(room)
+	if !found || !s.hub.canSeeRoom(room, &Access{ID: me.ID, Team: me.Team, Roles: me.Roles}) {
+		fail(w, ErrNoRoom)
+		return
+	}
+	if info.Temp == nil || (info.Temp.Owner != me.ID && !me.Team) {
+		writeErr(w, http.StatusForbidden, "Nur wer den temporären Kanal angelegt hat, kann ihn einstellen")
+		return
+	}
+	var in struct {
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+		Password    *string `json:"password"` // "" = entfernen
+		Voice       *struct {
+			MaxPeers *int    `json:"maxPeers"`
+			Guests   *string `json:"guests"`
+			Stage    *bool   `json:"stage"`
+			Screen   *string `json:"screen"` // "" oder speakers
+			Video    *string `json:"video"`  // "" oder speakers
+		} `json:"voice"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	ri := RoomInput{Name: in.Name, Description: info.Description, SlowMode: info.SlowMode, Links: info.Links, BotSlowMode: info.BotSlowMode,
+		BotLinks: info.BotLinks, ReadRoles: info.ReadRoles, WriteRoles: info.WriteRoles, Voice: info.Voice}
+	if in.Description != nil {
+		ri.Description = *in.Description
+	}
+	if in.Voice != nil {
+		if info.Voice == nil {
+			voiceFail(w, ErrNoVoice)
+			return
+		}
+		v := *info.Voice
+		if p := in.Voice.MaxPeers; p != nil {
+			limit := ownerMaxPeers
+			if me.Team {
+				limit = voiceMaxPeers
+			}
+			if *p < 2 || *p > limit {
+				writeErr(w, http.StatusBadRequest, trf(w, "Plätze: 2 bis %d", limit))
+				return
+			}
+			v.MaxPeers = *p
+		}
+		if g := in.Voice.Guests; g != nil {
+			v.Guests = *g
+		}
+		if st := in.Voice.Stage; st != nil {
+			v.Stage = *st
+		}
+		for _, f := range []struct {
+			in  *string
+			out *string
+		}{{in.Voice.Screen, &v.Screen}, {in.Voice.Video, &v.Video}} {
+			if f.in == nil {
+				continue
+			}
+			if *f.in != ScreenOff && *f.in != ScreenSpeakers { // Rollen-Auswahl bleibt dem Team
+				writeErr(w, http.StatusBadRequest, ErrScreenMode.Error())
+				return
+			}
+			*f.out = *f.in
+		}
+		ri.Voice = &v
+	}
+	if in.Password != nil && *in.Password != "" {
+		if n := len([]rune(*in.Password)); n < 4 || n > 64 {
+			fail(w, ErrRoomPassLen)
+			return
+		}
+	}
+	out, err := s.hub.UpdateRoomWith(room, ri)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	detail := ""
+	if out.Name != room {
+		detail = "umbenannt von #" + room
+	}
+	if in.Password != nil {
+		if err := s.hub.SetRoomPassword(out.Name, *in.Password, info.Temp.Owner); err != nil {
+			fail(w, err)
+			return
+		}
+		out.HasPassword = *in.Password != ""
+		if detail != "" {
+			detail += ", "
+		}
+		detail += map[bool]string{true: "Passwort gesetzt", false: "Passwort entfernt"}[*in.Password != ""]
+	}
+	if in.Voice != nil {
+		if detail != "" {
+			detail += ", "
+		}
+		detail += "Sprache: " + out.Voice.describe()
+	}
+	actor, display := chatActor(me)
+	s.hub.AuditLog().Add(AuditEntry{Actor: actor, Display: display, Action: "room.owner_update", Room: out.Name, Detail: detail})
+	s.hub.mu.Lock()
+	s.hub.broadcastAll(Event{Type: "layout"})
+	s.hub.mu.Unlock()
 	writeJSON(w, http.StatusOK, out)
 }

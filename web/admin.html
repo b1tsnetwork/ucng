@@ -1199,6 +1199,15 @@
           <small data-i18n="admin.z_b_ein_ankuendigungskanal_alle_lesen">Z. B. ein Ankündigungskanal: alle lesen und reagieren, nur die Redaktion schreibt.</small>
         </div>
       </fieldset>
+      <fieldset class="sub-set">
+        <legend data-i18n="admin.room_password">Passwort</legend>
+        <label class="field">
+          <span data-i18n-html="admin.room_password_label">Passwort <em>(leer = unverändert)</em></span>
+          <input id="roomPassword" type="password" maxlength="64" autocomplete="new-password">
+          <small data-i18n="admin.room_password_hint">Der Kanal bleibt in der Liste sichtbar (mit Schloss). Wer hinein will, gibt das Passwort einmal ein. Das Team braucht keins.</small>
+        </label>
+        <label class="check-row" id="roomPasswordClearRow"><input type="checkbox" id="roomPasswordClear"><span data-i18n="admin.room_password_clear">Passwort entfernen</span></label>
+      </fieldset>
       <fieldset class="sub-set" id="roomVoiceSet">
         <legend data-i18n="admin.voice_legend">Sprachkanal</legend>
         <label class="switch-row">
@@ -1273,6 +1282,43 @@
               <small id="roomScreenQualityHint"></small>
             </label>
           </div>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.video_mode">Kameras (Konferenz)</span>
+              <select id="roomVideoMode">
+                <option value="" data-i18n="admin.screen_off">Aus</option>
+                <option value="speakers" data-i18n="admin.screen_speakers">Wer sprechen darf</option>
+                <option value="roles" data-i18n="admin.screen_roles">Team und gewählte Rollen</option>
+              </select>
+              <small data-i18n="admin.video_mode_hint">Alle Kameras als Miniansicht, die zuletzt Sprechenden groß.</small>
+            </label>
+            <label class="field" id="roomVideoQualityRow">
+              <span data-i18n="admin.video_quality">Großes Bild</span>
+              <select id="roomVideoQuality">
+                <option value="sd">360p · 0,6 Mbit/s</option>
+                <option value="hd">720p · 1,5 Mbit/s</option>
+                <option value="fhd">1080p · 2,8 Mbit/s</option>
+              </select>
+              <small data-i18n="admin.video_quality_hint">Höchstens – das Bild wird kleiner, wenn die Leitung nicht reicht.</small>
+            </label>
+          </div>
+          <div class="field-row" id="roomVideoMore">
+            <label class="field">
+              <span data-i18n="admin.video_featured">Sprecher groß</span>
+              <input type="number" id="roomVideoFeatured" min="1" max="9" step="1">
+            </label>
+            <div class="field" id="roomVideoRolesRow">
+              <span data-i18n="admin.video_roles_pick">Rollen mit Kamera</span>
+              <div class="role-picks" id="roomVideoRoles"></div>
+            </div>
+          </div>
+          <label class="switch-row">
+            <span class="switch-text">
+              <strong data-i18n="admin.bot_music">Musik von Bots</strong>
+              <small data-i18n="admin.bot_music_hint">Bots mit dem Recht „Musik“ dürfen hier Musik einspielen – leise voreingestellt, jede Person regelt sie selbst.</small>
+            </span>
+            <input type="checkbox" class="switch" id="roomBotMusic">
+          </label>
           <div class="field-row" id="roomScreenMore">
             <label class="field">
               <span data-i18n="admin.screen_max">Freigaben gleichzeitig</span>
@@ -1396,6 +1442,7 @@
           <label class="check-row"><input type="checkbox" id="permDelete"><span data-i18n="admin.nachrichten_moderativ_loeschen">Nachrichten moderativ löschen</span></label>
           <label class="check-row"><input type="checkbox" id="permMute"><span data-i18n="admin.personen_stummschalten">Personen stummschalten</span></label>
           <label class="check-row"><input type="checkbox" id="permBan"><span data-i18n="admin.personen_zeitlich_ausschliessen">Personen zeitlich ausschließen</span></label>
+          <label class="check-row"><input type="checkbox" id="permMusic"><span data-i18n="admin.bot_perm_music">Musik in Sprachkanäle einspielen (wo erlaubt)</span></label>
           <label class="check-row"><input type="checkbox" id="permRooms"><span data-i18n="admin.bot_perm_rooms">Kanäle anlegen (auch temporäre) und eigene ändern/löschen</span></label>
         </div>
         <label class="field inline-field" id="botMaxRow">
