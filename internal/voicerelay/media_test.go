@@ -110,34 +110,42 @@ func TestTemporalLayerDrop(t *testing.T) {
 			s = p
 		}
 	}
-	w.vBudget = 10000 // winzig: schon ein großes Bild füllt die Hälfte
 	e.r.mu.Unlock()
 
-	// Grundebene füllt die Warteschlange, ohne dass der Schreiber sie leert:
-	// Direkt prüfen, was enqueueVideoLocked mit einer vollen Warteschlange macht.
+	// Regeln der Warteschlange an einem eigenen Teilnehmer ohne Schreiber (kein Wettlauf)
+	q := &peer{vout: make(chan []byte, 8), vBudget: 10000}
 	e.r.mu.Lock()
-	w.vq.Store(6000) // mehr als die Hälfte belegt
-	ok1 := e.r.enqueueVideoLocked(w, make([]byte, 100), true)
-	ok0 := e.r.enqueueVideoLocked(w, make([]byte, 100), false)
-	w.vq.Store(9990)
-	full := e.r.enqueueVideoLocked(w, make([]byte, 100), false)
-	w.vq.Store(0)
-	big := e.r.enqueueVideoLocked(w, make([]byte, 50000), false)
+	q.vq.Store(6000) // mehr als die Hälfte belegt
+	ok1 := e.r.enqueueVideoLocked(q, make([]byte, 100), true)
+	ok0 := e.r.enqueueVideoLocked(q, make([]byte, 100), false)
+	q.vq.Store(9990)
+	full := e.r.enqueueVideoLocked(q, make([]byte, 100), false)
+	q.vq.Store(0)
+	big := e.r.enqueueVideoLocked(q, make([]byte, 50000), false)
 	e.r.mu.Unlock()
 	if ok1 || !ok0 || full || !big {
 		t.Fatalf("Warteschlange: obere Ebene=%v Grundebene=%v voll=%v leer+groß=%v", ok1, ok0, full, big)
 	}
-	_ = s
-	// Auslassen einer oberen Ebene setzt kein „Schlüsselbild nötig“
+
+	// Schlüsselbild kommt an (Warteschlange des Zuschauers leer)
 	a.sendVideoTid(true, 0, 1, 500)
-	if got, _ := b.videos(200 * time.Millisecond); got[a.you] != 1 {
+	if got, _ := b.videos(time.Second); got[a.you] != 1 {
 		t.Fatalf("Schlüsselbild: %v", got)
 	}
+	// warten, bis der Schreiber alles abgegeben hat – danach rührt er vq nicht mehr an
+	waitFor(t, func() bool { return w.vq.Load() == 0 && len(w.vout) == 0 })
 	e.r.mu.Lock()
-	w.vq.Store(9000)
+	w.vBudget = 10000
+	w.vq.Store(9000) // Leitung „voll“: obere Ebene muss weichen
 	e.r.mu.Unlock()
+	// Auslassen einer oberen Ebene setzt kein „Schlüsselbild nötig“
 	a.sendVideoTid(false, 1, 2, 500)
-	time.Sleep(100 * time.Millisecond)
+	waitFor(t, func() bool {
+		e.r.mu.Lock()
+		defer e.r.mu.Unlock()
+		_, ok := w.skipTid[s.idx]
+		return ok
+	})
 	e.r.mu.Lock()
 	needKey, skip := w.needKey[s.idx], w.skipTid[s.idx]
 	e.r.mu.Unlock()
