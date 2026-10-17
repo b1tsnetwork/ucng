@@ -184,7 +184,12 @@ Auf dem Agent-Server brauchst du nur `deploy/voice/compose.yml` und `.env`.
 
 ### Untertitel (eigenes Whisper)
 
-Untertitel laufen nur über eine Spracherkennung, die du selbst betreibst – beim **Chat-Server** `STT_URL` setzen (OpenAI-kompatibel, z. B. `http://whisper:8000/v1/audio/transcriptions`), dazu optional `STT_MODEL`, `STT_TOKEN`, `STT_LANGUAGE`, `STT_CONCURRENCY`. Die Sprach-Server (Agenten) haben damit nichts zu tun: Der Ton der Abschnitte geht vom Browser zum Chat-Server und von dort zu deinem Whisper. Je Kanal schaltest du Untertitel im Admin-Bereich ein. Rechenbedarf: Ein Abschnitt dauert 1–12 s; mit `STT_CONCURRENCY` (Standard 4) begrenzt du, wie viele gleichzeitig bearbeitet werden – was darüber hinausgeht, wird ausgelassen statt gestaut.
+Untertitel und Live-Transkription laufen nur über eine Spracherkennung, die du selbst betreibst (OpenAI-kompatibel, z. B. speaches aus `deploy/stt`). Die Sprach-Server schneiden die Sprache in Abschnitte (Ogg-Opus, 0,4–10 s). Wo verschriftlicht wird, entscheidest du:
+
+- **Beim Chat-Server** (`STT_URL` dort): Die Agenten schicken die Abschnitte an den Chat-Server (etwa 24 kbit/s je sprechender Person), der sie an sein Whisper gibt. Eine Stelle für alles.
+- **Auf dem Sprach-Server** (`STT_URL` beim Agenten, dazu `STT_MODEL`, `STT_TOKEN`, `STT_LANGUAGE`, `STT_CONCURRENCY`): Der Agent verschriftlicht selbst und schickt nur Text. Sinnvoll, wenn neben dem Agenten eine GPU mit Whisper steht, der Agent weit weg ist oder die Last verteilt werden soll. Der Chat-Server braucht dann kein `STT_URL`.
+
+Beides lässt sich mischen: Agenten mit eigener Spracherkennung nutzen ihre, alle anderen (und der eingebaute Relay) die des Chat-Servers. Admin → *Sprach-Server* zeigt je Server die Funktionen („Eigene Spracherkennung“ bzw. „über Chat-Server“), Warteschlange, Dauer und den letzten Fehler. Je Kanal schaltest du Untertitel im Admin-Bereich ein; Untertitel werden bei Überlast ausgelassen, Transkript-Abschnitte warten.
 
 ### Reiner Medien-Server
 

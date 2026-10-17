@@ -95,7 +95,11 @@ func (r *Relay) tapFlushLocked(p *peer) {
 	if mode == TapOff {
 		mode = TapCaptions
 	}
-	seg := Segment{Channel: p.ch.room, User: p.user, Name: p.name, Lang: p.lang, Mode: mode, Start: b.start,
+	lang := p.lang
+	if mode == TapTranscript && p.ch.tapLang != "" {
+		lang = p.ch.tapLang
+	}
+	seg := Segment{Channel: p.ch.room, User: p.user, Name: p.name, Lang: lang, Mode: mode, Start: b.start,
 		Dur: time.Duration(len(frames)) * 20 * time.Millisecond, Ogg: OggOpus(frames, b.stereo)}
 	go r.cfg.OnSegment(seg)
 }
@@ -145,6 +149,9 @@ func (r *Relay) setTapLocked(ch *channel, mode int) {
 		r.broadcastLocked(ch, textMsg(b), nil)
 	}
 	ch.tap = mode
+	if mode != TapTranscript {
+		ch.tapLang = ""
+	}
 }
 
 // --- Ogg-Opus (RFC 7845) ---

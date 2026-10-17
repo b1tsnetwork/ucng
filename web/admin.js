@@ -152,7 +152,7 @@
   // ---------- Navigation ----------
 
   const TITLES = {
-    uebersicht: _t("admin.uebersicht"), moderation: _t("admin.moderation"), automod: _t("admin.automod"), nutzer: _t("admin.personen"), protokoll: _t("admin.protokoll"),
+    uebersicht: _t("admin.uebersicht"), moderation: _t("admin.moderation"), automod: _t("admin.automod"), nutzer: _t("admin.personen"), protokoll: _t("admin.protokoll"), sprachserver: _t("admin.sprachserver"),
     kanaele: _t("admin.kanaele"), allgemein: _t("admin.allgemein"), medien: _t("admin.emotes_gifs"), befehle: _t("admin.befehle"), widgets: _t("admin.widgets"), bots: _t("admin.bots"),
     konten: _t("admin.team_zugaenge"), hosting: _t("admin.hosting"), beacon: _t("admin.beacon"), vorlagen: _t("admin.vorlagen"), sprachen: _t("admin.sprachen"), backups: _t("admin.backups"), transkripte: _t("admin.transkripte"), meldungen: _t("admin.meldungen"), ankuendigungen: _t("admin.ankuendigungen"),
   };
@@ -184,6 +184,7 @@
     if (view === "vorlagen") loadTemplates();
     if (view === "backups") loadBackups();
     if (view === "transkripte") loadTranscripts();
+    if (view === "sprachserver") startVoiceDash(); else stopVoiceDash();
     if (view === "sprachen") loadLanguages();
     if (view === "medien") loadMediaAdmin();
     if (view === "befehle") loadCommandsAdmin();
@@ -395,6 +396,7 @@
   const ICON_TRASH = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   let layout = { groups: [], ungrouped: [] };
+  let voiceSTT = false; // Untertitel/Live-Transkription möglich (STT_URL gesetzt) – aus /api/admin/voice
 
   async function loadRooms() {
     try {
@@ -403,6 +405,7 @@
         api("GET", "/api/admin/voice").catch(() => ({ enabled: false }))]);
       voiceAvailable = !!vs.enabled;
       voicePeers = vs.rooms || {};
+      voiceSTT = !!vs.stt; // sonst nur nach der Übersicht bekannt – „Untertitel“ war beim direkten Aufruf gesperrt
     } catch { return; }
     if (settings.startRoom && !rooms.some((r) => r.name === settings.startRoom)) { // umbenannt oder gelöscht
       try { settings.startRoom = (await api("GET", "/api/admin/settings")).startRoom || ""; } catch { /* egal */ }
@@ -1598,7 +1601,6 @@
   }
 
   // Sprach-Server: eingebauter Relay und Agenten
-  let voiceSTT = false; // Untertitel möglich (STT_URL gesetzt)
   function renderVoiceStats(v) {
     voiceSTT = !!(v && v.stt);
     $("voicePanel").hidden = !v || !v.enabled;
@@ -2786,6 +2788,135 @@
   // ---------- Backups ----------
 
   const sizeFmt = (b) => (b < 1024 * 1024 ? `${numFmt.format(Math.max(1, Math.round(b / 1024)))} KB` : `${new Intl.NumberFormat(GoChatI18n.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(b / 1024 / 1024)} MB`);
+
+  // ---------- Sprach-Server: Funktionen und Auslastung je Server ----------
+
+  let vsTimer = 0;
+  function startVoiceDash() { stopVoiceDash(); loadVoiceDash(); vsTimer = setInterval(loadVoiceDash, 5000); }
+  function stopVoiceDash() { clearInterval(vsTimer); vsTimer = 0; }
+  const FUNC = {
+    voice: ["admin.vs_f_voice", "admin.vs_f_voice_hint"],
+    media: ["admin.vs_f_media", "admin.vs_f_media_hint"],
+    tap: ["admin.vs_f_tap", "admin.vs_f_tap_hint"],
+    stt: ["admin.vs_f_stt", "admin.vs_f_stt_hint"],
+    "stt-chat": ["admin.vs_f_sttchat", "admin.vs_f_sttchat_hint"],
+  };
+  const KIND = { voice: "admin.vs_k_voice", screen: "admin.vs_k_screen", video: "admin.vs_k_video" };
+  const mbit = (x) => (Math.round((x || 0) * 10) / 10).toLocaleString(GoChatI18n.locale);
+  const vsAgo = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 90 ? _t("admin.vs_ago_s", { s }) : _t("admin.vs_ago_m", { m: Math.round(s / 60) }); };
+
+  function meter(label, val, max, text) {
+    const row = el("div", "vs-meter");
+    const bar = el("span", "bar");
+    const pct = max > 0 ? Math.min(100, (val / max) * 100) : 0;
+    bar.style.setProperty("--w", pct + "%");
+    if (pct >= 85) bar.classList.add("hot"); else if (pct >= 60) bar.classList.add("warm");
+    row.append(el("span", "vs-meter-label", label), bar, el("span", "num", text));
+    return row;
+  }
+
+  function sttBlock(title, st) {
+    const box = el("div", "vs-stt");
+    const head = el("div", "vs-stt-head");
+    head.append(el("strong", null, title), el("span", "vs-stt-model", st.model + " · " + st.host + (st.lang ? " · " + st.lang : "")));
+    box.append(head);
+    box.append(meter(_t("admin.vs_stt_busy"), st.busy, st.concurrency, _t("admin.vs_stt_busy_n", { n: st.busy, max: st.concurrency, q: st.queue })));
+    const facts = el("div", "vs-facts");
+    const fact = (k, v, cls) => { const d = el("span", "vs-fact" + (cls ? " " + cls : "")); d.append(el("small", null, k), el("b", null, v)); facts.append(d); };
+    fact(_t("admin.vs_stt_done"), numFmt.format(st.done || 0));
+    fact(_t("admin.vs_stt_avg"), st.avgMs ? (st.avgMs / 1000).toLocaleString(GoChatI18n.locale, { maximumFractionDigits: 1 }) + " s" : "–");
+    fact(_t("admin.vs_stt_errors"), numFmt.format(st.errors || 0), st.errors ? "bad" : "");
+    fact(_t("admin.vs_stt_dropped"), numFmt.format(st.dropped || 0), st.dropped ? "warn" : "");
+    box.append(facts);
+    if (st.lastError && (!st.lastOkAt || st.lastErrorAt > st.lastOkAt)) {
+      box.append(el("p", "vs-err", _t("admin.vs_stt_lasterr", { when: vsAgo(st.lastErrorAt), err: st.lastError })));
+    } else if (st.lastOkAt) {
+      box.append(el("p", "vs-ok", _t("admin.vs_stt_lastok", { when: vsAgo(st.lastOkAt) })));
+    }
+    return box;
+  }
+
+  async function loadVoiceDash() {
+    let v;
+    try { v = await api("GET", "/api/admin/voice"); } catch (err) { toast(err.message, true); stopVoiceDash(); return; }
+    if (!v.enabled) {
+      $("vsKpis").replaceChildren();
+      $("vsGrid").replaceChildren(el("p", "empty-row", _t("admin.vs_off")));
+      $("vsHint").textContent = "";
+      return;
+    }
+    voiceSTT = !!v.stt;
+    const up = v.relays.filter((r) => r.healthy).length;
+    const people = v.relays.reduce((n, r) => n + (r.stats.participants || 0), 0);
+    const kpi = (label, val, sub, warn) => { const d = el("div", "kpi" + (warn ? " warn" : "")); d.append(el("span", "kpi-label", label), el("strong", null, val), el("small", null, sub)); return d; };
+    const sttWhere = v.chatSTT ? _t("admin.vs_kpi_stt_chat", { model: v.chatSTT.model }) : v.stt ? _t("admin.vs_kpi_stt_agents") : _t("admin.vs_kpi_stt_off");
+    $("vsKpis").replaceChildren(
+      kpi(_t("admin.sprachserver"), up + " / " + v.relays.length, up < v.relays.length ? _t("admin.vs_kpi_down", { n: v.relays.length - up }) : _t("admin.vs_kpi_alive"), up < v.relays.length),
+      kpi(_t("admin.vs_kpi_people"), numFmt.format(people), _t("admin.vs_kpi_rooms", { n: Object.keys(v.rooms || {}).length })),
+      kpi(_t("admin.vs_kpi_mbit"), mbit(v.relays.reduce((n, r) => n + (r.stats.mbit || 0), 0)), _t("admin.vs_kpi_mbit_sub")),
+      kpi(_t("admin.vs_kpi_stt"), v.stt ? _t("admin.vs_on") : _t("admin.vs_off_short"), sttWhere, !v.stt),
+    );
+    const cards = v.relays.map((r) => {
+      const card = el("article", "vs-card" + (r.healthy ? "" : " down"));
+      const head = el("header", "vs-head");
+      const dot = el("span", "vs-dot" + (r.healthy ? " ok" : ""));
+      const title = el("div", "vs-title");
+      title.append(el("strong", null, r.builtin ? _t("admin.voice_builtin") : r.id));
+      const meta = [];
+      if (r.version) meta.push(/^\d/.test(r.version) ? "v" + r.version : r.version);
+      if (r.url) meta.push(r.url);
+      if (r.seen) meta.push(r.healthy ? _t("admin.vs_seen", { when: vsAgo(new Date(r.seen).getTime()) }) : _t("admin.vs_silent", { when: vsAgo(new Date(r.seen).getTime()) }));
+      title.append(el("small", null, meta.join(" · ") || _t("admin.vs_builtin_meta")));
+      head.append(dot, title);
+      if (r.role === "media") head.append(el("span", "chip", _t("admin.voice_relay_media")));
+      card.append(head);
+      const fl = el("div", "vs-funcs");
+      const fs = r.functions || [];
+      const chip = (f, on) => {
+        const c = el("span", "vs-func" + (on ? " on" : " off"), _t(FUNC[f][0]));
+        c.title = on ? _t(FUNC[f][1]) : _t("admin.vs_f_stt_missing");
+        fl.append(c);
+      };
+      for (const f of ["voice", "media", "tap"]) if (fs.includes(f)) chip(f, true);
+      if (fs.includes("stt")) chip("stt", true);
+      else if (fs.includes("stt-chat")) chip("stt-chat", true);
+      else if (fs.includes("tap")) chip("stt", false); // könnte mitschneiden, aber niemand verschriftlicht
+      card.append(fl);
+      const st = r.stats || {};
+      card.append(meter(_t("admin.vs_people"), st.participants || 0, st.max || 0, `${st.participants || 0} / ${st.max || 0}`));
+      card.append(meter(_t("admin.vs_bandwidth"), Math.max(st.mbit || 0, st.estimateMbit || 0), st.maxMbit || 0,
+        _t("admin.vs_bandwidth_n", { mbit: mbit(st.mbit), est: mbit(st.estimateMbit), max: mbit(st.maxMbit) })));
+      if (st.mediaPeers) {
+        const pubs = Object.values(st.media || {}).reduce((n, m) => n + (m.pub || 0), 0);
+        card.append(el("p", "vs-line", _t("admin.vs_media", { n: st.mediaPeers, pub: pubs })));
+      }
+      if (r.stt) card.append(sttBlock(_t("admin.vs_stt_own"), r.stt));
+      const rl = el("ul", "vs-rooms");
+      for (const u of r.rooms || []) {
+        const li = el("li");
+        li.append(el("span", "vs-room", "#" + u.room + (u.peers ? " · " + u.peers : "")));
+        for (const k of u.kinds) li.append(el("span", "vs-kind " + k, _t(KIND[k] || k)));
+        rl.append(li);
+      }
+      if (!(r.rooms || []).length) rl.append(el("li", "vs-empty", _t("admin.vs_no_rooms")));
+      card.append(el("h3", "vs-sub", _t("admin.vs_rooms")), rl);
+      return card;
+    });
+    if (v.chatSTT) {
+      const card = el("article", "vs-card stt-card");
+      const head = el("header", "vs-head");
+      const title = el("div", "vs-title");
+      title.append(el("strong", null, _t("admin.vs_chat_stt")), el("small", null, _t("admin.vs_chat_stt_meta")));
+      head.append(el("span", "vs-dot ok"), title);
+      card.append(head, sttBlock(_t("admin.vs_stt_queue"), v.chatSTT));
+      cards.push(card);
+    }
+    $("vsGrid").replaceChildren(...(cards.length ? cards : [el("p", "empty-row", _t("admin.voice_no_relay"))]));
+    $("vsHint").textContent = v.agents ? _t("admin.voice_agents_on") : _t("admin.voice_agents_off");
+    const down = v.relays.length - up;
+    $("relayDownCount").hidden = !down;
+    $("relayDownCount").textContent = down || "";
+  }
 
   // ---------- Transkripte (Live-Transkription) ----------
 

@@ -82,6 +82,11 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h7l3 3v12H5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 9h4.5M8 12h4.5M8 15h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <span data-i18n="admin.protokoll">Protokoll</span>
         </a>
+        <a href="#sprachserver" data-view="sprachserver">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="5.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="11.5" width="14" height="5.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6.2" cy="5.75" r="1" fill="currentColor"/><circle cx="6.2" cy="14.25" r="1" fill="currentColor"/><path d="M10 5.75h4M10 14.25h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.sprachserver">Sprach-Server</span>
+          <span class="nav-count" id="relayDownCount" hidden></span>
+        </a>
         <span class="nav-sep admin-only" aria-hidden="true" data-i18n="admin.einrichtung">Einrichtung</span>
         <a href="#kanaele" data-view="kanaele" class="admin-only">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 3 6 17M14 3l-1.5 14M3.5 7.5h14M2.5 12.5h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
@@ -184,6 +189,7 @@
           <h2 class="panel-title" data-i18n-html="admin.voice_panel_title">Sprach-Server <small>Relays und Auslastung</small></h2>
           <p class="voice-summary" id="voiceSummary"></p>
           <ul class="voice-relays" id="voiceRelays"></ul>
+          <a class="vs-more" href="#sprachserver" data-i18n="admin.vs_details">Alle Funktionen und Details →</a>
           <p class="voice-relay-hint" id="voiceRelayHint"></p>
         </div>
       </section>
@@ -1132,6 +1138,12 @@
       </section>
 
       <!-- Backups -->
+      <section class="view" id="view-sprachserver" hidden>
+        <div class="kpis" id="vsKpis"></div>
+        <div class="vs-grid" id="vsGrid"></div>
+        <p class="voice-relay-hint" id="vsHint"></p>
+      </section>
+
       <section class="view" id="view-transkripte" hidden>
         <div class="view-bar">
           <p class="view-intro" id="trIntro"></p>

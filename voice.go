@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ucng/internal/stt"
 	"ucng/internal/voicerelay"
 )
 
@@ -404,6 +405,7 @@ type voiceMgr struct {
 	breakouts map[string]*BreakoutInfo // Hauptkanal → laufende Breakout-Runde
 	stt       *sttClient               // Untertitel (nil = aus)
 	tr        *transcriptStore         // Live-Transkripte
+	capRL     *rateLimiter             // Untertitel je Person (gegen Dauerfeuer)
 }
 
 type voiceRoom struct {
@@ -427,6 +429,7 @@ type voiceAgent struct {
 	Seen       time.Time           `json:"seen"`
 	Version    string              `json:"version,omitempty"`
 	Role       string              `json:"role,omitempty"` // "media" = nur Bildschirm und Kameras
+	STT        *stt.Stats          `json:"stt,omitempty"`  // eigene Spracherkennung des Agenten
 	rooms      map[string]struct{} // Kanäle laut letzter Meldung
 }
 
@@ -446,7 +449,7 @@ func newVoiceMgr(s *Server) *voiceMgr {
 		mediaRL:  newRateLimiter(90, time.Minute),
 		client:   &http.Client{Timeout: 5 * time.Second},
 		rooms:    map[string]*voiceRoom{}, agents: map[string]*voiceAgent{}, stop: make(chan struct{}),
-		breakouts: map[string]*BreakoutInfo{}, stt: newSTT(s.cfg), tr: newTranscriptStore(s.cfg.DataDir),
+		breakouts: map[string]*BreakoutInfo{}, stt: newSTT(s.cfg), tr: newTranscriptStore(s.cfg.DataDir), capRL: newRateLimiter(40, time.Minute),
 	}
 	v.csp.Store("")
 	if !s.cfg.VoiceNoBuiltin {
@@ -457,11 +460,6 @@ func newVoiceMgr(s *Server) *voiceMgr {
 			OnChange:        func(ch string, peers []voicerelay.PeerInfo) { v.setPeers(builtinRelay, ch, peers) },
 			OnSegment:       v.onSegment,
 		})
-	}
-	if v.stt != nil {
-		for i := 0; i < cap(v.stt.sem); i++ {
-			go v.sttWorker()
-		}
 	}
 	s.hub.mu.Lock()
 	s.hub.onUserChange = v.userChanged
@@ -569,9 +567,7 @@ func (v *voiceMgr) janitor() {
 		v.mediaRL.cleanup()
 		v.breakoutTick(time.Now())
 		v.transcriptTick(time.Now())
-		if v.stt != nil {
-			v.stt.rl.cleanup()
-		}
+		v.capRL.cleanup()
 		now := time.Now()
 		type gone struct{ relay, room string }
 		var stale []gone
@@ -1072,7 +1068,7 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 	// Untertitel/Live-Transkription: der Relay schneidet mit, wenn er es kann
 	tap, taps := voicerelay.TapOff, v.relayTaps(choice.id)
 	if taps {
-		tap = v.tapMode(room, &d.Cfg)
+		tap = v.tapMode(room, &d.Cfg, choice.id)
 	}
 	lang := r.URL.Query().Get("lang") // Sprache der Oberfläche – Hinweis für die Spracherkennung
 	if len(lang) > 8 || strings.ContainsAny(lang, " /&?") {
@@ -1099,10 +1095,10 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 		"featured": d.Cfg.Featured, "owner": d.Owner,
 		"host":     d.Owner || v.roomMod(&d.Cfg, who), // darf Co-Hosts ernennen
 		"e2ee":     d.Cfg.E2EE,
-		"captions": d.Cfg.Captions && !d.Cfg.E2EE && v.stt != nil && taps,
+		"captions": d.Cfg.Captions && !d.Cfg.E2EE && v.sttFor(choice.id) && taps,
 		// Live-Transkription: läuft gerade (alle sehen den Hinweis) bzw. darf ich sie starten
 		"transcript":   v.tr.activeFor(room),
-		"transcribeOK": taps && v.transcriptAllowed(acc) && v.mayHost(room, me),
+		"transcribeOK": taps && v.transcriptAllowed(acc, choice.id) && v.mayHost(room, me),
 		"breakout":     v.breakoutFor(room),
 		"mediaConn":    v.mediaCapable(), // Bildschirm und Kameras über eigene Verbindungen (/media)
 	})
@@ -1296,6 +1292,7 @@ type agentReport struct {
 	Stats      voicerelay.Stats       `json:"stats"`
 	Rooms      map[string][]VoicePeer `json:"rooms"`
 	Role       string                 `json:"role"`
+	STT        *stt.Stats             `json:"stt,omitempty"`
 }
 
 func (v *voiceMgr) agentAuth(r *http.Request) bool {
@@ -1344,7 +1341,7 @@ func (s *Server) handleVoiceAgentReport(w http.ResponseWriter, r *http.Request) 
 		v.agents[id] = a
 		log.Printf("Sprache: Agent %s angemeldet (%s)", id, in.WSURL)
 	}
-	a.WSURL, a.ControlURL, a.Stats, a.Seen, a.Version = in.WSURL, in.ControlURL, in.Stats, time.Now(), in.Version
+	a.WSURL, a.ControlURL, a.Stats, a.Seen, a.Version, a.STT = in.WSURL, in.ControlURL, in.Stats, time.Now(), in.Version, in.STT
 	a.Role = ""
 	if in.Role == "media" {
 		a.Role = "media"
@@ -1382,36 +1379,104 @@ func (s *Server) handleAdminVoice(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
+	type roomUse struct {
+		Room  string   `json:"room"`
+		Peers int      `json:"peers,omitempty"`
+		Kinds []string `json:"kinds"` // voice, screen, video – was dieser Relay für den Kanal übernimmt
+	}
 	type relayInfo struct {
-		ID      string           `json:"id"`
-		Builtin bool             `json:"builtin,omitempty"`
-		URL     string           `json:"url,omitempty"`
-		Version string           `json:"version,omitempty"`
-		Healthy bool             `json:"healthy"`
-		Role    string           `json:"role,omitempty"`
-		Seen    *time.Time       `json:"seen,omitempty"`
-		Stats   voicerelay.Stats `json:"stats"`
+		ID        string           `json:"id"`
+		Builtin   bool             `json:"builtin,omitempty"`
+		URL       string           `json:"url,omitempty"`
+		Version   string           `json:"version,omitempty"`
+		Healthy   bool             `json:"healthy"`
+		Role      string           `json:"role,omitempty"`
+		Seen      *time.Time       `json:"seen,omitempty"`
+		Stats     voicerelay.Stats `json:"stats"`
+		Functions []string         `json:"functions"`     // voice, media, tap, stt (eigene), stt-chat (über den Chat-Server)
+		STT       *stt.Stats       `json:"stt,omitempty"` // eigene Spracherkennung
+		Rooms     []roomUse        `json:"rooms"`
+	}
+	has := func(list []string, f string) bool {
+		for _, x := range list {
+			if x == f {
+				return true
+			}
+		}
+		return false
+	}
+	funcs := func(role string, features []string, own bool) []string {
+		var out []string
+		if role != "media" {
+			out = append(out, "voice")
+		}
+		if has(features, "media") {
+			out = append(out, "media")
+		}
+		if role != "media" && has(features, "tap") {
+			out = append(out, "tap")
+			if own {
+				out = append(out, "stt")
+			} else if v.stt != nil {
+				out = append(out, "stt-chat")
+			}
+		}
+		return out
 	}
 	relays := []relayInfo{}
 	if v.builtin != nil {
-		relays = append(relays, relayInfo{ID: builtinRelay, Builtin: true, Healthy: true, Stats: v.builtin.Stats()})
+		st := v.builtin.Stats()
+		ri := relayInfo{ID: builtinRelay, Builtin: true, Healthy: true, Stats: st, Functions: funcs("", st.Features, false)}
+		relays = append(relays, ri)
 	}
 	rooms := map[string]int{}
 	v.mu.Lock()
 	for _, a := range v.agents {
 		seen := a.Seen
-		relays = append(relays, relayInfo{ID: a.ID, URL: a.WSURL, Version: a.Version, Seen: &seen, Role: a.Role,
-			Healthy: time.Since(a.Seen) < voiceAgentStale, Stats: a.Stats})
+		ri := relayInfo{ID: a.ID, URL: a.WSURL, Version: a.Version, Seen: &seen, Role: a.Role,
+			Healthy: time.Since(a.Seen) < voiceAgentStale, Stats: a.Stats, STT: a.STT, Functions: funcs(a.Role, a.Stats.Features, a.STT != nil)}
+		relays = append(relays, ri)
 	}
+	use := map[string][]roomUse{}
 	for name, st := range v.rooms {
-		if len(st.peers) > 0 {
-			rooms[name] = len(st.peers)
+		if len(st.peers) == 0 {
+			continue
+		}
+		rooms[name] = len(st.peers)
+		per := map[string]*roomUse{}
+		add := func(relay, kind string) {
+			if per[relay] == nil {
+				per[relay] = &roomUse{Room: name}
+			}
+			per[relay].Kinds = append(per[relay].Kinds, kind)
+		}
+		add(st.relay, "voice")
+		per[st.relay].Peers = len(st.peers)
+		for _, kind := range []string{voicerelay.KindScreen, voicerelay.KindVideo} {
+			if id := st.media[kind]; id != "" {
+				add(id, kind)
+			}
+		}
+		for id, u := range per {
+			use[id] = append(use[id], *u)
 		}
 	}
 	v.mu.Unlock()
+	for i := range relays {
+		relays[i].Rooms = use[relays[i].ID]
+		if relays[i].Rooms == nil {
+			relays[i].Rooms = []roomUse{}
+		}
+		sort.Slice(relays[i].Rooms, func(a, b int) bool { return relays[i].Rooms[a].Room < relays[i].Rooms[b].Room })
+	}
 	sort.Slice(relays, func(i, j int) bool { return relays[i].Builtin || !relays[j].Builtin && relays[i].ID < relays[j].ID })
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "relays": relays, "rooms": rooms,
-		"agents": v.token != "", "builtin": v.builtin != nil, "stt": v.stt != nil})
+	out := map[string]any{"enabled": true, "relays": relays, "rooms": rooms,
+		"agents": v.token != "", "builtin": v.builtin != nil, "stt": v.stt != nil || v.anyAgentSTT()}
+	if v.stt != nil {
+		cs := v.stt.Stats()
+		out["chatSTT"] = cs // Spracherkennung beim Chat-Server
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // voiceRoutes meldet die Pfade der Sprachkanäle an.
@@ -1429,6 +1494,7 @@ func (s *Server) voiceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/transcripts/{id}", s.handleTranscriptGet)
 	mux.HandleFunc("POST /api/voice/agents/report", s.handleVoiceAgentReport)
 	mux.HandleFunc("POST /api/voice/agents/segment", s.handleVoiceAgentSegment)
+	mux.HandleFunc("POST /api/voice/agents/text", s.handleVoiceAgentText)
 	mux.HandleFunc("GET /api/admin/voice", s.requireMod(s.handleAdminVoice))
 }
 

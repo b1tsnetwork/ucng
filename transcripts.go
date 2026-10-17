@@ -15,7 +15,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -32,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"ucng/internal/stt"
 	"ucng/internal/voicerelay"
 )
 
@@ -306,9 +306,13 @@ func (t *transcriptStore) remove(id string) bool {
 
 // --- Sprach-Manager ---
 
-// tapMode: Was soll der Relay eines Kanals mitschneiden?
-func (v *voiceMgr) tapMode(room string, cfg *VoiceConfig) int {
-	if v.stt == nil || cfg == nil || cfg.E2EE {
+// tapMode: Was soll der Relay eines Kanals mitschneiden? relay: der Relay der Sprache ("" =
+// der, auf dem der Kanal gerade liegt).
+func (v *voiceMgr) tapMode(room string, cfg *VoiceConfig, relay string) int {
+	if relay == "" {
+		relay = v.roomRelay(room)
+	}
+	if cfg == nil || cfg.E2EE || !v.sttFor(relay) {
 		return voicerelay.TapOff
 	}
 	if v.tr.activeFor(room) != nil {
@@ -326,7 +330,67 @@ func (v *voiceMgr) pushTap(room string) {
 	if !ok {
 		return
 	}
-	v.control(room, "", "tap", false, fmt.Sprint(v.tapMode(room, info.Voice)))
+	mode := fmt.Sprint(v.tapMode(room, info.Voice, ""))
+	if a := v.tr.activeFor(room); a != nil && a.Lang != "" && mode == fmt.Sprint(voicerelay.TapTranscript) {
+		mode += ":" + a.Lang // Sprache des Transkripts (auch für Sprach-Server mit eigener Spracherkennung)
+	}
+	v.control(room, "", "tap", false, mode)
+}
+
+// roomRelay: Relay, auf dem die Sprache eines Kanals gerade liegt ("" = noch keiner).
+func (v *voiceMgr) roomRelay(room string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if st := v.rooms[room]; st != nil && len(st.peers) > 0 {
+		return st.relay
+	}
+	return ""
+}
+
+// agentHas: Meldet der Agent diese Fähigkeit?
+func (v *voiceMgr) agentHas(id, feature string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	a := v.agents[id]
+	if a == nil || time.Since(a.Seen) >= voiceAgentStale {
+		return false
+	}
+	for _, f := range a.Stats.Features {
+		if f == feature {
+			return true
+		}
+	}
+	return false
+}
+
+// sttFor: Gibt es für einen Relay eine Spracherkennung – beim Chat-Server oder auf dem Agenten
+// selbst? relay "" (Kanal noch leer): irgendeine.
+func (v *voiceMgr) sttFor(relay string) bool {
+	if v.stt != nil {
+		return true
+	}
+	if relay == builtinRelay {
+		return false
+	}
+	if relay != "" {
+		return v.agentHas(relay, "stt")
+	}
+	return v.anyAgentSTT()
+}
+
+func (v *voiceMgr) anyAgentSTT() bool {
+	v.mu.Lock()
+	ids := make([]string, 0, len(v.agents))
+	for id := range v.agents {
+		ids = append(ids, id)
+	}
+	v.mu.Unlock()
+	for _, id := range ids {
+		if v.agentHas(id, "stt") {
+			return true
+		}
+	}
+	return false
 }
 
 // relayTaps: Kann der Relay (eingebaut oder Agent) mitschneiden?
@@ -334,24 +398,13 @@ func (v *voiceMgr) relayTaps(id string) bool {
 	if id == "" || id == builtinRelay {
 		return true
 	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	a := v.agents[id]
-	if a == nil {
-		return false
-	}
-	for _, f := range a.Stats.Features {
-		if f == "tap" {
-			return true
-		}
-	}
-	return false
+	return v.agentHas(id, "tap")
 }
 
 // transcriptAllowed: Darf in diesem Kanal transkribiert werden? (Kanal mit „Untertitel“ oder
 // temporärer Kanal; eigene Spracherkennung; nicht Ende-zu-Ende)
-func (v *voiceMgr) transcriptAllowed(acc voiceRoomAccess) bool {
-	return v.stt != nil && acc.Cfg != nil && !acc.Cfg.E2EE && (acc.Cfg.Captions || acc.Owner != "")
+func (v *voiceMgr) transcriptAllowed(acc voiceRoomAccess, relay string) bool {
+	return v.sttFor(relay) && acc.Cfg != nil && !acc.Cfg.E2EE && (acc.Cfg.Captions || acc.Owner != "")
 }
 
 func (v *voiceMgr) startTranscript(room string, me Identity, lang string) (TranscriptInfo, error) {
@@ -359,15 +412,10 @@ func (v *voiceMgr) startTranscript(room string, me Identity, lang string) (Trans
 	if !acc.Exists || acc.Cfg == nil {
 		return TranscriptInfo{}, ErrNoVoice
 	}
-	if !v.transcriptAllowed(acc) {
+	relay := v.roomRelay(room)
+	if !v.transcriptAllowed(acc, relay) {
 		return TranscriptInfo{}, ErrTranscriptOff
 	}
-	v.mu.Lock()
-	relay := ""
-	if st := v.rooms[room]; st != nil && len(st.peers) > 0 {
-		relay = st.relay
-	}
-	v.mu.Unlock()
 	if !v.relayTaps(relay) {
 		return TranscriptInfo{}, ErrTranscriptRelay
 	}
@@ -455,66 +503,55 @@ func (v *voiceMgr) transcriptTick(now time.Time) {
 
 // --- Abschnitte → Spracherkennung ---
 
-type sttJob struct {
-	seg voicerelay.Segment
-	tid string // Transkript ("" = nur Untertitel)
-}
-
-// onSegment: ein Abschnitt vom Relay (eingebaut direkt, Agenten über /api/voice/agents/segment).
+// onSegment: ein Abschnitt vom Relay (eingebaut direkt, Agenten ohne eigene Spracherkennung über
+// /api/voice/agents/segment). Verschriftlicht wird hier.
 func (v *voiceMgr) onSegment(seg voicerelay.Segment) {
 	if v.stt == nil || len(seg.Ogg) == 0 {
 		return
 	}
-	info, ok := v.s.hub.roomInfo(seg.Channel)
-	if !ok || info.Voice == nil || info.Voice.E2EE {
+	_, tid, ok := v.segmentTarget(seg.Channel, seg.User, seg.Start, seg.Dur)
+	if !ok {
 		return
 	}
-	job := sttJob{seg: seg, tid: v.tr.target(seg.Channel, seg.Start, seg.Dur)}
-	if job.tid == "" {
-		if !info.Voice.Captions || !v.stt.rl.Allow(seg.User) {
-			return
-		}
-		if len(v.stt.queue) > cap(v.stt.sem)*3 { // Untertitel: lieber auslassen als verspätet
-			return
+	lang := seg.Lang
+	if tid != "" {
+		if info, ok := v.tr.get(tid); ok && info.Lang != "" {
+			lang = info.Lang
 		}
 	}
-	select {
-	case v.stt.queue <- job:
-	default:
-		v.stt.warn("Warteschlange voll – Abschnitt von %s in #%s ausgelassen (STT_CONCURRENCY erhöhen?)", seg.Name, seg.Channel)
-	}
+	v.stt.Submit(stt.Job{Audio: seg.Ogg, Lang: lang, Priority: tid != "", Done: func(text string, err error) {
+		if err == nil {
+			v.deliverText(seg.Channel, seg.User, seg.Name, seg.Start, seg.Dur, tid, text)
+		}
+	}})
 }
 
-// sttWorker verschriftlicht Abschnitte aus der Warteschlange.
-func (v *voiceMgr) sttWorker() {
-	for {
-		var job sttJob
-		select {
-		case <-v.stop:
-			return
-		case job = <-v.stt.queue:
-		}
-		seg := job.seg
-		lang := seg.Lang
-		if job.tid != "" {
-			if info, ok := v.tr.get(job.tid); ok && info.Lang != "" {
-				lang = info.Lang
-			}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		text, err := v.stt.transcribeFile(ctx, seg.Ogg, "audio.ogg", "audio/ogg", lang)
-		cancel()
-		if err != nil || text == "" {
-			continue
-		}
-		v.control(seg.Channel, seg.User, "cap", true, text) // Untertitel für alle im Sprachkanal
-		if job.tid == "" {
-			continue
-		}
-		l := TranscriptLine{At: seg.Start.UnixMilli(), Dur: seg.Dur.Milliseconds(), User: seg.User, Name: seg.Name, Text: text}
-		if v.tr.add(job.tid, l) {
-			v.s.hub.SendToReaders(seg.Channel, Event{Type: "transcript", Room: seg.Channel, Transcript: &TranscriptEvent{ID: job.tid, Line: &l}})
-		}
+// segmentTarget: Wohin gehört ein Abschnitt? tid = laufendes Transkript ("" = nur Untertitel);
+// ok = false, wenn er gar nicht gebraucht wird (keine Untertitel, Ende-zu-Ende, zu viele).
+func (v *voiceMgr) segmentTarget(room, user string, start time.Time, dur time.Duration) (*VoiceConfig, string, bool) {
+	info, ok := v.s.hub.roomInfo(room)
+	if !ok || info.Voice == nil || info.Voice.E2EE {
+		return nil, "", false
+	}
+	tid := v.tr.target(room, start, dur)
+	if tid == "" && (!info.Voice.Captions || !v.capRL.Allow(user)) {
+		return nil, "", false
+	}
+	return info.Voice, tid, true
+}
+
+// deliverText: Untertitel an alle im Sprachkanal, bei laufender Live-Transkription ins Transkript.
+func (v *voiceMgr) deliverText(room, user, name string, start time.Time, dur time.Duration, tid, text string) {
+	if text = cleanCaption(text); text == "" {
+		return
+	}
+	v.control(room, user, "cap", true, text)
+	if tid == "" {
+		return
+	}
+	l := TranscriptLine{At: start.UnixMilli(), Dur: dur.Milliseconds(), User: user, Name: name, Text: text}
+	if v.tr.add(tid, l) {
+		v.s.hub.SendToReaders(room, Event{Type: "transcript", Room: room, Transcript: &TranscriptEvent{ID: tid, Line: &l}})
 	}
 }
 
@@ -585,7 +622,8 @@ func (s *Server) handleRoomTranscripts(w http.ResponseWriter, r *http.Request) {
 		fail(w, ErrNoPerm)
 		return
 	}
-	out := map[string]any{"items": v.tr.list(room), "allowed": v.transcriptAllowed(acc), "canStart": me.ID != "" && v.transcriptAllowed(acc) && v.mayHost(room, me)}
+	ok := v.transcriptAllowed(acc, v.roomRelay(room))
+	out := map[string]any{"items": v.tr.list(room), "allowed": ok, "canStart": me.ID != "" && ok && v.mayHost(room, me)}
 	if a := v.tr.activeFor(room); a != nil {
 		out["active"] = a
 		out["lines"] = v.tr.read(a.ID)
@@ -728,5 +766,33 @@ func (s *Server) handleVoiceAgentSegment(w http.ResponseWriter, r *http.Request)
 	mode, _ := strconv.Atoi(q.Get("mode"))
 	v.onSegment(voicerelay.Segment{Channel: NormRoom(q.Get("channel")), User: q.Get("user"), Name: q.Get("name"), Lang: q.Get("lang"),
 		Mode: mode, Start: time.UnixMilli(start), Dur: time.Duration(dur) * time.Millisecond, Ogg: body})
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+// POST /api/voice/agents/text {"channel","user","name","mode","start","dur","text"} – ein Agent
+// mit eigener Spracherkennung schickt den fertigen Text eines Abschnitts.
+func (s *Server) handleVoiceAgentText(w http.ResponseWriter, r *http.Request) {
+	v := s.voice
+	if v == nil {
+		voiceFail(w, ErrVoiceOff)
+		return
+	}
+	if !v.agentAuth(r) {
+		writeErr(w, http.StatusUnauthorized, "Ungültiger Agenten-Schlüssel")
+		return
+	}
+	var in struct {
+		Channel, User, Name, Text string
+		Mode                      int
+		Start, Dur                int64
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	room := NormRoom(in.Channel)
+	start, dur := time.UnixMilli(in.Start), time.Duration(in.Dur)*time.Millisecond
+	if _, tid, ok := v.segmentTarget(room, in.User, start, dur); ok {
+		v.deliverText(room, in.User, in.Name, start, dur, tid, in.Text)
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }

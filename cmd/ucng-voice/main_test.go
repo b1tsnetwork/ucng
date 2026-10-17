@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"ucng/internal/clientip"
+	"ucng/internal/stt"
 	"ucng/internal/voicerelay"
 	"ucng/internal/wsock"
 )
@@ -113,5 +114,60 @@ func TestWSURL(t *testing.T) {
 	}
 	if _, err := wsURL("ftp://x"); err == nil {
 		t.Error("ftp angenommen")
+	}
+}
+
+// Eigene Spracherkennung: Der Agent verschriftlicht selbst und schickt nur Text; ohne sie geht
+// der Ton (Ogg-Opus) an den Chat-Server. In der Meldung steht die Fähigkeit „stt“.
+func TestAgentSTT(t *testing.T) {
+	whisper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseMultipartForm(1 << 20)
+		w.Write([]byte(`{"text":"Hallo ` + r.FormValue("language") + `"}`))
+	}))
+	defer whisper.Close()
+	got := make(chan string, 4)
+	var report map[string]any
+	var mu sync.Mutex
+	chat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/voice/agents/text":
+			var in struct{ Channel, User, Text string }
+			json.NewDecoder(r.Body).Decode(&in)
+			got <- "text:" + in.Channel + ":" + in.User + ":" + in.Text
+		case "/api/voice/agents/segment":
+			got <- "audio:" + r.URL.Query().Get("channel")
+		case "/api/voice/agents/report":
+			mu.Lock()
+			json.NewDecoder(r.Body).Decode(&report)
+			mu.Unlock()
+			w.Write([]byte(`{"publicKey":"` + base64.StdEncoding.EncodeToString(make([]byte, 32)) + `"}`))
+		}
+	}))
+	defer chat.Close()
+	seg := voicerelay.Segment{Channel: "talk", User: "u1", Name: "Lu", Lang: "de", Mode: voicerelay.TapTranscript, Start: time.Now(), Ogg: []byte("OggS…")}
+	a := &agent{cfg: config{ChatURL: chat.URL, Token: "tok"}, client: &http.Client{Timeout: 5 * time.Second}, segSem: make(chan struct{}, 8),
+		relay: voicerelay.New(voicerelay.Config{})}
+	defer a.relay.Close()
+	a.sendSegment(seg) // ohne eigene Spracherkennung: Ton an den Chat-Server
+	if m := <-got; m != "audio:talk" {
+		t.Fatalf("ohne STT: %s", m)
+	}
+	a.stt = stt.New(stt.Config{URL: whisper.URL, Concurrency: 1})
+	defer a.stt.Close()
+	a.sendSegment(seg)
+	select {
+	case m := <-got:
+		if m != "text:talk:u1:Hallo de" {
+			t.Fatalf("mit STT: %s", m)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("kein Text")
+	}
+	a.report(context.Background())
+	mu.Lock()
+	defer mu.Unlock()
+	feats, _ := report["stats"].(map[string]any)["features"].([]any)
+	if len(feats) == 0 || feats[len(feats)-1] != "stt" || report["stt"].(map[string]any)["done"].(float64) != 1 {
+		t.Fatalf("Meldung: %v / %v", feats, report["stt"])
 	}
 }

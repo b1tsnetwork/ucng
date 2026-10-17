@@ -178,7 +178,8 @@ type channel struct {
 	active      map[uint16]*peer // gerade weitergeleitete Sprecher
 	frames      []frameRef       // im laufenden Takt eingegangen
 	ticking     bool
-	tap         int // Mitschnitt für die Spracherkennung (TapOff, TapCaptions, TapTranscript)
+	tap         int    // Mitschnitt für die Spracherkennung (TapOff, TapCaptions, TapTranscript)
+	tapLang     string // Sprache der Live-Transkription (überstimmt die der Personen)
 }
 
 type frameRef struct {
@@ -1034,10 +1035,14 @@ func (r *Relay) Control(channel, user, action string, value bool, reason string)
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		ch := r.channels[channel]
-		if ch == nil || len(reason) != 1 {
+		mode, lang, _ := strings.Cut(reason, ":") // „2:de“ = Live-Transkription auf Deutsch
+		if ch == nil || len(mode) != 1 || len(lang) > 8 {
 			return false
 		}
-		r.setTapLocked(ch, int(reason[0])-'0')
+		r.setTapLocked(ch, int(mode[0])-'0')
+		if ch.tap == TapTranscript {
+			ch.tapLang = lang
+		}
 		return true
 	}
 	if action == "remedia" { // eine Medienart ist auf einen anderen Relay umgezogen (reason = Art): alle verbinden neu

@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"ucng/internal/clientip"
+	"ucng/internal/stt"
 	"ucng/internal/voicerelay"
 )
 
@@ -53,6 +54,9 @@ type config struct {
 	Role                                            string // "" = alles, "media" = nur Bildschirm und Kameras
 	TrustProxy                                      bool
 	TrustedProxies                                  string
+	// Eigene Spracherkennung (optional): dann verschriftlicht der Agent selbst und schickt nur Text
+	STTURL, STTToken, STTModel, STTLanguage string
+	STTConcurrency                          int
 }
 
 func loadConfig() config {
@@ -74,6 +78,12 @@ func loadConfig() config {
 	flag.BoolVar(&c.TrustProxy, "trust-proxy", env("TRUST_PROXY", "") == "1", "X-Forwarded-For von vertrauenswürdigen Proxys verwenden")
 	flag.StringVar(&c.TrustedProxies, "trusted-proxies", env("TRUSTED_PROXIES", ""), "Vertrauenswürdige Proxys (leer = Loopback und private Netze)")
 	flag.StringVar(&c.Role, "role", env("ROLE", ""), "Aufgaben: leer = Sprache, Bildschirm und Kameras; \"media\" = nur Bildschirm und Kameras (ausgelagert)")
+	sttN, _ := strconv.Atoi(env("STT_CONCURRENCY", "4"))
+	flag.StringVar(&c.STTURL, "stt-url", env("STT_URL", ""), "Eigene Spracherkennung dieses Sprach-Servers (OpenAI-kompatibel); leer = der Chat-Server verschriftlicht")
+	flag.StringVar(&c.STTToken, "stt-token", env("STT_TOKEN", ""), "Bearer-Schlüssel der Spracherkennung (optional)")
+	flag.StringVar(&c.STTModel, "stt-model", env("STT_MODEL", "whisper-1"), "Modell der Spracherkennung")
+	flag.StringVar(&c.STTLanguage, "stt-language", env("STT_LANGUAGE", ""), "Sprache fest vorgeben (leer = je Person)")
+	flag.IntVar(&c.STTConcurrency, "stt-concurrency", sttN, "Gleichzeitige Anfragen an die Spracherkennung")
 	flag.Parse()
 	if c.Role != "" && c.Role != "media" {
 		log.Fatal("ROLE: leer oder \"media\"")
@@ -121,6 +131,7 @@ type agent struct {
 	ipMu    sync.Mutex
 	perIP   map[string]int
 	segSem  chan struct{} // gleichzeitige Sprach-Abschnitte zum Chat-Server
+	stt     *stt.Client   // eigene Spracherkennung (nil = der Chat-Server verschriftlicht)
 }
 
 func main() {
@@ -138,6 +149,10 @@ func main() {
 	}
 	a := &agent{cfg: cfg, ws: ws, kick: make(chan struct{}, 1), client: &http.Client{Timeout: 10 * time.Second},
 		ipr: ipr, perIP: map[string]int{}, segSem: make(chan struct{}, 8)}
+	a.stt = stt.New(stt.Config{URL: cfg.STTURL, Token: cfg.STTToken, Model: cfg.STTModel, Lang: cfg.STTLanguage, Concurrency: cfg.STTConcurrency})
+	if a.stt != nil {
+		log.Printf("Eigene Spracherkennung: %s (Modell %s) – an den Chat-Server geht nur Text", a.stt.URL(), a.stt.Model())
+	}
 	if cfg.Origins != "" {
 		var list []string
 		for _, o := range strings.Split(cfg.Origins, ",") {
@@ -265,6 +280,14 @@ func (a *agent) handleControl(w http.ResponseWriter, r *http.Request) {
 // sendSegment reicht einen Sprach-Abschnitt (Untertitel, Live-Transkription) an den Chat-Server
 // weiter – der schickt ihn an die eigene Spracherkennung. Höchstens 8 gleichzeitig.
 func (a *agent) sendSegment(s voicerelay.Segment) {
+	if a.stt != nil { // selbst verschriftlichen, nur den Text weitergeben
+		a.stt.Submit(stt.Job{Audio: s.Ogg, Lang: s.Lang, Priority: s.Mode == voicerelay.TapTranscript, Done: func(text string, err error) {
+			if err == nil && text != "" {
+				a.sendText(s, text)
+			}
+		}})
+		return
+	}
 	select {
 	case a.segSem <- struct{}{}:
 	default:
@@ -285,6 +308,26 @@ func (a *agent) sendSegment(s voicerelay.Segment) {
 	res, err := a.client.Do(req)
 	if err != nil {
 		log.Printf("Sprach-Abschnitt nicht zugestellt: %v", err)
+		return
+	}
+	res.Body.Close()
+}
+
+// sendText: verschriftlichter Abschnitt an den Chat-Server (Untertitel, Transkript).
+func (a *agent) sendText(s voicerelay.Segment, text string) {
+	body, _ := json.Marshal(map[string]any{"channel": s.Channel, "user": s.User, "name": s.Name, "mode": s.Mode,
+		"start": s.Start.UnixMilli(), "dur": s.Dur.Milliseconds(), "text": text})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.ChatURL+"/api/voice/agents/text", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+a.cfg.Token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := a.client.Do(req)
+	if err != nil {
+		log.Printf("Text nicht zugestellt: %v", err)
 		return
 	}
 	res.Body.Close()
@@ -317,12 +360,18 @@ func (a *agent) reportLoop(ctx context.Context) {
 
 func (a *agent) report(ctx context.Context) error {
 	st := a.relay.Stats()
+	var sttStats *stt.Stats
+	if a.stt != nil {
+		st.Features = append(st.Features, "stt")
+		ss := a.stt.Stats()
+		sttStats = &ss
+	}
 	rooms := map[string][]voicerelay.PeerInfo{}
 	for ch := range st.Channels {
 		rooms[ch] = a.relay.Peers(ch)
 	}
 	body, _ := json.Marshal(map[string]any{"id": a.cfg.ID, "wsURL": a.ws, "controlURL": a.cfg.ControlURL,
-		"version": version, "stats": st, "rooms": rooms, "role": a.cfg.Role})
+		"version": version, "stats": st, "rooms": rooms, "role": a.cfg.Role, "stt": sttStats})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.ChatURL+"/api/voice/agents/report", bytes.NewReader(body))
 	if err != nil {
 		return err

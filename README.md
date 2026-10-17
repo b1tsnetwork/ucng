@@ -640,7 +640,7 @@ Moderierende nehmen über *Mehr → Aufnahme starten* auf – **im eigenen Brows
 
 ### Untertitel und Live-Transkription
 
-Mit einer **eigenen** Spracherkennung (selbst betriebenes Whisper o. Ä., OpenAI-kompatible Schnittstelle) gibt es Live-Untertitel und eine Live-Transkription. Es gibt keinen Weg über fremde Dienste: Ohne `STT_URL` ist beides aus.
+Mit einer **eigenen** Spracherkennung (selbst betriebenes Whisper o. Ä., OpenAI-kompatible Schnittstelle) gibt es Live-Untertitel und eine Live-Transkription. Es gibt keinen Weg über fremde Dienste: Ohne `STT_URL` – beim Chat-Server oder bei einem Sprach-Server – ist beides aus.
 
 | Umgebungsvariable | Standard | Bedeutung |
 |---|---|---|
@@ -651,7 +651,7 @@ Mit einer **eigenen** Spracherkennung (selbst betriebenes Whisper o. Ä., OpenAI
 | `STT_CONCURRENCY` | `4` | gleichzeitige Anfragen an die Spracherkennung – für alle Kanäle zusammen |
 | `TRANSCRIPT_KEEP_DAYS` | `0` | Transkripte nach so vielen Tagen löschen; `0` = behalten, bis der Admin sie löscht |
 
-**So funktioniert es:** Der **Sprach-Server** (eingebaut oder Agent) schneidet die Sprache jeder Person an Sprechpausen (0,75 s, höchstens 10 s) in Abschnitte. Er dekodiert dafür nichts – die Opus-Rahmen werden nur als Ogg-Datei verpackt (Standardbibliothek). Der Chat-Server schickt jeden Abschnitt an `STT_URL` und den Text als Untertitel an alle im Sprachkanal. **Wer spricht, steht sicher fest:** Es ist die Person der Sprachverbindung – keine Angabe des Browsers. Auch Personen ohne Sprecherplatz (mehr Sprechende als *Sprecher gleichzeitig*) werden verschriftlicht.
+**So funktioniert es:** Der **Sprach-Server** (eingebaut oder Agent) schneidet die Sprache jeder Person an Sprechpausen (0,75 s, höchstens 10 s) in Abschnitte. Er dekodiert dafür nichts – die Opus-Rahmen werden nur als Ogg-Datei verpackt (Standardbibliothek). Verschriftlicht wird **dort, wo eine Spracherkennung eingetragen ist:** Hat der Sprach-Server ein eigenes `STT_URL`, macht er es selbst und schickt nur den Text an den Chat-Server (gut, wenn neben ihm eine GPU mit Whisper steht oder die Last verteilt werden soll); sonst gehen die Abschnitte an den Chat-Server und von dort an dessen `STT_URL`. Der Chat-Server verteilt den Text als Untertitel an alle im Sprachkanal und schreibt das Transkript. **Wer spricht, steht sicher fest:** Es ist die Person der Sprachverbindung – keine Angabe des Browsers. Auch Personen ohne Sprecherplatz (mehr Sprechende als *Sprecher gleichzeitig*) werden verschriftlicht.
 
 - **Untertitel** (Häkchen *Untertitel und Live-Transkription* beim Kanal): laufen immer, wenn der Kanal es erlaubt; nichts wird gespeichert. Jede Person kann sie ausblenden und *Meine Sprache nicht verschriftlichen* wählen.
 - **Live-Transkription**: Moderierende (bzw. der Besitzer eines **temporären Kanals** – dort geht sie auch ohne das Häkchen) starten sie über *Mehr → Live-Transkription starten* oder das 📝 oben im Kanal. Dann wird **alles** im Sprachkanal Gesagte mit Name und Uhrzeit mitgeschrieben (auch von Personen, die *nicht verschriftlichen* gewählt haben). Alle sehen das deutlich: rote Leiste unter dem Kanalkopf, Hinweis in der Sprachleiste, eine Nachricht im Chat beim Start und beim Ende.
@@ -659,7 +659,7 @@ Mit einer **eigenen** Spracherkennung (selbst betriebenes Whisper o. Ä., OpenAI
 - **Ende:** von Hand, automatisch zwei Minuten nachdem der Sprachkanal leer ist, nach spätestens 12 Stunden oder wenn der Kanal gelöscht wird.
 - **Admin → Transkripte:** alle Transkripte mit Kanal, Dauer, Beiträgen und Person, die es gestartet hat; herunterladen und **löschen** (ein laufendes wird dabei beendet). Gespeichert wird unter `DATA_DIR/transcripts` (und ist damit auch in den Backups).
 - **Mehrere Kanäle gleichzeitig:** Jeder Kanal hat sein eigenes Transkript; alle Abschnitte gehen durch eine gemeinsame Warteschlange an die Spracherkennung (`STT_CONCURRENCY` parallel). Untertitel werden bei Überlast ausgelassen, Transkript-Abschnitte warten.
-- In Ende-zu-Ende-verschlüsselten Kanälen gibt es weder Untertitel noch Transkription (der Server hat die Sprache nicht). Sprach-Server (Agenten) müssen aktuell sein (`ucng-voice` mit „tap“); sie reichen die Abschnitte über `POST /api/voice/agents/segment` an den Chat-Server.
+- In Ende-zu-Ende-verschlüsselten Kanälen gibt es weder Untertitel noch Transkription (der Server hat die Sprache nicht). Sprach-Server (Agenten) müssen aktuell sein (`ucng-voice` mit „Mitschnitt“); ohne eigene Spracherkennung reichen sie die Abschnitte über `POST /api/voice/agents/segment` an den Chat-Server, mit eigener nur den Text über `POST /api/voice/agents/text`. Admin → *Sprach-Server* zeigt je Server, ob und wo verschriftlicht wird – samt Warteschlange, Dauer und letztem Fehler.
 
 API: `POST /api/voice/{room}/transcript` mit `{"on":true}` bzw. `{"on":false}` (optional `"lang":"de"`), `GET /api/rooms/{room}/transcripts` (laufendes samt Beiträgen und frühere), `GET /api/transcripts/{id}?format=txt|json`; Admin: `GET /api/admin/transcripts`, `GET|DELETE /api/admin/transcripts/{id}`.
 
@@ -721,7 +721,7 @@ Das Stück wird in Echtzeit vom Chat-Server an den Relay des Kanals geschickt (a
 
 ### Mehr Sprach-Server (Agenten)
 
-Der eingebaute Relay reicht für die Grenzen oben (`VOICE_MAX_PARTICIPANTS`, `VOICE_MAX_MBIT`). Für mehr startest du weitere Sprach-Server mit `ucng-voice` – auf demselben oder anderen Rechnern. Jeder meldet sich beim Chat-Server an; ein neuer Sprachkanal kommt auf den Relay mit der geringsten Auslastung und bleibt dort, bis er leer ist. Fällt ein Agent aus, verbinden sich die Browser neu und landen auf einem anderen. Auslastung aller Relays: Admin → Übersicht → *Sprach-Server*.
+Der eingebaute Relay reicht für die Grenzen oben (`VOICE_MAX_PARTICIPANTS`, `VOICE_MAX_MBIT`). Für mehr startest du weitere Sprach-Server mit `ucng-voice` – auf demselben oder anderen Rechnern. Jeder meldet sich beim Chat-Server an; ein neuer Sprachkanal kommt auf den Relay mit der geringsten Auslastung und bleibt dort, bis er leer ist. Fällt ein Agent aus, verbinden sich die Browser neu und landen auf einem anderen. Funktionen, Auslastung, Kanäle und Spracherkennung jedes Servers: Admin → *Sprach-Server* (aktualisiert sich alle 5 s).
 
 ```bash
 # Chat-Server
@@ -744,6 +744,7 @@ CHAT_URL=http://chat-intern:8080 AGENT_TOKEN='langer-zufälliger-schlüssel' \
 | `ROLE` | leer | `media` = nur Bildschirm und Kameras (bekommt keine Sprachkanäle, nimmt ausgelagerte Medien zuerst) |
 | `ALLOWED_ORIGINS` | `PUBLIC_URL` des Chat-Servers | Seiten, von denen Browser verbinden dürfen |
 | `TRUST_PROXY`, `TRUSTED_PROXIES` | aus | wie beim Chat-Server |
+| `STT_URL`, `STT_MODEL`, `STT_TOKEN`, `STT_LANGUAGE`, `STT_CONCURRENCY` | leer | **eigene Spracherkennung** dieses Sprach-Servers (wie beim Chat-Server). Gesetzt: Er verschriftlicht selbst und schickt nur noch Text an den Chat-Server. Leer: Die Abschnitte gehen an den Chat-Server, der sie verschriftlicht |
 
 Wichtig: Beim Chat-Server muss `PUBLIC_URL` gesetzt sein – der Agent lässt nur Browser von dieser Adresse zu. Chat-Server und Agent sprechen am besten über ein internes Netz miteinander (`CHAT_URL`, `CONTROL_URL`); über das Internet nur per HTTPS – beide Richtungen sind mit dem Agenten-Schlüssel geschützt. Ein fertiges Compose-Beispiel (Agent auf demselben Server wie der Chat oder auf einem eigenen) liegt in `deploy/voice/`. Schritt für Schritt: [docs/voice-deployment.md](docs/voice-deployment.md).
 

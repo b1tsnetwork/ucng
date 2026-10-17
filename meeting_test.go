@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"ucng/internal/stt"
 	"ucng/internal/voicerelay"
 	"ucng/internal/wsock"
 )
@@ -496,5 +497,56 @@ func TestTranscriptTempRoom(t *testing.T) {
 	}
 	if srv.voice.tr.activeFor(info.Name) == nil {
 		t.Fatal("läuft nicht")
+	}
+}
+
+// Sprach-Server mit eigener Spracherkennung: Der Chat-Server braucht kein STT_URL; der Agent
+// schickt nur Text. Die Übersicht zeigt die Funktionen je Server.
+func TestAgentOwnSTT(t *testing.T) {
+	ts, srv := voiceServer(t, func(c *Config) { c.VoiceAgentToken = "agent-geheim-123"; c.VoiceNoBuiltin = true })
+	room := "runde"
+	srv.hub.CreateRoomWith(RoomInput{Name: &room, Voice: &VoiceConfig{Captions: true}})
+	adm := adminLogin(t, ts.URL)
+	var vs struct{ STT bool }
+	getJSON(t, ts.URL+"/api/admin/voice", adm, &vs)
+	if vs.STT {
+		t.Fatal("ohne Spracherkennung als verfügbar gemeldet")
+	}
+	b, _ := json.Marshal(agentReport{ID: "w1", WSURL: "wss://w1.example/ws", ControlURL: "http://127.0.0.1:1/control",
+		Stats: voicerelay.Stats{Max: 200, MaxMbit: 50, Features: []string{"media", "tap", "stt"}}, Rooms: map[string][]VoicePeer{},
+		STT: &stt.Stats{Host: "gpu1:8000", Model: "large-v3", Concurrency: 2, Done: 7}})
+	post(t, ts.URL+"/api/voice/agents/report", "agent-geheim-123", string(b)).Body.Close()
+	var full struct {
+		STT    bool
+		Relays []struct {
+			ID        string
+			Functions []string
+			STT       *stt.Stats
+		}
+	}
+	getJSON(t, ts.URL+"/api/admin/voice", adm, &full)
+	if !full.STT || len(full.Relays) != 1 || strings.Join(full.Relays[0].Functions, ",") != "voice,media,tap,stt" || full.Relays[0].STT.Model != "large-v3" {
+		t.Fatalf("Übersicht: %+v", full)
+	}
+	mia := claim(t, ts.URL, "Mia")
+	srv.users.SetTeam(userID(t, srv, "Mia"), true)
+	res := post(t, ts.URL+"/api/voice/runde/transcript", mia, `{"on":true}`)
+	var info TranscriptInfo
+	json.NewDecoder(res.Body).Decode(&info)
+	if res.StatusCode != 200 {
+		t.Fatalf("Start: %d", res.StatusCode)
+	}
+	text := func(tok string) int {
+		b, _ := json.Marshal(map[string]any{"channel": "runde", "user": "u1", "name": "Lu", "mode": 2,
+			"start": time.Now().UnixMilli(), "dur": 900, "text": "  Guten   Abend "})
+		r := post(t, ts.URL+"/api/voice/agents/text", tok, string(b))
+		r.Body.Close()
+		return r.StatusCode
+	}
+	if text("falsch") != http.StatusUnauthorized || text("agent-geheim-123") != http.StatusAccepted {
+		t.Fatal("Text vom Agenten")
+	}
+	if l := srv.voice.tr.read(info.ID); len(l) != 1 || l[0].Text != "Guten Abend" || l[0].Name != "Lu" {
+		t.Fatalf("Transkript: %+v", l)
 	}
 }
