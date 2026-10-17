@@ -30,10 +30,17 @@ services:
       BITRATE: ${BITRATE:-128}
       MAX_QUEUE: ${MAX_QUEUE:-500}
       YTDLP_UPDATE: ${YTDLP_UPDATE:-1} # beim Start neueste yt-dlp-Fassung holen
+      # Zwischenspeicher: YouTube-Stücke dauerhaft ablegen (Ogg-Opus, „Titel [ID].opus“) –
+      # beim nächsten Mal ohne Anfrage bei YouTube. Leer = aus. Liegt er im Musik-Ordner,
+      # spielt „!folder youtube“ alles Gespeicherte.
+      CACHE_DIR: ${CACHE_DIR-/music/youtube}
+      CACHE_MAX_GB: ${CACHE_MAX_GB:-0}  # 0 = ohne Grenze; sonst fliegt zuerst, was am längsten nicht lief
       TZ: ${TZ:-Europe/Berlin}
     volumes:
-      # Dein Musik-Ordner – nur lesend
-      - ${MUSIC_PATH:-./music}:/music:ro
+      # Dein Musik-Ordner. Beschreibbar, damit der Zwischenspeicher (/music/youtube) geht –
+      # der Bot schreibt nur dort. Ohne Zwischenspeicher: „:ro“ anhängen und CACHE_DIR= leer.
+      # Der Container läuft als Nutzer 10001: auf Linux einmal  mkdir -p music/youtube && chown 10001 music/youtube
+      - ${MUSIC_PATH:-./music}:/music
     tmpfs:
       # Downloads, yt-dlp-Update und Caches; mehr Platz für lange YouTube-Videos
       - /tmp:size=${TMP_SIZE:-1g},uid=10001,gid=10001,mode=0700

@@ -691,7 +691,7 @@ curl -X POST -H "Authorization: Bearer gcb_…" --data-binary @musik.opus \
 
 Das Stück wird in Echtzeit vom Chat-Server an den Relay des Kanals geschickt (auch an einen Agenten). Achte auf die Rechte an der Musik.
 
-**Fertiger Musik-Bot:** [`examples/bot-music`](examples/bot-music/README.md) spielt MP3s aus einem Ordner oder YouTube-Videos/-Playlists (`!play`, `!folder`, `!skip`, `!stop`, `!queue`, `!vol` …) – als offizielles Image `ghcr.io/<owner>/ucng-bot-music` mit compose-Datei in `deploy/music`. Beim Streaming den Bot direkt mit dem Chat-Server verbinden oder im Reverse-Proxy das Puffern des Request-Bodys abschalten (nginx: `proxy_request_buffering off;`).
+**Fertiger Musik-Bot:** [`examples/bot-music`](examples/bot-music/README.md) spielt MP3s aus einem Ordner oder YouTube-Videos/-Playlists (`!play`, `!folder`, `!skip`, `!stop`, `!queue`, `!vol` …); YouTube-Stücke legt er dauerhaft ab und spielt sie danach ohne Anfrage bei YouTube – als offizielles Image `ghcr.io/<owner>/ucng-bot-music` mit compose-Datei in `deploy/music`. Beim Streaming den Bot direkt mit dem Chat-Server verbinden oder im Reverse-Proxy das Puffern des Request-Bodys abschalten (nginx: `proxy_request_buffering off;`).
 
 ### Mehr Sprach-Server (Agenten)
 
