@@ -80,7 +80,7 @@ func (v *voiceMgr) mediaCapable() bool {
 // mediaNeedMbit: geschätzter Bedarf einer Medienart im Kanal (alle sehen zu).
 func mediaNeedMbit(kind string, cfg VoiceConfig, peers int) float64 {
 	if kind == voicerelay.KindScreen {
-		return float64(cfg.screenPreset().Kbps*max(1, peers-1)) * 1.05 / 1000
+		return float64((cfg.screenPreset().Kbps+160)*max(1, peers-1)) * 1.05 / 1000 // Bild und Ton
 	}
 	vp := cfg.videoPreset()
 	others := float64(max(1, peers-1))

@@ -1320,3 +1320,98 @@ body.compact .msg:hover { background: color-mix(in srgb, var(--surface) 80%, var
 @media (max-width: 760px) {
   .profile-card { width: min(300px, calc(100vw - 16px)); }
 }
+
+/* ---------- Konferenz: Ansichten, Reaktionen, Leitung, Untertitel, Statistik, Mobil ---------- */
+
+/* Galerie: alle gleich groß */
+.conf-view.gallery { grid-template-rows: minmax(0, 1fr) auto; }
+.conf-view.gallery .conf-stage { grid-template-rows: none; grid-auto-rows: minmax(0, 1fr); }
+.conf-view.gallery .conf-stage[data-n="2"] { grid-template-columns: 1fr 1fr; }
+.conf-view.gallery .conf-stage[data-n="3"], .conf-view.gallery .conf-stage[data-n="4"] { grid-template-columns: 1fr 1fr; }
+.conf-view.gallery .conf-stage[data-n="5"], .conf-view.gallery .conf-stage[data-n="6"],
+.conf-view.gallery .conf-stage[data-n="7"], .conf-view.gallery .conf-stage[data-n="8"], .conf-view.gallery .conf-stage[data-n="9"] { grid-template-columns: repeat(3, 1fr); }
+.conf-view.gallery .conf-stage[data-n="10"], .conf-view.gallery .conf-stage[data-n="11"], .conf-view.gallery .conf-stage[data-n="12"],
+.conf-view.gallery .conf-stage[data-n="13"], .conf-view.gallery .conf-stage[data-n="14"], .conf-view.gallery .conf-stage[data-n="15"], .conf-view.gallery .conf-stage[data-n="16"] { grid-template-columns: repeat(4, 1fr); }
+.conf-view.mini .conf-tile.lead { width: 220px; box-shadow: 0 0 0 2px var(--accent); }
+.conf-tile.pinned { box-shadow: 0 0 0 3px var(--accent); }
+.conf-pin {
+  position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border: 0; border-radius: 8px;
+  background: rgba(0, 0, 0, .55); font-size: 15px; line-height: 1; opacity: 0; transition: opacity .12s;
+}
+.conf-tile:hover .conf-pin, .conf-tile.pinned .conf-pin, .conf-pin:focus-visible { opacity: 1; }
+.conf-tile:fullscreen { border-radius: 0; }
+#confLayout.on { color: var(--accent-text); }
+
+/* Reaktionen */
+@keyframes float-up { from { transform: translateY(0) scale(.6); opacity: 0; } 15% { opacity: 1; transform: translateY(-6px) scale(1.15); } to { transform: translateY(-46px) scale(1); opacity: 0; } }
+.voice-peer { position: relative; }
+.voice-react { position: absolute; right: 36px; top: -4px; font-size: 20px; pointer-events: none; animation: float-up 2.5s ease-out forwards; }
+.conf-react { position: absolute; left: 50%; bottom: 30%; font-size: 44px; pointer-events: none; animation: float-up 2.5s ease-out forwards; text-shadow: 0 2px 8px rgba(0, 0, 0, .4); }
+.msg-menu.react-menu { display: grid; grid-template-columns: repeat(4, 44px); min-width: 0; gap: 2px; }
+.msg-menu.react-menu .menu-item { justify-content: center; padding: 6px; font-size: 22px; }
+
+/* Teilnehmer: Qualität, Aufnahme, moderiert */
+.voice-flag.quality.q1 { color: var(--danger); }
+.voice-flag.quality.q2 { color: #e2a400; }
+.voice-flag.rec { color: var(--danger); }
+.voice-flag.mod { color: var(--ink-muted); }
+
+/* Hinweise in der Sprachleiste */
+.voice-bar-note.rec { color: #ff6b75; font-weight: 600; }
+button.voice-bar-note { border: 0; background: none; padding: 0; text-align: left; font: inherit; cursor: pointer; }
+.voice-bar-note.e2ee { font-variant-numeric: tabular-nums; }
+.voice-bar-note.e2ee.ok { color: var(--online); }
+.voice-ask, .voice-breakout {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; padding: 8px 10px; border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--ink-raised)); color: var(--ink-strong); font-size: 13px;
+}
+.voice-ask span, .voice-breakout span { flex: 1 1 140px; }
+.voice-ask button, .voice-breakout button { height: 30px; padding: 0 10px; font-size: 13px; border-radius: 8px; }
+.voice-breakout .btn-quiet { color: var(--ink-strong); border-color: color-mix(in srgb, var(--ink-strong) 30%, transparent); }
+
+/* Untertitel */
+.caption-box {
+  position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6;
+  width: min(760px, calc(100% - 32px)); padding: 8px 14px; border-radius: 12px;
+  background: rgba(10, 11, 20, .82); color: #fff; font-size: 15px; line-height: 1.45; pointer-events: none;
+}
+.caption-box p { margin: 2px 0; }
+.caption-box b { color: #b9b4ff; font-weight: 650; }
+
+/* Ton der Bildschirmfreigabe */
+.screen-tone { display: flex; align-items: center; gap: 6px; color: #e7e8f2; }
+.screen-tone svg { width: 18px; height: 18px; }
+.screen-tone input { width: 90px; accent-color: var(--accent); }
+
+/* Statistik */
+.voice-stats {
+  position: fixed; right: 16px; bottom: 16px; z-index: 40; width: min(420px, calc(100vw - 32px)); max-height: 70vh; overflow: auto;
+  padding: 12px 14px; border-radius: 14px; background: var(--surface); color: var(--text); border: 1px solid var(--line);
+  box-shadow: var(--shadow-float); font-size: 12.5px;
+}
+.voice-stats h3 { margin: 0 0 8px; font-size: 14px; }
+.vs-row { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.vs-row span { color: var(--muted); }
+.vs-row b { font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.voice-stats .btn-quiet { margin-top: 10px; height: 32px; }
+
+/* Anrufleiste auf dem Handy */
+.mobile-call {
+  position: fixed; left: 8px; right: 8px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 8;
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 16px;
+  background: var(--ink); color: var(--ink-text); box-shadow: var(--shadow-float);
+}
+.mc-room { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-strong); font-weight: 600; font-size: 14px; }
+.mc-btn { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 12px; background: var(--ink-raised); color: var(--ink-strong); }
+.mc-btn svg { width: 22px; height: 22px; }
+.mc-btn.off { color: var(--danger); }
+.mc-btn.on { background: var(--online); color: #fff; }
+.mc-btn.leave { background: var(--danger); color: #fff; }
+
+/* Touch: größere Ziele */
+@media (pointer: coarse) {
+  .vb, .up-btn { min-width: 40px; min-height: 40px; }
+  .voice-peer-btn { min-height: 40px; }
+  .conf-pin { opacity: 1; }
+  .menu-item { min-height: 44px; }
+}

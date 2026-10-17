@@ -14,18 +14,21 @@
     json(k, def) { try { return JSON.parse(localStorage.getItem(k)) || def; } catch { return def; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* egal */ } },
   };
-  const DEFAULTS = { input: "", output: "", mode: "vad", sens: -50, pttKey: "F9", pttLabel: "F9", ns: true, vol: {}, mute: {} };
+  const DEFAULTS = { input: "", output: "", mode: "vad", sens: -50, pttKey: "F9", pttLabel: "F9", ns: true, vol: {}, mute: {},
+    audioOnly: false, noCapSend: false, captions: true, toneVol: 1 };
   let prefs = Object.assign({}, DEFAULTS, store.json("ucng:voice", {}));
   const savePrefs = () => store.set("ucng:voice", prefs);
 
   let deps = null; // von app.js: { api, toast, me, isBlocked, avatar, h, iconBtn, switchRoom, render }
   const roomPeers = {}; // Kanal → [{i,u,n,s,m,sm,h}] (vom Server, für die Seitenleiste)
   const speaking = new Set(); // Nutzer-IDs, die gerade zu hören sind
+  const reactions = new Map(); // Nutzer-ID → { e, at, until } (laufende Reaktion)
 
   // Verbindung
   let S = null; // { room, ws, ctx, play, cap, enc, stream, decoders, peers, you, ... }
   let wantRoom = ""; // gewünschter Kanal (für Wiederverbinden)
   let retries = 0;
+  let rewatchAfter = ""; // nach dem Neuverbinden der Sprache dort weiter zusehen (Nutzer-ID)
   let pttDown = false;
   let vadUntil = 0;
   let selfMute = false;
@@ -46,6 +49,10 @@
     cam: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5.5" width="10.5" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m13 9 4.5-2.5v7L13 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
     camOff: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5.5" width="10.5" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m13 9 4.5-2.5v7L13 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m3 3 14 14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
     music: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 15V4.5l9-2V13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="5.5" cy="15" r="2" fill="currentColor"/><circle cx="14.5" cy="13" r="2" fill="currentColor"/></svg>',
+    react: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 11.8c.8 1.1 1.8 1.7 3 1.7s2.2-.6 3-1.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="7.6" cy="8.2" r="1" fill="currentColor"/><circle cx="12.4" cy="8.2" r="1" fill="currentColor"/></svg>',
+    more: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.6" fill="currentColor"/><circle cx="10" cy="10" r="1.6" fill="currentColor"/><circle cx="15.5" cy="10" r="1.6" fill="currentColor"/></svg>',
+    shield: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 4 5v4.5c0 3.8 2.6 6.6 6 8 3.4-1.4 6-4.2 6-8V5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+    rec: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="5" fill="currentColor"/></svg>',
     stage: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 16.5h15M4.5 16.5V9l5.5-4.5L15.5 9v7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="10" cy="10.5" r="1.8" fill="currentColor"/></svg>',
   };
 
@@ -117,7 +124,7 @@
       await S.ctx.audioWorklet.addModule("/voice-worklet.js");
       S.play = new AudioWorkletNode(S.ctx, "ucng-playback", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
       S.play.port.onmessage = (e) => onLevels(e.data.levels);
-      S.play.connect(S.ctx.destination);
+      if (!(X() && X().routeAudio(S))) S.play.connect(S.ctx.destination); // mobil: über <audio> (läuft im Hintergrund weiter)
       S.play.port.postMessage({ type: "master", gain: deaf ? 0 : 1 });
       if (prefs.output && S.ctx.setSinkId) S.ctx.setSinkId(prefs.output).catch(() => {});
       if (S.ctx.state === "suspended") await S.ctx.resume();
@@ -147,6 +154,7 @@
         peer: (idx) => mine.peers.get(idx),
         peers: () => [...mine.peers.values()],
         screenOK: () => S === mine && !!mine.screenOK,
+        ...extraLink(mine),
       });
     }
     if (window.UCNGVideo) {
@@ -160,12 +168,23 @@
         you: () => mine.you,
         videoOK: () => S === mine && !!mine.videoOK,
         speaking: (uid) => speaking.has(uid),
-        prefs: () => prefs, savePrefs,
+        ...extraLink(mine),
       });
     }
     ws.onopen = () => ws.send(JSON.stringify({ t: "auth", ticket: j.ticket }));
     ws.onmessage = (e) => { if (S === mine) onMessage(e.data); };
     ws.onclose = (e) => { if (S === mine) onClose(e); };
+  }
+
+  // gemeinsam für beide Varianten: Verschlüsselung, Ton der Freigabe, Einstellungen
+  function extraLink(s) {
+    return {
+      e2ee: () => (s.cfg && s.cfg.e2ee ? window.UCNGE2EE : null),
+      playTone: (key, frame) => { if (S === s && s.play && !deaf) s.play.port.postMessage({ type: "frame", idx: key, frame }, frame.map((f) => f.buffer)); },
+      toneGain: (key, g) => { if (S === s && s.play) s.play.port.postMessage({ type: "gain", idx: key, gain: g }); },
+      toneRemove: (key) => { if (S === s && s.play) s.play.port.postMessage({ type: "remove", idx: key }); },
+      prefs: () => prefs, savePrefs,
+    };
   }
 
   function absURL(u) { return u.startsWith("/") ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host + u : u; }
@@ -175,6 +194,8 @@
   // aufhält, und auf Wunsch des Chat-Servers auf einem anderen Sprach-Server (Lastverteilung).
 
   const MOD = { screen: () => window.UCNGScreen, video: () => window.UCNGVideo };
+  const E2 = () => (S && S.cfg && S.cfg.e2ee ? window.UCNGE2EE : null); // Ende-zu-Ende (nur in solchen Kanälen)
+  const X = () => window.UCNGExtras || null; // Aufnahme, Untertitel, Breakout, Statistik, Mobil (voice-extras.js)
 
   function mediaLink(s, m) {
     const kind = m.kind;
@@ -191,17 +212,18 @@
       screenOK: () => S === s && !!m.screenOK,
       videoOK: () => S === s && !!m.videoOK,
       speaking: (uid) => speaking.has(uid),
-      prefs: () => prefs, savePrefs,
       prepare: () => prepareMedia(s, kind),
       hint: (codec) => sendHint(s, kind, codec),
+      ...extraLink(s),
     };
   }
 
   // openMedia verbindet eine Art (neu). pre: schon geholte Zutrittskarte. Liefert, ob es klappte.
   async function openMedia(s, kind, pre, publish) {
-    if (S !== s) return false;
+    if (S !== s || prefs.audioOnly) return false;
     const old = s.media[kind];
-    if (old) closeMedia(s, kind);
+    rememberWatch(s, kind);
+    if (old) closeMedia(s, kind, true); // neu verbinden: laufende Freigabe/Kamera behalten
     const m = { kind, peers: new Map(), you: 0, status: "connecting", retries: old ? old.retries : 0 };
     s.media[kind] = m;
     let j = pre;
@@ -228,16 +250,22 @@
     });
   }
 
-  function closeMedia(s, kind) {
+  // Wem sehe ich gerade zu? Nach dem Neuverbinden geht es dort weiter.
+  function rememberWatch(s, kind) {
+    if (kind === "screen" && window.UCNGScreen && UCNGScreen.watchingUser) s.rewatch = UCNGScreen.watchingUser;
+  }
+
+  function closeMedia(s, kind, keep) {
     const m = s.media[kind];
     if (!m) return;
     delete s.media[kind];
     clearTimeout(m.timer);
+    clearInterval(m.pinger);
     const mod = MOD[kind]();
-    if (mod && S === s) mod.detach();
+    if (mod && S === s) { if (keep && mod.suspend) mod.suspend(); else mod.detach(); }
     if (m.ws) { m.ws.onclose = null; m.ws.onmessage = null; try { m.ws.close(1000); } catch { /* egal */ } }
     if (m.ready) m.ready(false);
-    sendHint(s, kind, "");
+    if (!keep) sendHint(s, kind, "");
   }
 
   function retryMedia(s, m) {
@@ -272,6 +300,7 @@
       const b = new Uint8Array(data);
       if (!mod) return;
       if (b[0] === 2 && m.kind === "screen") mod.onVideo(b);
+      else if (b[0] === 4 && m.kind === "screen") mod.onTone(b);
       else if (b[0] === 3 && m.kind === "video") mod.onCam(b);
       return;
     }
@@ -284,7 +313,17 @@
         for (const p of msg.peers || []) m.peers.set(p.i, p);
         if (m.kind === "video" && mod) mod.setFeatured(msg.featured);
         if (mod) for (const p of m.peers.values()) mod.onPeer(p);
+        // Lebenszeichen, auch wenn ich selbst nichts sende (nur zusehe)
+        clearInterval(m.pinger);
+        m.pinger = setInterval(() => { if (m.ws && m.ws.readyState === 1) m.ws.send('{"t":"ping"}'); }, 10000);
+        if (m.kind === "screen" && (s.rewatch || rewatchAfter) && mod) { // nach dem Neuverbinden weiter zusehen
+          const uid = s.rewatch || rewatchAfter;
+          s.rewatch = ""; rewatchAfter = "";
+          const p = [...m.peers.values()].find((x) => x.u === uid && x.sc);
+          if (p) mod.watch(p.i);
+        }
         if (m.ready) { m.ready(true); m.ready = null; }
+        if (mod && mod.resume) mod.resume(); // laufende Freigabe/Kamera nach einem Abriss fortsetzen
         break;
       case "peer": m.peers.set(msg.peer.i, msg.peer); if (mod) mod.onPeer(msg.peer); break;
       case "leave": m.peers.delete(msg.i); if (mod) mod.onLeave(msg.i); break;
@@ -301,9 +340,15 @@
 
   function onMediaClose(s, m, e) {
     const mod = MOD[m.kind]();
-    if (mod) mod.detach();
-    sendHint(s, m.kind, "");
-    if (m.bye || e.code === 4003 || e.code === 4000 || e.code === 1000) { m.status = "closed"; renderAll(); return; }
+    clearInterval(m.pinger);
+    rememberWatch(s, m.kind);
+    if (m.bye || e.code === 4003 || e.code === 4000 || e.code === 1000) {
+      if (mod) mod.detach();
+      sendHint(s, m.kind, "");
+      m.status = "closed"; s.rewatch = ""; renderAll(); return;
+    }
+    // Abriss: eigene Freigabe/Kamera weiterlaufen lassen und nach dem Neuverbinden fortsetzen
+    if (mod) { if (mod.suspend) mod.suspend(); else mod.detach(); }
     if (e.code === 4409) deps.toast(t("voice.media_busy"));
     retryMedia(s, m);
     renderAll();
@@ -313,6 +358,7 @@
     if (typeof data !== "string") {
       const b = new Uint8Array(data);
       if (b[0] === 2) { if (window.UCNGScreen) UCNGScreen.onVideo(b); }
+      else if (b[0] === 4) { if (window.UCNGScreen) UCNGScreen.onTone(b); }
       else if (b[0] === 3) { if (window.UCNGVideo) UCNGVideo.onCam(b); }
       else onAudio(b);
       return;
@@ -330,19 +376,50 @@
         sendState();
         if (S.speak) startMic();
         clearInterval(S.pinger);
-        S.pinger = setInterval(() => { if (S && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) })); }, 5000);
+        S.pinger = setInterval(() => {
+          if (S && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) }));
+          measureQuality();
+        }, 5000);
         S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) }));
         deps.toast(t("voice.joined", { room: S.room }));
         if (S.cfg.mediaConn) {
           if (S.cfg.screenOn) openMedia(S, "screen");
           if (S.cfg.videoOn) openMedia(S, "video");
         }
+        if (E2()) {
+          const me2 = S;
+          E2().start({ sendText: (o) => { if (S === me2 && me2.ws && me2.ws.readyState === 1) me2.ws.send(JSON.stringify(o)); },
+            peers: () => [...me2.peers.values()], you: () => me2.you, onChange: () => { if (S === me2) renderAll(); } });
+        }
+        if (!S.cfg.mediaConn) { // ältere Relays: Freigabe/Kamera über diese Verbindung fortsetzen
+          if (window.UCNGScreen && UCNGScreen.resume) UCNGScreen.resume();
+          if (window.UCNGVideo && UCNGVideo.resume) UCNGVideo.resume();
+        }
+        if (X()) X().onJoined(S);
+        break;
+      case "e2k": if (E2()) E2().onKey(m); break;
+      case "react": if (X()) X().onReact(m); break;
+      case "cap": if (X()) X().onCaption(m); break;
+      case "forcemute": // „alle stummschalten“ – selbst wieder einschaltbar
+        if (!selfMute) { selfMute = true; sendState(); deps.toast(t("voice.forcemuted")); }
+        break;
+      case "askunmute":
+        if (selfMute || deaf) { S.askUnmute = true; deps.toast(t("voice.asked_unmute")); }
         break;
       case "media": // eine Art ist auf einen anderen Sprach-Server umgezogen
         if (S.media && S.media[m.kind] && S.media[m.kind].relay !== m.relay) openMedia(S, m.kind);
         break;
-      case "peer": upsertPeer(m.peer); if (window.UCNGScreen) UCNGScreen.onPeer(m.peer); if (window.UCNGVideo) UCNGVideo.onPeer(m.peer); break;
-      case "leave": removePeer(m.i); if (window.UCNGScreen) UCNGScreen.onLeave(m.i); if (window.UCNGVideo) UCNGVideo.onLeave(m.i); break;
+      case "peer":
+        upsertPeer(m.peer);
+        if (!S.cfg.mediaConn) { if (window.UCNGScreen) UCNGScreen.onPeer(m.peer); if (window.UCNGVideo) UCNGVideo.onPeer(m.peer); }
+        if (E2()) E2().peersChanged();
+        if (X()) X().onPeer(m.peer);
+        break;
+      case "leave":
+        removePeer(m.i);
+        if (!S.cfg.mediaConn) { if (window.UCNGScreen) UCNGScreen.onLeave(m.i); if (window.UCNGVideo) UCNGVideo.onLeave(m.i); }
+        if (E2()) E2().peersChanged();
+        break;
       case "cam": case "layer": case "camkey": case "featured": case "degraded":
         if (window.UCNGVideo) UCNGVideo.onText(m);
         break;
@@ -370,13 +447,15 @@
 
   function onClose(e) {
     const room = S.room, bye = S.bye;
-    teardown();
+    rewatchAfter = window.UCNGScreen && UCNGScreen.watchingUser || S.rewatch || "";
+    teardown(true); // Freigabe und Kamera erst einmal behalten (Fortsetzen nach dem Neuverbinden)
     const code = e.code;
-    if (bye) { deps.toast(byeText(bye)); wantRoom = ""; renderAll(); return; }
-    if (code === 1000 || (code === 1001 && !wantRoom)) { renderAll(); return; }
-    if (code === 4000) { deps.toast(t("voice.other_window")); wantRoom = ""; renderAll(); return; }
-    if (code === 4003) { deps.toast(byeText(e.reason)); wantRoom = ""; renderAll(); return; }
-    if (code === 4409) { deps.toast(/voll|full/i.test(e.reason) ? t("voice.full") : t("voice.busy")); wantRoom = ""; renderAll(); return; }
+    const final = (msg) => { if (msg) deps.toast(msg); wantRoom = ""; detachModules(); renderAll(); };
+    if (bye) { final(byeText(bye)); return; }
+    if (code === 1000 || (code === 1001 && !wantRoom)) { detachModules(); renderAll(); return; }
+    if (code === 4000) { final(t("voice.other_window")); return; }
+    if (code === 4003) { final(byeText(e.reason)); return; }
+    if (code === 4409) { final(/voll|full/i.test(e.reason) ? t("voice.full") : t("voice.busy")); return; }
     if (wantRoom === room && retries < 6) {
       retries++;
       const wait = Math.min(15000, 800 * 2 ** retries) * (0.7 + Math.random() * 0.6);
@@ -387,25 +466,36 @@
     }
     if (wantRoom) deps.toast(t("voice.lost"));
     wantRoom = "";
+    detachModules();
     renderAll();
   }
 
+  // endgültig: laufende Freigabe und Kamera beenden
+  function detachModules() {
+    if (window.UCNGScreen) UCNGScreen.detach();
+    if (window.UCNGVideo) UCNGVideo.detach();
+  }
+
   function byeText(code) {
-    const known = { kicked: "voice.bye_kicked", moved: "voice.bye_moved", deleted: "voice.bye_deleted", renamed: "voice.bye_renamed",
+    const known = { kicked: "voice.bye_kicked", moved: "voice.bye_moved", deleted: "voice.bye_deleted", renamed: "voice.bye_renamed", ended: "voice.bye_ended",
       session: "voice.bye_session", banned: "voice.bye_banned", noguest: "voice.bye_noguest", novoice: "voice.bye_novoice", noaccess: "voice.bye_noaccess" };
     return t(known[code] || "voice.bye_kicked");
   }
 
   // teardown räumt eine Verbindung ab (ohne Meldung).
-  function teardown() {
+  function teardown(keepCapture) {
     if (!S) return;
     const s = S;
     S = null;
     clearInterval(s.pinger);
-    if (window.UCNGScreen) UCNGScreen.detach();
-    if (window.UCNGVideo) UCNGVideo.detach();
+    if (keepCapture) { // Abriss: Aufnahme von Bildschirm/Kamera behalten
+      if (window.UCNGScreen && UCNGScreen.suspend) UCNGScreen.suspend(); else if (window.UCNGScreen) UCNGScreen.detach();
+      if (window.UCNGVideo && UCNGVideo.suspend) UCNGVideo.suspend(); else if (window.UCNGVideo) UCNGVideo.detach();
+    } else detachModules();
+    if (window.UCNGE2EE) UCNGE2EE.stop();
+    if (X()) X().onLeft(s, !!keepCapture);
     for (const m of Object.values(s.media || {})) {
-      clearTimeout(m.timer);
+      clearTimeout(m.timer); clearInterval(m.pinger);
       if (m.ws) { m.ws.onclose = null; m.ws.onmessage = null; try { m.ws.close(1000); } catch { /* egal */ } }
       if (m.ready) m.ready(false);
     }
@@ -419,6 +509,7 @@
 
   async function leave(silent) {
     wantRoom = "";
+    rewatchAfter = "";
     if (!S) return;
     teardown();
     if (!silent) deps.toast(t("voice.left"));
@@ -524,6 +615,7 @@
     const on = transmitting(s);
     if (on !== s.sending) { s.sending = on; renderSelf(); }
     if (levelCb) levelCb(db);
+    if (X() && d.frame) X().onCapture(s, d.frame, on); // Untertitel: eigene Sprache in Abschnitten
     if (!d.frame || !on || !s.enc || s.enc.state !== "configured") return;
     const ch = d.frame.length;
     const data = new Float32Array(FRAME * ch);
@@ -543,13 +635,23 @@
 
   function sendChunk(s, chunk) {
     if (S !== s || !s.ws || s.ws.readyState !== 1 || s.ws.bufferedAmount > 32768) return;
-    const b = new Uint8Array(4 + chunk.byteLength);
-    b[0] = 1;
     s.seq = (s.seq + 1) & 0xffff;
-    b[1] = s.seq >> 8; b[2] = s.seq & 255;
-    b[3] = s.lastLevel || 0;
-    chunk.copyTo(b.subarray(4));
-    s.ws.send(b);
+    const seq = s.seq, level = s.lastLevel || 0;
+    const frame = (payload) => {
+      const b = new Uint8Array(4 + payload.byteLength);
+      b[0] = 1; b[1] = seq >> 8; b[2] = seq & 255; b[3] = level;
+      b.set(payload, 4);
+      return b;
+    };
+    const raw = new Uint8Array(chunk.byteLength);
+    chunk.copyTo(raw);
+    const e2 = E2();
+    if (!e2) { s.ws.send(frame(raw)); return; }
+    // verschlüsselt: in Reihenfolge, ohne Schlüssel gar nicht
+    e2.chain(s, async () => {
+      const ct = await e2.seal(raw);
+      if (ct && S === s && s.ws && s.ws.readyState === 1) s.ws.send(frame(ct));
+    });
   }
 
   // ---------- Empfang ----------
@@ -593,13 +695,52 @@
       const data = b.subarray(o, o + len);
       o += len;
       const p = S.peers.get(idx);
+      noteSeq(idx, (b[o - 4] << 8) | b[o - 3]);
       if (!p || gainFor(p.u) === 0) continue; // stumm: gar nicht erst dekodieren
-      try {
-        const d = decoderFor(idx);
-        d.decode(new EncodedAudioChunk({ type: "key", timestamp: d.ts, data }));
-        d.ts += 20000;
-      } catch { S.decoders.delete(idx); }
+      const e2 = E2();
+      if (e2) {
+        const s = S, copy = data.slice();
+        e2.chain(p, async () => {
+          const pt = await e2.open(copy);
+          if (pt && S === s) decodeAudio(idx, pt);
+        });
+        continue;
+      }
+      decodeAudio(idx, data);
     }
+  }
+
+  function decodeAudio(idx, data) {
+    try {
+      const d = decoderFor(idx);
+      d.decode(new EncodedAudioChunk({ type: "key", timestamp: d.ts, data }));
+      d.ts += 20000;
+    } catch { S.decoders.delete(idx); }
+  }
+
+  // ---------- Verbindungsqualität ----------
+  // Verlust aus den Lücken der Folgenummern (je Sprecher), dazu Ping und Sendestau. Alle 5 s an den
+  // Relay ("q": 1 schlecht, 2 mittel, 3 gut) – die anderen sehen es an meinem Namen.
+  function noteSeq(idx, seq) {
+    const q = S.qual || (S.qual = { last: new Map(), got: 0, lost: 0 });
+    const prev = q.last.get(idx);
+    q.last.set(idx, seq);
+    q.got++;
+    if (prev != null) {
+      const gap = (seq - prev - 1 + 65536) & 0xffff;
+      if (gap > 0 && gap < 8) q.lost += gap; // längere Lücken: Sprechpause (die Sprachaktivierung hält 350 ms)
+    }
+  }
+  function measureQuality() {
+    if (!S || S.status !== "connected") return;
+    const q = S.qual || { got: 0, lost: 0 };
+    const loss = q.got + q.lost > 20 ? q.lost / (q.got + q.lost) : 0;
+    const buffered = S.ws ? S.ws.bufferedAmount : 0;
+    const ping = S.ping || 0;
+    const v = ping > 400 || loss > 0.08 || buffered > 128000 ? 1 : ping > 150 || loss > 0.02 || buffered > 32000 ? 2 : 3;
+    S.loss = loss;
+    if (S.qual) { S.qual.got = 0; S.qual.lost = 0; }
+    if (v !== S.qSent && S.ws && S.ws.readyState === 1) { S.qSent = v; S.ws.send(JSON.stringify({ t: "state", q: v })); }
   }
 
   function onLevels(levels) {
@@ -733,6 +874,9 @@
     b.append(av, deps.h("span", "voice-name", p.n));
     const flags = deps.h("span", "voice-flags");
     if (p.mu) flags.append(flag(ICON.music, t("voice.music_bot"), "music"));
+    if (p.rec) flags.append(flag(ICON.rec, t("voice.recording_by", { name: p.n }), "rec"));
+    if (p.q === 1 || p.q === 2) flags.append(qualityFlag(p.q));
+    if (p.mo && !p.mu) flags.append(flag(ICON.shield, t("voice.moderates"), "mod"));
     if (p.cm) flags.append(flag(ICON.cam, t("voice.camera_on"), "cam"));
     if (p.h) flags.append(flag(ICON.hand, t("voice.hand_raised"), "hand"));
     if (cfg && cfg.stage && p.s) flags.append(flag(ICON.stage, t("voice.on_stage"), "stage"));
@@ -743,6 +887,12 @@
     else if (prefs.vol[p.u] != null) flags.append(deps.h("span", "voice-vol", Math.round(prefs.vol[p.u] * 100) + "%"));
     b.append(flags);
     if (speaking.has(p.u)) li.classList.add("speaking");
+    const rx = reactions.get(p.u); // Reaktion läuft (übersteht das Neuzeichnen)
+    if (rx && performance.now() < rx.until) {
+      const bub = deps.h("span", "voice-react", rx.e);
+      bub.style.animationDelay = -Math.round(performance.now() - rx.at) + "ms";
+      li.append(bub);
+    }
     b.title = p.n;
     b.addEventListener("click", (e) => { e.stopPropagation(); openPeer(b, room, p); });
     li.append(b);
@@ -757,6 +907,14 @@
       li.append(w);
     }
     return li;
+  }
+
+  function qualityFlag(q) {
+    const s = deps.h("span", "voice-flag quality q" + q);
+    s.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="12" width="3" height="5" rx="1" fill="currentColor"/><rect x="8.5" y="8" width="3" height="9" rx="1" fill="currentColor" opacity="' + (q >= 2 ? 1 : 0.25) + '"/><rect x="14" y="4" width="3" height="13" rx="1" fill="currentColor" opacity="0.25"/></svg>';
+    const label = q === 1 ? t("voice.quality_bad") : t("voice.quality_mid");
+    s.title = label; s.setAttribute("aria-label", label);
+    return s;
   }
 
   function flag(svg, label, cls) {
@@ -813,8 +971,13 @@
     if (p.sc && !isMe && S && S.room === room && window.UCNGScreen) {
       acts.push(UCNGScreen.watchingUser === p.u ? [t("voice.screen_unwatch"), "", "", () => UCNGScreen.unwatch()] : [t("voice.screen_watch", { name: p.n }), "", "", () => UCNGScreen.watchUser(p.u)]);
     }
+    if (p.cm && !isMe && S && S.room === room && window.UCNGVideo && UCNGVideo.pinUser) {
+      acts.push(UCNGVideo.pinnedUser === p.u ? [t("voice.unpin"), "", "", () => UCNGVideo.pinUser("")] : [t("voice.pin"), "", "", () => UCNGVideo.pinUser(p.u)]);
+    }
     if (here && !isMe) {
+      if (p.sm && !p.m) acts.push([t("voice.ask_unmute"), "askunmute"]);
       acts.push(p.m ? [t("voice.unmute"), "unmute"] : [t("voice.server_mute"), "mute"]);
+      if (S.cfg && S.cfg.host && !p.mu) acts.push(p.mo ? [t("voice.cohost_remove"), "uncohost"] : [t("voice.cohost_make"), "cohost"]);
       if (S.cfg && S.cfg.videoOn) acts.push(p.co || p.cm ? [t("voice.video_stop_other"), "stopvideo"] : [t("voice.video_allow"), "allowvideo"]);
       if (S.cfg && S.cfg.screenOn) acts.push(p.so || p.sc ? [t("voice.screen_stop_other"), "stopscreen"] : [t("voice.screen_allow"), "allowscreen"]);
       if (S.stage) acts.push(p.s ? [t("voice.revoke_speak"), "nospeak"] : [t("voice.grant_speak"), "speak"]);
@@ -865,11 +1028,13 @@
     head.append(st);
     const btns = deps.h("div", "voice-bar-btns");
     const canTalk = S.speak && !S.muted; // Mikrofon und Kopfhörer sitzen in der Nutzerleiste darunter
-    if (S.stage && !S.speak) {
+    if (S.status === "connected") { // Hand heben – überall, nicht nur auf der Bühne
       const hb = deps.iconBtn("vb" + (S.hand ? " on" : ""), S.hand ? t("voice.lower_my_hand") : t("voice.raise_hand"), ICON.hand);
       hb.setAttribute("aria-pressed", String(!!S.hand));
       hb.addEventListener("click", toggleHand);
-      btns.append(hb);
+      const rb = deps.iconBtn("vb", t("voice.react"), ICON.react);
+      rb.addEventListener("click", (e) => { e.stopPropagation(); openReactions(rb); });
+      btns.append(hb, rb);
     }
     if (S.videoOK && window.UCNGVideo && UCNGVideo.supported()) {
       const on = UCNGVideo.on;
@@ -885,11 +1050,11 @@
       sb.addEventListener("click", () => UCNGScreen.toggleShare());
       btns.append(sb);
     }
-    const gear = deps.iconBtn("vb", t("voice.settings"), ICON.gear);
-    gear.addEventListener("click", openSettings);
+    const more = deps.iconBtn("vb", t("voice.more"), ICON.more);
+    more.addEventListener("click", (e) => { e.stopPropagation(); const r = more.getBoundingClientRect(); deps.menuAt(r.left, r.top - 8, moreItems(), true); });
     const lv = deps.iconBtn("vb leave", t("voice.leave"), ICON.leave);
     lv.addEventListener("click", () => leave());
-    btns.append(gear, lv);
+    btns.append(more, lv);
     head.append(btns);
     const parts = [head];
     if (S.status === "connected" && canTalk && prefs.mode === "ptt") {
@@ -905,7 +1070,64 @@
     }
     if (window.UCNGScreen && UCNGScreen.sharing) parts.push(deps.h("p", "voice-bar-note sharing", UCNGScreen.starting ? t("voice.screen_starting") : t("voice.screen_sharing_now")));
     if (S.status === "connected" && !S.speak) parts.push(deps.h("p", "voice-bar-note", S.stage ? t("voice.stage_note") : t("voice.listen_only")));
+    if (S.askUnmute && (selfMute || deaf)) { // „bitte Mikrofon einschalten“
+      const box = deps.h("div", "voice-ask");
+      box.append(deps.h("span", null, t("voice.asked_unmute")));
+      const yes = deps.h("button", "btn-primary", t("voice.unmute_me"));
+      yes.type = "button";
+      yes.addEventListener("click", () => { S.askUnmute = false; deaf = false; selfMute = false; if (S.play) S.play.port.postMessage({ type: "master", gain: 1 }); sendState(); renderAll(); });
+      const no = deps.h("button", "btn-quiet", t("voice.not_now"));
+      no.type = "button";
+      no.addEventListener("click", () => { S.askUnmute = false; renderAll(); });
+      box.append(yes, no);
+      parts.push(box);
+    }
+    if (S.cfg && S.cfg.e2ee && S.status === "connected") {
+      const e2 = window.UCNGE2EE;
+      const note = deps.h("button", "voice-bar-note e2ee" + (e2 && e2.ready ? " ok" : ""), e2 && e2.ready ? t("voice.e2ee_code", { code: e2.code }) : t("voice.e2ee_wait"));
+      note.type = "button";
+      note.title = t("voice.e2ee_hint");
+      note.addEventListener("click", () => deps.toast(t("voice.e2ee_hint")));
+      parts.push(note);
+    }
+    if (prefs.audioOnly && S.cfg && (S.cfg.screenOn || S.cfg.videoOn)) parts.push(deps.h("p", "voice-bar-note", t("voice.audio_only_on")));
+    if (X()) parts.push(...X().barNotes(S));
     bar.replaceChildren(...parts);
+    if (X()) X().renderMobile(S);
+  }
+
+  // Reaktionen: kleine Auswahl über dem Knopf
+  function openReactions(anchor) {
+    const items = ["👍", "👏", "😂", "❤️", "🎉", "😮", "👎", "🙏"].map((e) => ["", e, () => sendReact(e)]);
+    const r = anchor.getBoundingClientRect();
+    deps.menuAt(r.left, r.top - 8, items, true, "react-menu");
+  }
+  function sendReact(e) {
+    if (S && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: "react", e }));
+  }
+
+  // „Mehr“: Ansicht, Statistik, Nur Audio, Leitung …
+  function moreItems() {
+    const items = [];
+    const host = S && S.moderate;
+    if (X()) items.push(...X().menuItems(S, { host, prefs }));
+    items.push(["", prefs.audioOnly ? t("voice.audio_only_off") : t("voice.audio_only"), () => setAudioOnly(!prefs.audioOnly)]);
+    items.push(["", t("voice.settings"), openSettings]);
+    return items;
+  }
+
+  function setAudioOnly(on) {
+    prefs.audioOnly = !!on;
+    savePrefs();
+    if (!S || !S.cfg || !S.cfg.mediaConn) { renderAll(); return; }
+    if (on) {
+      for (const k of Object.keys(S.media || {})) closeMedia(S, k);
+      detachModules();
+    } else if (S.status === "connected") {
+      if (S.cfg.screenOn) openMedia(S, "screen");
+      if (S.cfg.videoOn) openMedia(S, "video");
+    }
+    renderAll();
   }
 
   function renderAll() {
@@ -1049,7 +1271,13 @@
     get room() { return S ? S.room : ""; },
     refreshGains() { applyGains(); },
     // Nutzerleiste (immer sichtbar, wie bei Discord): gilt auch vor dem Beitreten
-    toggleMute, toggleDeaf, openSettings,
+    toggleMute, toggleDeaf, openSettings, toggleHand,
+    // für voice-extras.js
+    session: () => S,
+    mod, sendReact, setAudioOnly, prefs: () => prefs, savePrefs, deps: () => deps, render: () => renderAll(),
+    reaction(uid) { const r = reactions.get(uid); return r && performance.now() < r.until ? r : null; },
+    addReaction(uid, e) { const now = performance.now(); reactions.set(uid, { e, at: now, until: now + 2500 }); setTimeout(() => { if (reactions.get(uid) && performance.now() >= reactions.get(uid).until) { reactions.delete(uid); renderAll(); } }, 2600); renderAll(); },
+    peerName(uid) { const p = S && [...S.peers.values()].find((x) => x.u === uid); return p ? p.n : ""; },
     get state() {
       return { selfMute, deaf, connected: !!(S && S.status === "connected"), canTalk: !S || (S.speak && !S.muted), serverMuted: !!(S && S.muted), listenOnly: !!(S && !S.speak) };
     },

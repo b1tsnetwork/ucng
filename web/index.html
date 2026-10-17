@@ -137,6 +137,12 @@
         <div class="conf-strip" id="confStrip"></div>
         <div class="conf-bar">
           <span class="conf-note" id="confNote"></span>
+          <button type="button" class="icon-btn" id="confLayout" aria-label="Galerie-Ansicht" title="Galerie-Ansicht" data-i18n-aria-label="voice.view_gallery" data-i18n-title="voice.view_gallery">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3.5" width="6" height="5.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="11" y="3.5" width="6" height="5.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="11" width="6" height="5.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="11" y="11" width="6" height="5.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="confPip" aria-label="Bild-in-Bild" title="Bild-in-Bild" data-i18n-aria-label="voice.pip" data-i18n-title="voice.pip">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="10" y="9.5" width="5.5" height="4.5" rx="1" fill="currentColor"/></svg>
+          </button>
           <button type="button" class="icon-btn" id="confFull" aria-label="Vollbild" data-i18n-aria-label="voice.screen_fullscreen">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 7.5v-4h4M12.5 3.5h4v4M16.5 12.5v4h-4M7.5 16.5h-4v-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
@@ -147,6 +153,13 @@
         <header class="screen-head">
           <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M10 13.5V17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <b id="screenTitle"></b>
+          <label class="screen-tone" id="screenTone" hidden title="Lautstärke des geteilten Tons" data-i18n-title="voice.screen_tone">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8h3l4-3.5v11l-4-3.5h-3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M13.5 7.2a4 4 0 0 1 0 5.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <input type="range" id="screenToneVol" min="0" max="150" step="5" value="100" aria-label="Lautstärke des geteilten Tons" data-i18n-aria-label="voice.screen_tone">
+          </label>
+          <button type="button" class="icon-btn" id="screenPip" aria-label="Bild-in-Bild" title="Bild-in-Bild" data-i18n-aria-label="voice.pip" data-i18n-title="voice.pip">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="10" y="9.5" width="5.5" height="4.5" rx="1" fill="currentColor"/></svg>
+          </button>
           <button type="button" class="icon-btn" id="screenFull" aria-label="Vollbild" title="Vollbild (Doppelklick aufs Bild)" data-i18n-aria-label="voice.screen_fullscreen" data-i18n-title="voice.screen_fullscreen_hint">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 7.5v-4h4M12.5 3.5h4v4M16.5 12.5v4h-4M7.5 16.5h-4v-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
@@ -491,6 +504,34 @@
       </div>
     </form>
   </dialog>
+  <!-- Breakout-Räume -->
+  <dialog id="breakoutDialog">
+    <form id="breakoutForm">
+      <h2 data-i18n="voice.breakout">Breakout-Räume</h2>
+      <p id="breakoutInfo"></p>
+      <label class="voice-field"><span data-i18n="voice.breakout_groups">Gruppen</span><input type="number" id="breakoutGroups" min="2" max="20" value="2"></label>
+      <label class="voice-field"><span data-i18n="voice.breakout_minutes">Dauer in Minuten (0 = ohne Countdown)</span><input type="number" id="breakoutMinutes" min="0" max="240" value="10"></label>
+      <p class="hint" data-i18n="voice.breakout_hint">Alle außer den Moderierenden werden zufällig und gleichmäßig verteilt. Nach Ablauf – oder mit „Alle zurückholen“ – kommen alle hierher zurück.</p>
+      <p class="form-error" id="breakoutError" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn-quiet" data-close data-i18n="app.abbrechen">Abbrechen</button>
+        <button type="submit" class="btn-primary" data-i18n="voice.breakout_start">Aufteilen</button>
+      </div>
+    </form>
+  </dialog>
+  <!-- Aufnahme -->
+  <dialog id="recDialog">
+    <form method="dialog">
+      <h2 data-i18n="voice.rec_start">Aufnahme starten</h2>
+      <p data-i18n="voice.rec_notice">Alle im Kanal sehen, dass du aufnimmst. Aufgenommen wird, was du siehst und hörst – die Datei wird nur auf deinem Gerät gespeichert. Hol dir vorher das Einverständnis aller Beteiligten.</p>
+      <div class="actions">
+        <button type="submit" value="cancel" class="btn-quiet" data-i18n="app.abbrechen">Abbrechen</button>
+        <button type="submit" value="ok" class="btn-primary" data-i18n="voice.rec_go">Aufnehmen</button>
+      </div>
+    </form>
+  </dialog>
+  <!-- Anrufleiste auf dem Handy -->
+  <div class="mobile-call" id="mobileCall" hidden></div>
   <!-- Profilkarte -->
   <div class="popover profile-card" id="profileCard" hidden role="dialog"></div>
 
@@ -563,6 +604,8 @@
   <script src="/embed/format.js"></script>
   <script src="/account.js"></script>
   <script src="/voice-media.js"></script>
+  <script src="/voice-e2ee.js"></script>
+  <script src="/voice-extras.js"></script>
   <script src="/voice-screen.js"></script>
   <script src="/voice-video.js"></script>
   <script src="/voice.js"></script>

@@ -53,6 +53,8 @@ type VoiceConfig struct {
 	VideoQuality string   `json:"videoQuality,omitempty"` // sd, hd, fhd, fhd60 (großes Bild)
 	Featured     int      `json:"featured,omitempty"`     // so viele Sprecher groß (1–9)
 	BotMusic     bool     `json:"botMusic,omitempty"`     // Bots dürfen Musik einspielen
+	Captions     bool     `json:"captions,omitempty"`     // Untertitel über das eigene Whisper (STT_URL)
+	E2EE         bool     `json:"e2ee,omitempty"`         // Ende-zu-Ende-verschlüsselt (Schlüssel nur in den Browsern)
 }
 
 // videoPreset: Qualität des großen Kamerabildes; Miniansichten haben immer thumbPreset.
@@ -172,6 +174,9 @@ func (h *Hub) validVoice(in *VoiceConfig) (*VoiceConfig, error) {
 	if len(v.StageRoles) == 0 {
 		v.StageRoles = nil
 	}
+	if v.E2EE { // der Server kennt den Schlüssel nicht: keine Musik von Bots, keine Untertitel
+		v.BotMusic, v.Captions = false, false
+	}
 	switch v.Screen {
 	case "off":
 		v.Screen = ScreenOff
@@ -249,6 +254,12 @@ func (v *VoiceConfig) describe() string {
 	}
 	if v.BotMusic {
 		s += ", Musik von Bots"
+	}
+	if v.Captions {
+		s += ", Untertitel"
+	}
+	if v.E2EE {
+		s += ", Ende-zu-Ende-verschlüsselt"
 	}
 	return s
 }
@@ -363,9 +374,11 @@ type voiceMgr struct {
 	csp      atomic.Value // string: zusätzliche connect-src-Quellen (Agenten)
 	stop     chan struct{}
 
-	mu     sync.Mutex
-	rooms  map[string]*voiceRoom
-	agents map[string]*voiceAgent
+	mu        sync.Mutex
+	rooms     map[string]*voiceRoom
+	agents    map[string]*voiceAgent
+	breakouts map[string]*BreakoutInfo // Hauptkanal → laufende Breakout-Runde
+	stt       *sttClient               // Untertitel (nil = aus)
 }
 
 type voiceRoom struct {
@@ -378,6 +391,7 @@ type voiceRoom struct {
 	noVideo  map[string]bool      // vom Team: Kamera hier gesperrt
 	movedIn  map[string]time.Time // vom Team hierher verschoben: Zutritt bis (verlängert, solange drin)
 	media    map[string]string    // Medienart (screen/video) → Relay (mediaroute.go)
+	cohosts  map[string]bool      // Co-Hosts: moderieren hier, solange der Kanal belegt ist
 }
 
 type voiceAgent struct {
@@ -391,15 +405,23 @@ type voiceAgent struct {
 	rooms      map[string]struct{} // Kanäle laut letzter Meldung
 }
 
+func perIP(n int) int {
+	if n <= 0 {
+		return 40
+	}
+	return n
+}
+
 func newVoiceMgr(s *Server) *voiceMgr {
 	priv := s.hub.VoiceKey()
 	v := &voiceMgr{
 		s: s, priv: priv, pub: priv.Public().(ed25519.PublicKey), token: s.cfg.VoiceAgentToken,
-		conns:    newStreamLimiter(max(s.cfg.VoiceMaxParticipants, 1)*4, 12), // je Person bis zu drei Verbindungen
+		conns:    newStreamLimiter(max(s.cfg.VoiceMaxParticipants, 1)*4, perIP(s.cfg.VoiceMaxPerIP)), // je Person bis zu drei Verbindungen
 		ticketRL: newRateLimiter(30, time.Minute),
 		mediaRL:  newRateLimiter(90, time.Minute),
 		client:   &http.Client{Timeout: 5 * time.Second},
 		rooms:    map[string]*voiceRoom{}, agents: map[string]*voiceAgent{}, stop: make(chan struct{}),
+		breakouts: map[string]*BreakoutInfo{}, stt: newSTT(s.cfg),
 	}
 	v.csp.Store("")
 	if !s.cfg.VoiceNoBuiltin {
@@ -434,7 +456,7 @@ func (v *voiceMgr) room(name string) *voiceRoom {
 	st := v.rooms[name]
 	if st == nil {
 		st = &voiceRoom{grants: map[string]bool{}, muted: map[string]bool{}, kicked: map[string]time.Time{}, noScreen: map[string]bool{},
-			noVideo: map[string]bool{}, movedIn: map[string]time.Time{}}
+			noVideo: map[string]bool{}, movedIn: map[string]time.Time{}, cohosts: map[string]bool{}}
 		v.rooms[name] = st
 	}
 	return st
@@ -485,7 +507,8 @@ func (v *voiceMgr) setPeers(relay, name string, peers []VoicePeer) {
 		}
 	}
 	if len(peers) == 0 {
-		clear(st.grants) // Freischaltungen der Bühne gelten bis der Kanal leer ist
+		clear(st.grants) // Freischaltungen der Bühne und Co-Hosts gelten, bis der Kanal leer ist
+		clear(st.cohosts)
 	}
 	v.mu.Unlock()
 	v.s.hub.SendToReaders(name, Event{Type: "voice", Room: name, Voice: peers})
@@ -513,6 +536,10 @@ func (v *voiceMgr) janitor() {
 		}
 		v.ticketRL.cleanup()
 		v.mediaRL.cleanup()
+		v.breakoutTick(time.Now())
+		if v.stt != nil {
+			v.stt.rl.cleanup()
+		}
 		now := time.Now()
 		type gone struct{ relay, room string }
 		var stale []gone
@@ -541,7 +568,7 @@ func (v *voiceMgr) janitor() {
 					delete(st.kicked, u)
 				}
 			}
-			if len(st.peers) == 0 && len(st.muted) == 0 && len(st.kicked) == 0 && len(st.noScreen) == 0 && len(st.noVideo) == 0 && len(st.movedIn) == 0 {
+			if len(st.peers) == 0 && len(st.muted) == 0 && len(st.kicked) == 0 && len(st.noScreen) == 0 && len(st.noVideo) == 0 && len(st.movedIn) == 0 && len(st.cohosts) == 0 {
 				delete(v.rooms, name)
 			}
 		}
@@ -630,6 +657,9 @@ func (v *voiceMgr) decide(name string, w voiceWho) (voiceDecision, error) {
 		}
 		if g, ok := st.grants[w.ID]; ok && !w.Team {
 			d.Speak = g
+		}
+		if st.cohosts[w.ID] {
+			d.Mod = true
 		}
 		if st.muted[w.ID] {
 			d.Muted = true
@@ -1005,6 +1035,10 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 		"screen": d.Screen, "screenOn": d.Cfg.Screen != ScreenOff, "screenKbps": sp.Kbps, "screenFps": sp.FPS, "screenHeight": sp.Height,
 		"video": d.Video, "videoOn": d.Cfg.Video != ScreenOff, "videoPreset": vp, "thumbPreset": thumbPreset,
 		"featured": d.Cfg.Featured, "owner": d.Owner,
+		"host":      d.Owner || v.canModerate(who), // darf Co-Hosts ernennen
+		"e2ee":      d.Cfg.E2EE,
+		"captions":  d.Cfg.Captions && !d.Cfg.E2EE && v.stt != nil,
+		"breakout":  v.breakoutFor(room),
 		"mediaConn": v.mediaCapable(), // Bildschirm und Kameras über eigene Verbindungen (/media)
 	})
 	_ = who
@@ -1080,9 +1114,32 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	canMod := v.canModerate(who) || (acc.Owner != "" && acc.Owner == me.ID) // Besitzer eines temporären Kanals
-	if in.Action != "lowerhand" && !canMod || in.Action == "lowerhand" && in.UserID != me.ID && !canMod {
+	host := v.canModerate(who) || (acc.Owner != "" && acc.Owner == me.ID) // Team, Recht „Stummschalten“ oder Besitzer
+	v.mu.Lock()
+	cohost := v.rooms[room] != nil && v.rooms[room].cohosts[me.ID]
+	v.mu.Unlock()
+	canMod := host || cohost
+	if in.Action != "lowerhand" && !canMod || in.Action == "lowerhand" && in.UserID != me.ID && !canMod ||
+		(in.Action == "cohost" || in.Action == "uncohost") && !host { // Co-Hosts ernennt nur, wer selbst Gastgeber ist
 		fail(w, ErrNoPerm)
+		return
+	}
+	actor, display := chatActor(me)
+	// Befehle für den ganzen Kanal
+	switch in.Action {
+	case "muteall", "camsoff", "endall", "recstart", "recstop":
+		switch in.Action {
+		case "muteall": // alle außer Moderierenden; sie können sich selbst wieder einschalten
+			v.control(room, "", "forcemute", false, "")
+		case "camsoff":
+			v.control(room, "", "camsoff", false, "")
+		case "endall":
+			v.control(room, "", "close", false, "ended")
+		case "recstart", "recstop": // eigene Aufnahme: alle im Kanal sehen den Hinweis
+			v.control(room, me.ID, "rec", in.Action == "recstart", "")
+		}
+		s.hub.AuditLog().Add(AuditEntry{Actor: actor, Display: display, Action: "voice." + in.Action, Room: room})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 	target, ok := s.users.Get(in.UserID)
@@ -1091,7 +1148,7 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.UserID != me.ID && (target.Team || s.hub.Roles().PermsOf(target.Roles, false).Mute) && !me.Team &&
-		in.Action != "speak" && in.Action != "lowerhand" {
+		in.Action != "speak" && in.Action != "lowerhand" && in.Action != "askunmute" && in.Action != "cohost" {
 		writeErr(w, http.StatusForbidden, "Team-Mitglieder und andere Moderierende kann nur das Team stummschalten oder entfernen")
 		return
 	}
@@ -1116,7 +1173,11 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 		st.noVideo[in.UserID] = true
 	case "allowvideo":
 		delete(st.noVideo, in.UserID)
-	case "lowerhand":
+	case "cohost":
+		st.cohosts[in.UserID] = true
+	case "uncohost":
+		delete(st.cohosts, in.UserID)
+	case "askunmute", "lowerhand":
 	default:
 		v.mu.Unlock()
 		writeErr(w, http.StatusBadRequest, "Unbekannte Aktion")
@@ -1141,17 +1202,19 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 		v.control(room, in.UserID, "speak", false, "")
 	case "lowerhand":
 		v.control(room, in.UserID, "hand", false, "")
+	case "askunmute":
+		v.control(room, in.UserID, "askunmute", false, "")
 	}
-	if in.Action != "kick" && in.Action != "lowerhand" { // Recht zum Teilen hängt an Sprechen/Stumm
+	if in.Action != "kick" && in.Action != "lowerhand" && in.Action != "askunmute" { // Rechte hängen an Sprechen/Stumm/Co-Host
 		if tw, ok := v.whoByID(in.UserID); ok {
 			if d, err := v.decide(room, tw); err == nil {
 				v.control(room, in.UserID, "screen", d.Screen, "")
 				v.control(room, in.UserID, "video", d.Video, "")
+				v.control(room, in.UserID, "mod", d.Mod, "")
 			}
 		}
 	}
-	if in.Action != "lowerhand" {
-		actor, display := chatActor(me)
+	if in.Action != "lowerhand" && in.Action != "askunmute" {
 		s.hub.AuditLog().Add(AuditEntry{Actor: actor, Display: display, Action: "voice." + in.Action, Room: room,
 			UserID: in.UserID, UserName: target.Name})
 	}
@@ -1283,7 +1346,7 @@ func (s *Server) handleAdminVoice(w http.ResponseWriter, r *http.Request) {
 	v.mu.Unlock()
 	sort.Slice(relays, func(i, j int) bool { return relays[i].Builtin || !relays[j].Builtin && relays[i].ID < relays[j].ID })
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "relays": relays, "rooms": rooms,
-		"agents": v.token != "", "builtin": v.builtin != nil})
+		"agents": v.token != "", "builtin": v.builtin != nil, "stt": v.stt != nil})
 }
 
 // voiceRoutes meldet die Pfade der Sprachkanäle an.
@@ -1294,6 +1357,9 @@ func (s *Server) voiceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/voice/{room}/mod", s.handleVoiceMod)
 	mux.HandleFunc("POST /api/voice/{room}/move", s.handleVoiceMove)
 	mux.HandleFunc("POST /api/voice/{room}/media", s.handleVoiceMedia)
+	mux.HandleFunc("POST /api/voice/{room}/breakout", s.handleVoiceBreakout)
+	mux.HandleFunc("DELETE /api/voice/{room}/breakout", s.handleVoiceBreakout)
+	mux.HandleFunc("POST /api/voice/{room}/stt", s.handleVoiceSTT)
 	mux.HandleFunc("POST /api/voice/agents/report", s.handleVoiceAgentReport)
 	mux.HandleFunc("GET /api/admin/voice", s.requireMod(s.handleAdminVoice))
 }

@@ -61,7 +61,7 @@ Gemessen auf 2 CPU-Kernen: 200 Teilnehmer mit 99,8 % zugestellten Rahmen bei 20 
 | Hoch (40 kbit/s) | ca. 200 kbit/s | 5 Mbit/s | 40 Mbit/s |
 | Musik (96 kbit/s, Stereo) | ca. 400 kbit/s | 10 Mbit/s | 80 Mbit/s |
 
-**Bildschirmfreigaben** kommen dazu – aber nur je Person, die tatsächlich zusieht: 3 Mbit/s (Text und Folien), 4,5 Mbit/s (Standard), 8 Mbit/s (Flüssig, 1080p60), 12 Mbit/s (1440p60) oder 16 Mbit/s (4K). Sehen 20 Personen einer Standard-Freigabe zu, sind das 90 Mbit/s. Ist die Grenze erreicht, nimmt der Relay keine weiteren Zuschauer an; die Sprache läuft weiter. Deshalb lohnt sich ein eigener **Medien-Agent** (`ROLE=media`, siehe unten): Der Chat-Server lagert Bildschirm und Kameras dorthin aus, sobald der Sprach-Server zu voll würde.
+**Bildschirmfreigaben** kommen dazu – aber nur je Person, die tatsächlich zusieht: 3 Mbit/s (Text und Folien), 4,5 Mbit/s (Standard), 8 Mbit/s (Flüssig, 1080p60), 12 Mbit/s (1440p60) oder 16 Mbit/s (4K). Wird der Ton mitgeteilt, kommen je Zuschauer etwa 160 kbit/s dazu. Sehen 20 Personen einer Standard-Freigabe zu, sind das gut 90 Mbit/s. Ende-zu-Ende-Verschlüsselung kostet je Rahmen 29 Byte (bei Sprache etwa +12 kbit/s je hörbarem Sprecher). Ist die Grenze erreicht, nimmt der Relay keine weiteren Zuschauer an; die Sprache läuft weiter. Deshalb lohnt sich ein eigener **Medien-Agent** (`ROLE=media`, siehe unten): Der Chat-Server lagert Bildschirm und Kameras dorthin aus, sobald der Sprach-Server zu voll würde.
 
 **Kameras (Konferenzraum)** kommen ebenfalls dazu. Jede Person mit Kamera schickt eine Miniansicht (180 kbit/s) an alle und – solange sie zu den großen Sprechern gehört – das große Bild (bis 0,7 / 1,8 / 3,2 / 5 Mbit/s bei SD / HD / Full HD / Full HD 60). Je Zuschauer ausgehend also etwa `Kameras × 180 kbit/s + große Sprecher × Qualität`: 10 Kameras, 1 Sprecher groß in HD ≈ 3,6 Mbit/s je Person, bei 10 Teilnehmern ≈ 36 Mbit/s. Langsame Zuschauer bekommen automatisch nur Miniansichten. **Musik von Bots** braucht je Zuhörer so viel wie ein Sprecher mit der Klang-Einstellung *Musik* (≈ 100 kbit/s).
 
@@ -181,6 +181,10 @@ Auf dem Agent-Server brauchst du nur `deploy/voice/compose.yml` und `.env`.
    - `CONTROL_URL`: Adresse, unter der der **Chat-Server** den Agenten erreicht. Über das Internet nur per `https://`. Im Reverse-Proxy erlaubst du `/control` dann nur von der IP-Adresse des Chat-Servers (Abschnitt 7).
 
 3. Starten und Log prüfen wie in Variante A.
+
+### Untertitel (eigenes Whisper)
+
+Untertitel laufen nur über eine Spracherkennung, die du selbst betreibst – beim **Chat-Server** `STT_URL` setzen (OpenAI-kompatibel, z. B. `http://whisper:8000/v1/audio/transcriptions`), dazu optional `STT_MODEL`, `STT_TOKEN`, `STT_LANGUAGE`, `STT_CONCURRENCY`. Die Sprach-Server (Agenten) haben damit nichts zu tun: Der Ton der Abschnitte geht vom Browser zum Chat-Server und von dort zu deinem Whisper. Je Kanal schaltest du Untertitel im Admin-Bereich ein. Rechenbedarf: Ein Abschnitt dauert 1–12 s; mit `STT_CONCURRENCY` (Standard 4) begrenzt du, wie viele gleichzeitig bearbeitet werden – was darüber hinausgeht, wird ausgelassen statt gestaut.
 
 ### Reiner Medien-Server
 
@@ -352,7 +356,7 @@ Von außen muss nur 443/tcp offen sein (und 80/tcp für die Zertifikatserneuerun
 | Browser-Konsole: `Refused to connect … Content Security Policy` | Der Chat-Server kennt den Agenten noch nicht (erst nach der ersten Meldung). Seite neu laden. |
 | „Der Sprach-Server ist gerade ausgelastet“ | Alle Relays haben `MAX_PARTICIPANTS` oder `MAX_MBIT` erreicht. Grenzen erhöhen oder einen weiteren Agenten starten. |
 | Stummschalten/Entfernen wirkt nicht | Der Chat-Server erreicht `CONTROL_URL` nicht. Log des **Chat-Servers**: `Sprache: Agent … nicht erreichbar`. Adresse und Proxy-Regel für `/control` prüfen. |
-| `429 Zu viele Sprachverbindungen von dieser Adresse` | Mehr als `MAX_PER_IP` (Standard 12; je Person bis zu drei: Sprache, Bildschirm, Kameras) Verbindungen von einer IP. Stehen Agent und Browser hinter einem Proxy, `TRUST_PROXY=1` setzen; sonst sehen alle Verbindungen wie die des Proxys aus. |
+| `429 Zu viele Sprachverbindungen von dieser Adresse` | Mehr als `MAX_PER_IP` (Standard 40; je Person bis zu drei: Sprache, Bildschirm, Kameras) Verbindungen von einer IP. Stehen Agent und Browser hinter einem Proxy, `TRUST_PROXY=1` setzen; sonst sehen alle Verbindungen wie die des Proxys aus. |
 
 ---
 

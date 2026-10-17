@@ -44,6 +44,7 @@ type Conn struct {
 	maxMsg   int
 	closed   bool
 	closeErr sync.Once
+	idle     time.Duration // > 0: jedes Frame (auch Pong) verlängert die Lesefrist
 }
 
 // Upgrade nimmt eine WebSocket-Verbindung an. originOK prüft die Origin-Kopfzeile (nil = jede).
@@ -110,12 +111,19 @@ func (c *Conn) RemoteAddr() string { return c.c.RemoteAddr().String() }
 // SetReadDeadline setzt die Frist für das nächste Read.
 func (c *Conn) SetReadDeadline(t time.Time) error { return c.c.SetReadDeadline(t) }
 
+// SetIdleTimeout: Die Verbindung gilt als tot, wenn so lange gar nichts ankommt – auch keine
+// Antwort (Pong) auf unsere Pings. Ersetzt SetReadDeadline in einer Lese-Schleife.
+func (c *Conn) SetIdleTimeout(d time.Duration) { c.idle = d }
+
 // Read liefert die nächste Daten-Nachricht (Text oder Binär). Ping wird beantwortet, Pong
 // ignoriert, Close beendet die Verbindung (io.EOF).
 func (c *Conn) Read() (op int, data []byte, err error) {
 	var msg []byte
 	msgOp := -1
 	for {
+		if c.idle > 0 {
+			c.c.SetReadDeadline(time.Now().Add(c.idle))
+		}
 		fin, fop, payload, err := c.readFrame()
 		if err != nil {
 			return 0, nil, err

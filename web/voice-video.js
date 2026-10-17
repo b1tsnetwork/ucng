@@ -18,6 +18,11 @@
   const tiles = new Map(); // idx → { dec:[low, high], needKey:[true,true], codec, el, canvas, big }
   let featured = [];
   let degraded = false;
+  // Ansicht: "speaker" (die Sprechenden groß) oder "gallery" (alle gleich groß); angeheftet: Nutzer-ID
+  const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* egal */ } } };
+  let viewMode = store.get("ucng:confView") === "gallery" ? "gallery" : "speaker";
+  let pinned = "";
+  let lastPins = "";
 
   const supported = () => !!(window.VideoEncoder && window.VideoDecoder && navigator.mediaDevices && window.UCNGMedia);
 
@@ -68,6 +73,8 @@
     c.on = true;
     c.high = !!high;
     if (L.hint) L.hint(c.codec);
+    if (c.started) { c.forceKey = [true, true]; c.drops = 0; render(); return; } // nach einem Abriss weiter
+    c.started = true;
     const loop = (frame) => { if (cam === c) encodeFrame(c, frame); else frame.close(); };
     if (window.MediaStreamTrackProcessor) {
       c.reader = new MediaStreamTrackProcessor({ track: c.track, maxBufferSize: 1 }).readable.getReader();
@@ -156,12 +163,23 @@
 
   function sendChunk(c, layer, chunk, meta) {
     if (cam !== c || !c.on) return;
-    const b = new Uint8Array(5 + chunk.byteLength);
-    b[0] = 3; b[1] = layer; b[2] = (chunk.type === "key" ? 1 : 0) | (UCNGMedia.tidOf(meta) << 1);
+    const flags = (chunk.type === "key" ? 1 : 0) | (UCNGMedia.tidOf(meta) << 1);
     c.seq[layer] = (c.seq[layer] + 1) & 0xffff;
-    b[3] = c.seq[layer] >> 8; b[4] = c.seq[layer] & 255;
-    chunk.copyTo(b.subarray(5));
-    L.sendBin(b);
+    const seq = c.seq[layer];
+    const raw = new Uint8Array(chunk.byteLength);
+    chunk.copyTo(raw);
+    if (!c.stat) c.stat = { bytes: 0, frames: 0, t0: performance.now() };
+    if (layer === 1) { c.stat.bytes += raw.length; c.stat.frames++; }
+    const out = (payload) => {
+      const b = new Uint8Array(5 + payload.length);
+      b[0] = 3; b[1] = layer; b[2] = flags; b[3] = seq >> 8; b[4] = seq & 255;
+      b.set(payload, 5);
+      if (L) L.sendBin(b);
+    };
+    const e2 = L.e2ee && L.e2ee();
+    if (!e2) { out(raw); return; }
+    const holder = c.chains || (c.chains = [{}, {}]);
+    e2.chain(holder[layer], async () => { const ct = await e2.seal(raw); if (ct && cam === c) out(ct); });
   }
 
   function stopCam(fromRelay) {
@@ -232,7 +250,16 @@
       const q = d.decodeQueueSize;
       if (q > 2 && tid > 0 && !key) { tl.skip[layer] = tid; return; }
       if (q > 5) { tl.needKey[layer] = true; L.sendText({ t: "camkey", i: idx, l: layer }); return; }
-      d.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: b.subarray(7) }));
+      const e2 = L.e2ee && L.e2ee();
+      if (!e2) { d.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: b.subarray(7) })); return; }
+      const copy = b.slice(7);
+      const holder = tl.chains || (tl.chains = [{}, {}]);
+      e2.chain(holder[layer], async () => {
+        const pt = await e2.open(copy);
+        if (!pt || tiles.get(idx) !== tl || d.state !== "configured") return;
+        try { d.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: pt })); }
+        catch { tl.needKey[layer] = true; }
+      });
     } catch { tl.needKey[layer] = true; L.sendText({ t: "camkey", i: idx, l: layer }); }
   }
 
@@ -262,7 +289,7 @@
         break;
       case "featured":
         featured = m.ids || [];
-        for (const [idx, tl] of tiles) if (!featured.includes(idx)) { tl.shown[1] = false; tl.needKey[1] = true; }
+        for (const [idx, tl] of tiles) if (!featured.includes(idx) && !pinIds().includes(idx)) { tl.shown[1] = false; tl.needKey[1] = true; }
         render();
         break;
       case "degraded":
@@ -287,6 +314,31 @@
     if (L) L.render();
   }
 
+  // Wen will ich groß sehen? (für den Relay: dessen großes Bild an mich)
+  function pinIds() {
+    if (!L) return [];
+    const me = L.you();
+    const cams = L.peers().filter((p) => p.cm && p.i !== me);
+    if (viewMode === "gallery") return cams.length <= 4 ? cams.map((p) => p.i) : [];
+    const p = pinned && cams.find((x) => x.u === pinned);
+    return p ? [p.i] : [];
+  }
+  function sendPins(force) {
+    if (!L) return;
+    const ids = pinIds();
+    const key = ids.join(",");
+    if (!force && key === lastPins) return;
+    lastPins = key;
+    L.sendText({ t: "pins", ids });
+    for (const id of ids) { const tl = tiles.get(id); if (tl) tl.needKey[1] = true; }
+  }
+  const highOK = (idx) => featured.includes(idx) || pinIds().includes(idx);
+  function canvasFor(idx, wantBig) {
+    const tl = tileFor(idx);
+    const big = wantBig && highOK(idx) && tl.shown[1] && !degraded;
+    return { canvas: tl.canvas[big ? 1 : 0], soft: wantBig && !big };
+  }
+
   function draw() {
     const box = $("confView");
     if (!box) return;
@@ -298,32 +350,66 @@
     $("confToggle").classList.toggle("on", !box.hidden);
     const screenOn = !!($("screenView") && !$("screenView").hidden);
     box.classList.toggle("mini", screenOn);
+    box.classList.toggle("gallery", viewMode === "gallery" && !screenOn);
+    const lay = $("confLayout");
+    if (lay) {
+      lay.title = viewMode === "gallery" ? t("voice.view_speaker") : t("voice.view_gallery");
+      lay.setAttribute("aria-label", lay.title);
+      lay.classList.toggle("on", viewMode === "gallery");
+    }
+    if (pinned && !peers.some((p) => p.u === pinned)) pinned = ""; // Kamera aus oder gegangen
+    sendPins();
     if (box.hidden) { layoutMedia(); return; }
     const stage = $("confStage"), strip = $("confStrip");
-    if (screenOn) { // Bildschirm hat die Bühne: alle Kameras klein
-      const all = peers.filter((p) => p.i !== me).map((p) => tileEl(p, tileFor(p.i).canvas[0], "conf-tile"));
-      if (cam) all.unshift(selfTile("conf-tile self"));
+    const others = peers.filter((p) => p.i !== me);
+    if (screenOn) { // Präsentation: Bildschirm groß, angeheftete bzw. sprechende Person zuerst und etwas größer
+      const leadIdx = pinIds()[0] || featured.find((i) => others.some((p) => p.i === i));
+      const order = others.slice().sort((a, b) => (b.i === leadIdx) - (a.i === leadIdx));
+      const all = order.map((p) => { const c = canvasFor(p.i, p.i === leadIdx); return tileEl(p, c.canvas, "conf-tile" + (p.i === leadIdx ? " lead" : "") + (c.soft ? " soft" : "")); });
+      if (cam) all.push(selfTile("conf-tile self"));
       stage.replaceChildren(); strip.replaceChildren(...all);
       layoutMedia();
       return;
     }
-    // groß: Featured (ohne mich selbst, außer ich bin allein)
-    let big = featured.filter((i) => i !== me && peers.some((p) => p.i === i));
-    if (!big.length && peers.length) big = peers.filter((p) => p.i !== me).slice(0, 1).map((p) => p.i);
+    if (viewMode === "gallery") { // alle gleich groß
+      const all = others.map((p) => { const c = canvasFor(p.i, others.length <= 4); return tileEl(p, c.canvas, "conf-tile big" + (c.soft ? " soft" : "")); });
+      if (cam) all.push(selfTile("conf-tile big self"));
+      stage.replaceChildren(...all);
+      stage.dataset.n = String(Math.min(all.length, 16));
+      strip.replaceChildren();
+      $("confNote").textContent = degraded ? t("voice.video_degraded") : "";
+      layoutMedia();
+      return;
+    }
+    // Sprecher-Ansicht: angeheftet bzw. die zuletzt Sprechenden groß (ohne mich selbst, außer ich bin allein)
+    let big = pinIds();
+    if (!big.length) big = featured.filter((i) => i !== me && peers.some((p) => p.i === i));
+    if (!big.length && others.length) big = [others[0].i];
     const bigTiles = big.map((idx) => {
       const p = peers.find((x) => x.i === idx);
-      const tl = tileFor(idx);
-      const layer = tl.shown[1] && !degraded ? 1 : 0; // ohne großes Bild: Miniansicht vergrößert
-      return tileEl(p, tl.canvas[layer], "conf-tile big" + (layer === 0 ? " soft" : ""));
+      const c = canvasFor(idx, true); // ohne großes Bild: Miniansicht vergrößert
+      return tileEl(p, c.canvas, "conf-tile big" + (c.soft ? " soft" : ""));
     });
     if (!bigTiles.length && cam) bigTiles.push(selfTile("conf-tile big self"));
     stage.replaceChildren(...bigTiles);
     stage.dataset.n = String(bigTiles.length);
-    const small = peers.filter((p) => p.i !== me && !big.includes(p.i)).map((p) => tileEl(p, tileFor(p.i).canvas[0], "conf-tile"));
+    const small = others.filter((p) => !big.includes(p.i)).map((p) => tileEl(p, tileFor(p.i).canvas[0], "conf-tile"));
     if (cam && bigTiles[0] && !bigTiles[0].classList.contains("self")) small.unshift(selfTile("conf-tile self"));
     strip.replaceChildren(...small);
     $("confNote").textContent = degraded ? t("voice.video_degraded") : "";
     layoutMedia();
+  }
+
+  function setView(mode) {
+    viewMode = mode === "gallery" ? "gallery" : "speaker";
+    store.set("ucng:confView", viewMode);
+    if (viewMode === "gallery") pinned = "";
+    draw();
+  }
+  function pinUser(uid) {
+    pinned = uid || "";
+    if (pinned && viewMode === "gallery") { viewMode = "speaker"; store.set("ucng:confView", viewMode); }
+    draw();
   }
 
   // Nur die Kamera-Leiste sichtbar (ohne Bildschirm)? Dann braucht der Bereich keine feste Höhe.
@@ -373,13 +459,32 @@
 
   function tileEl(p, canvas, cls) {
     const d = document.createElement("div");
-    d.className = cls + (L && L.speaking(p.u) ? " speaking" : "");
+    d.className = cls + (L && L.speaking(p.u) ? " speaking" : "") + (pinned === p.u ? " pinned" : "");
     d.dataset.user = p.u;
     d.append(canvas);
     const n = document.createElement("span");
     n.className = "conf-name";
-    n.textContent = p.n + (p.m || p.sm ? " 🔇" : "");
+    // Zustand aus der Sprachverbindung (Hand, stumm) – dort steht er, nicht in der Medienverbindung
+    const V = window.UCNGVoice, S = V && V.session(), ap = S && S.peers ? [...S.peers.values()].find((x) => x.u === p.u) : null;
+    n.textContent = (ap && ap.h ? "✋ " : "") + p.n + ((ap ? ap.m || ap.sm : p.m || p.sm) ? " 🔇" : "");
     d.append(n);
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "conf-pin";
+    pin.textContent = pinned === p.u ? "📌" : "📍";
+    pin.title = pinned === p.u ? t("voice.unpin") : t("voice.pin");
+    pin.setAttribute("aria-label", pin.title);
+    pin.addEventListener("click", (e) => { e.stopPropagation(); pinUser(pinned === p.u ? "" : p.u); });
+    d.append(pin);
+    const rx = window.UCNGVoice && UCNGVoice.reaction(p.u);
+    if (rx) {
+      const bub = document.createElement("span");
+      bub.className = "conf-react";
+      bub.textContent = rx.e;
+      bub.style.animationDelay = -Math.round(performance.now() - rx.at) + "ms";
+      d.append(bub);
+    }
+    d.addEventListener("dblclick", () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else d.requestFullscreen().catch(() => {}); });
     return d;
   }
 
@@ -408,16 +513,58 @@
       const box = $("confView");
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else box.requestFullscreen().catch(() => {});
     });
+    const lay = $("confLayout");
+    if (lay) lay.addEventListener("click", () => setView(viewMode === "gallery" ? "speaker" : "gallery"));
+    const pip = $("confPip");
+    if (pip) {
+      pip.hidden = !document.pictureInPictureEnabled;
+      pip.addEventListener("click", () => { const c = document.querySelector("#confStage canvas, #confStrip canvas"); if (c && window.UCNGExtras) UCNGExtras.pip(c); });
+    }
+  }
+
+  function stats() {
+    const out = {};
+    if (cam && cam.on) {
+      const st = cam.stat || { bytes: 0, frames: 0, t0: performance.now() }, now = performance.now(), sec = Math.max(0.5, (now - st.t0) / 1000);
+      const c1 = cam.conf[1] || cam.conf[0] || {};
+      out.send = { codec: cam.codec, hw: cam.hw === "prefer-hardware", svc: cam.svc, high: cam.high, w: c1.w, h: c1.h,
+        fps: cam.high ? Math.round(st.frames / sec) : 0, kbps: Math.round(st.bytes * 8 / sec / 1000), target: cam.kbps };
+      cam.stat = { bytes: 0, frames: 0, t0: now };
+    }
+    out.recv = [];
+    for (const [idx, tl] of tiles) {
+      const p = L && L.peer(idx);
+      if (!p) continue;
+      const big = tl.shown[1] && highOK(idx);
+      const cv = tl.canvas[big ? 1 : 0];
+      out.recv.push({ name: p.n, w: cv.width, h: cv.height, big });
+    }
+    return out;
   }
 
   window.UCNGVideo = {
     supported,
-    attach(link) { L = link; featured = link.featured || []; degraded = false; bindView(); render(); },
+    attach(link) { L = link; featured = link.featured || []; degraded = false; lastPins = "-"; bindView(); render(); },
     detach() {
       stopCam(true);
       for (const idx of [...tiles.keys()]) dropTile(idx);
       featured = []; L = null; draw();
     },
+    // Abriss: Kamera weiterlaufen lassen; resume() meldet sie neu an
+    suspend() {
+      if (cam) cam.on = false;
+      for (const idx of [...tiles.keys()]) dropTile(idx);
+      featured = [];
+    },
+    resume() {
+      sendPins(true);
+      if (!cam || !L) return;
+      if (!L.videoOK()) { stopCam(true); return; }
+      L.sendText({ t: "cam", on: true, codec: cam.codec });
+    },
+    stats, setView, pinUser,
+    get pinnedUser() { return pinned; },
+    get view() { return viewMode; },
     onText, onCam, onPeer, onLeave,
     setFeatured(ids) { featured = ids || []; render(); },
     toggleCam() { if (cam) stopCam(); else startCam(); },

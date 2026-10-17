@@ -615,6 +615,8 @@
     $("roomVideoFeatured").value = v && v.featured ? v.featured : 1;
     fillRolePicks("roomVideoRoles", v ? v.videoRoles || [] : [], true);
     $("roomBotMusic").checked = !!(v && v.botMusic);
+    $("roomE2EE").checked = !!(v && v.e2ee);
+    $("roomCaptions").checked = !!(v && v.captions);
     $("roomPassword").value = "";
     $("roomPasswordClear").checked = false;
     $("roomPasswordClearRow").hidden = !(r && r.password);
@@ -701,8 +703,13 @@
     const peers = Math.max(2, parseInt($("roomVoicePeers").value, 10) || 25);
     const per = 50 * 8 * (72 + sp * (6 + kb * 1000 / 400)) / 1000; // wie voicerelay.EstimateKbps
     $("roomVoiceEstimate").textContent = _t("admin.voice_estimate", { per: Math.round(per), total: (Math.round(per * peers / 100) / 10).toLocaleString(GoChatI18n.locale), peers });
+    // Verschlüsselt: keine Musik von Bots, keine Untertitel
+    const e2 = $("roomE2EE").checked;
+    $("roomBotMusic").disabled = e2; $("roomCaptions").disabled = e2 || !voiceSTT;
+    if (e2) { $("roomBotMusic").checked = false; $("roomCaptions").checked = false; }
+    $("roomCaptionsHint").textContent = voiceSTT ? _t("admin.voice_captions_hint") : _t("admin.voice_captions_nostt");
     if (scr) {
-      const sk = { text: 1.5, standard: 2.5, motion: 4 }[$("roomScreenQuality").value] || 2.5;
+      const sk = { text: 3, standard: 4.5, motion: 8, high: 12, max: 16 }[$("roomScreenQuality").value] || 4.5;
       const hints = { text: _t("admin.screen_q_hint_text"), standard: _t("admin.screen_q_hint_standard"), motion: _t("admin.screen_q_hint_motion"),
         high: _t("admin.screen_q_hint_high"), max: _t("admin.screen_q_hint_max") };
       $("roomScreenQualityHint").textContent = hints[$("roomScreenQuality").value] || "";
@@ -710,7 +717,7 @@
     }
   }
   ["roomVoiceOn", "roomVoicePreset", "roomVoicePeers", "roomVoiceSpeakers", "roomVoiceStage", "roomScreenMode", "roomScreenQuality", "roomVideoMode"].forEach((id) => $(id).addEventListener("input", syncVoiceFields));
-  ["roomVoiceOn", "roomVoiceStage", "roomScreenMode", "roomScreenQuality", "roomVideoMode"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
+  ["roomVoiceOn", "roomVoiceStage", "roomScreenMode", "roomScreenQuality", "roomVideoMode", "roomE2EE"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
   $("roomName").addEventListener("input", () => {
     $("renameWarn").hidden = !editing || $("roomName").value.trim().toLowerCase() === editing.name;
   });
@@ -731,7 +738,9 @@
         maxScreens: parseInt($("roomScreenMax").value, 10) || 1, screenRoles: pickedRoles("roomScreenRoles"),
         video: $("roomVideoMode").value, videoQuality: $("roomVideoQuality").value,
         featured: parseInt($("roomVideoFeatured").value, 10) || 1, videoRoles: pickedRoles("roomVideoRoles"),
-        botMusic: $("roomBotMusic").checked,
+        botMusic: $("roomBotMusic").checked && !$("roomE2EE").checked,
+        e2ee: $("roomE2EE").checked,
+        captions: $("roomCaptions").checked && !$("roomE2EE").checked,
       } : null;
     }
     if ($("roomPasswordClear").checked) body.password = "";
@@ -1584,7 +1593,9 @@
   }
 
   // Sprach-Server: eingebauter Relay und Agenten
+  let voiceSTT = false; // Untertitel möglich (STT_URL gesetzt)
   function renderVoiceStats(v) {
+    voiceSTT = !!(v && v.stt);
     $("voicePanel").hidden = !v || !v.enabled;
     if (!v || !v.enabled) return;
     let total = 0;

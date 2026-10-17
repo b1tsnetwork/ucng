@@ -56,6 +56,7 @@ const (
 	MsgAudio      = 1
 	MsgVideo      = 2
 	MsgCam        = 3
+	MsgScreenTone = 4               // Ton einer Bildschirmfreigabe: Browser → Relay [4][seq u16][Opus], Relay → Zuschauer [4][Teilnehmer u16][seq u16][Opus]
 	featureHold   = 2 * time.Second // ein großes Bild bleibt mindestens so lange
 	degradeFor    = 15 * time.Second
 	maxVideoFrame = 4 << 20 // größtes Video-Bild (Schlüsselbild in 4K)
@@ -64,11 +65,19 @@ const (
 	videoLatency  = 0.3 // so viele Sekunden Video dürfen höchstens in der Warteschlange stehen
 	keyReqGap     = time.Second
 	maxFrame      = 1275 // größter Opus-Rahmen
+	maxToneFrame  = 1500 // Ton der Bildschirmfreigabe (Opus, Stereo)
+	toneKbps      = 160
 	tick          = 20 * time.Millisecond
 	activeTimeout = 400 * time.Millisecond
-	readTimeout   = 30 * time.Second
 	outQueue      = 64
 	maxDrops      = 150 // so viele Nachrichten in Folge verworfen → zu langsame Verbindung trennen
+)
+
+// Lebenszeichen (Variablen für Tests): Der Relay pingt alle pingEvery; kommt readTimeout lang
+// gar nichts (auch kein Pong), gilt die Verbindung als tot.
+var (
+	readTimeout = 30 * time.Second
+	pingEvery   = 15 * time.Second
 )
 
 var (
@@ -97,12 +106,15 @@ type PeerInfo struct {
 	Muted    bool   `json:"m,omitempty"` // vom Team stummgeschaltet
 	SelfMute bool   `json:"sm,omitempty"`
 	Hand     bool   `json:"h,omitempty"`
-	Screen   string `json:"sc,omitempty"` // teilt den Bildschirm (Codec, z. B. "vp8")
-	ScreenOK bool   `json:"so,omitempty"` // darf den Bildschirm teilen
-	Cam      string `json:"cm,omitempty"` // Kamera an (Codec)
-	CamOK    bool   `json:"co,omitempty"` // darf die Kamera nutzen
-	Music    int    `json:"mu,omitempty"` // Musik eines Bots (Lautstärke in Prozent)
-	Mod      bool   `json:"mo,omitempty"` // moderiert hier
+	Screen   string `json:"sc,omitempty"`  // teilt den Bildschirm (Codec, z. B. "vp8")
+	ScreenOK bool   `json:"so,omitempty"`  // darf den Bildschirm teilen
+	Cam      string `json:"cm,omitempty"`  // Kamera an (Codec)
+	CamOK    bool   `json:"co,omitempty"`  // darf die Kamera nutzen
+	Music    int    `json:"mu,omitempty"`  // Musik eines Bots (Lautstärke in Prozent)
+	Mod      bool   `json:"mo,omitempty"`  // moderiert hier
+	Quality  int    `json:"q,omitempty"`   // Verbindung laut Browser: 1 schlecht, 2 mittel, 3 gut (0 = unbekannt)
+	Rec      bool   `json:"rec,omitempty"` // nimmt gerade auf (vom Chat-Server gesetzt)
+	PubKey   string `json:"pk,omitempty"`  // Ende-zu-Ende: öffentlicher Schlüssel dieser Sitzung (ECDH P-256)
 }
 
 // Stats: Auslastung des Relays.
@@ -219,6 +231,16 @@ type peer struct {
 	hintScreen string
 	hintCam    string
 	lastSpk    time.Time
+	quality    int
+	rec        bool
+	pubKey     string
+	pins       map[uint16]bool // Kamera: diese Personen groß sehen (angeheftet, Galerie)
+	highSent   bool            // Kamera: dem Browser gesagt, er soll das große Bild senden
+	lastReact  time.Time
+	ctlTok     float64 // Kontingent für Reaktionen, Untertitel, Schlüssel
+	ctlRefill  time.Time
+	tBytes     float64 // Ton der Bildschirmfreigabe
+	tRefill    time.Time
 }
 
 // New startet einen Relay.
@@ -321,15 +343,15 @@ func (r *Relay) channelKbps(ch *channel) float64 {
 			total += float64(len(ch.peers)) * EstimateKbps(ch.bitrate, ch.maxSpeakers)
 		}
 		for _, p := range ch.peers { // Bildschirm: je Zuschauer die Bitrate der Freigabe
-			if p.codec != "" {
-				total += float64(len(p.watchers)) * float64(ch.screenKbps) * 1.05
+			if p.codec != "" { // Bild und Ton der Freigabe
+				total += float64(len(p.watchers)) * (float64(ch.screenKbps) + toneKbps) * 1.05
 			}
 			if p.cam != "" { // Miniansicht an alle, großes Bild an alle, die nicht gedrosselt sind
 				total += float64(len(ch.peers)-1) * float64(ch.thumbKbps) * 1.05
-				if ch.isFeatured(p.idx) {
+				if p.highSent {
 					full := 0.0
 					for _, q := range ch.peers {
-						if q != p && !q.highOff {
+						if q != p && !q.highOff && ch.seesHigh(q, p) {
 							full++
 						}
 					}
@@ -372,23 +394,30 @@ func (p *peer) info() PeerInfo {
 		cm = p.hintCam
 	}
 	return PeerInfo{Idx: p.idx, User: p.user, Name: p.name, Speak: p.speak, Muted: p.muted, SelfMute: p.selfMute, Hand: p.hand, Screen: sc, ScreenOK: p.screenOK,
-		Cam: cm, CamOK: p.videoOK, Music: p.music, Mod: p.mod}
+		Cam: cm, CamOK: p.videoOK, Music: p.music, Mod: p.mod, Quality: p.quality, Rec: p.rec, PubKey: p.pubKey}
 }
 
 // --- Verbindung ---
 
 type ctlMsg struct {
-	T      string  `json:"t"`
-	Ticket string  `json:"ticket,omitempty"`
-	Mute   *bool   `json:"mute,omitempty"`
-	Hand   *bool   `json:"hand,omitempty"`
-	TS     int64   `json:"ts,omitempty"`
-	On     *bool   `json:"on,omitempty"`
-	I      uint16  `json:"i,omitempty"`
-	L      int     `json:"l,omitempty"`
-	Codec  string  `json:"codec,omitempty"`
-	Sc     *string `json:"sc,omitempty"` // state: Hinweis „teile den Bildschirm“ (über die Medienverbindung)
-	Cm     *string `json:"cm,omitempty"` // state: Hinweis „Kamera an“
+	T      string   `json:"t"`
+	Ticket string   `json:"ticket,omitempty"`
+	Mute   *bool    `json:"mute,omitempty"`
+	Hand   *bool    `json:"hand,omitempty"`
+	TS     int64    `json:"ts,omitempty"`
+	On     *bool    `json:"on,omitempty"`
+	I      uint16   `json:"i,omitempty"`
+	L      int      `json:"l,omitempty"`
+	Codec  string   `json:"codec,omitempty"`
+	Sc     *string  `json:"sc,omitempty"`  // state: Hinweis „teile den Bildschirm“ (über die Medienverbindung)
+	Cm     *string  `json:"cm,omitempty"`  // state: Hinweis „Kamera an“
+	Q      *int     `json:"q,omitempty"`   // state: Verbindungsqualität 1–3
+	PK     *string  `json:"pk,omitempty"`  // state: öffentlicher Schlüssel (Ende-zu-Ende)
+	E      string   `json:"e,omitempty"`   // react: Emoji
+	X      string   `json:"x,omitempty"`   // e2k: verpackter Schlüssel
+	To     uint16   `json:"to,omitempty"`  // e2k: Empfänger
+	Ep     int      `json:"ep,omitempty"`  // e2k: Schlüssel-Generation
+	IDs    []uint16 `json:"ids,omitempty"` // pins
 }
 
 // ServeHTTP nimmt eine Sprachverbindung an (GET, WebSocket).
@@ -490,7 +519,7 @@ func (r *Relay) join(t Ticket, conn *wsock.Conn) (*peer, error) {
 		}
 	}
 	p := &peer{idx: ch.next, ch: ch, user: t.User, name: t.Name, speak: t.Speak, muted: t.Muted, hand: t.Hand,
-		bitrate: ch.bitrate, conn: conn, videoOK: t.Video, camNeedKey: map[uint16]*[2]bool{}, camSkip: map[uint16]*[2]uint8{}, mod: t.ModUser,
+		bitrate: ch.bitrate, conn: conn, videoOK: t.Video, camNeedKey: map[uint16]*[2]bool{}, camSkip: map[uint16]*[2]uint8{}, mod: t.ModUser, pins: map[uint16]bool{},
 		out: make(chan []byte, outQueue), vout: make(chan []byte, videoQueue), tokens: 10, refill: now,
 		screenOK: t.Screen && ch.maxScreens > 0, watchers: map[uint16]*peer{}, watching: map[uint16]bool{}, needKey: map[uint16]bool{}, skipTid: map[uint16]uint8{}}
 	// Video-Vorrat: etwa 0,3 s der größten möglichen Bitrate, mindestens ein Schlüsselbild
@@ -545,7 +574,7 @@ func textMsg(b []byte) []byte { return append([]byte{0}, b...) }
 // writer schreibt die Warteschlangen: Steuerung und Sprache haben Vorrang vor Video, damit ein
 // großes Schlüsselbild nie die Sprache aufhält.
 func (r *Relay) writer(p *peer) {
-	ping := time.NewTicker(15 * time.Second)
+	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 	write := func(msg []byte) bool {
 		var err error
@@ -618,8 +647,10 @@ func (p *peer) videoBusy(frac float64) bool { return float64(p.vq.Load()) > floa
 
 func (r *Relay) reader(p *peer) {
 	defer r.leave(p)
+	// Lebenszeichen: jedes Frame zählt – auch die Antwort des Browsers auf unsere Pings (alle 15 s).
+	// Ein Zuschauer, der selbst nichts sendet, bleibt so verbunden.
+	p.conn.SetIdleTimeout(readTimeout)
 	for {
-		p.conn.SetReadDeadline(r.cfg.Now().Add(readTimeout))
 		op, data, err := p.conn.Read()
 		if err != nil {
 			return
@@ -631,6 +662,8 @@ func (r *Relay) reader(p *peer) {
 				r.video(p, data[1], binary.BigEndian.Uint16(data[2:4]), data[4:])
 			} else if len(data) > 5 && data[0] == MsgCam {
 				r.camFrame(p, int(data[1]&1), data[2], binary.BigEndian.Uint16(data[3:5]), data[5:])
+			} else if len(data) > 3 && data[0] == MsgScreenTone && len(data)-3 <= maxToneFrame {
+				r.screenTone(p, binary.BigEndian.Uint16(data[1:3]), data[3:])
 			}
 			continue
 		}
@@ -656,12 +689,20 @@ func (r *Relay) reader(p *peer) {
 			if m.Cm != nil && (*m.Cm == "" || validCodec(*m.Cm)) {
 				p.hintCam = *m.Cm
 			}
+			if m.Q != nil && *m.Q >= 0 && *m.Q <= 3 {
+				p.quality = *m.Q
+			}
+			if m.PK != nil && len(*m.PK) <= 200 && validKey(*m.PK) {
+				p.pubKey = *m.PK
+			}
 			upd, _ := json.Marshal(map[string]any{"t": "peer", "peer": p.info()})
 			r.broadcastLocked(p.ch, textMsg(upd), nil)
 			peers := r.peersLocked(p.ch)
 			ch := p.ch
 			r.mu.Unlock()
 			r.changedCh(ch, peers)
+		case "react", "e2k", "pins":
+			r.small(p, m)
 		case "spk": // Medienverbindung (Kamera): „ich spreche gerade“ – für die großen Bilder
 			now := r.cfg.Now()
 			r.mu.Lock()
@@ -730,10 +771,14 @@ func (r *Relay) removeLocked(p *peer) {
 	for _, q := range ch.peers {
 		delete(q.camNeedKey, p.idx)
 		delete(q.camSkip, p.idx)
+		delete(q.pins, p.idx)
 	}
 	delete(ch.peers, p.idx)
 	if ch.isFeatured(p.idx) {
 		r.refeatureLocked(ch, r.cfg.Now(), true)
+	}
+	if len(p.pins) > 0 { // wer nur von p angeheftet war, braucht kein großes Bild mehr
+		r.updateHighLocked(ch)
 	}
 	delete(ch.active, p.idx)
 	if ch.kind == "" {
@@ -972,15 +1017,27 @@ func (r *Relay) controlOne(key, user, action string, value bool, reason string) 
 		r.mu.Unlock()
 		return false
 	}
-	if ch.kind != "" && (action == "speak" || action == "hand" || action == "move") { // betrifft nur die Sprache
-		r.mu.Unlock()
-		return false
+	switch action {
+	case "speak", "hand", "move", "forcemute", "askunmute", "rec", "cap": // betrifft nur die Sprache
+		if ch.kind != "" {
+			r.mu.Unlock()
+			return false
+		}
 	}
 	var hit []*peer
 	for _, p := range ch.peers {
-		if p.user == user || action == "close" {
+		// user "" bei forcemute/camsoff: alle außer Moderierenden
+		if p.user == user || action == "close" || user == "" && !p.mod && (action == "forcemute" || action == "camsoff") {
 			hit = append(hit, p)
 		}
+	}
+	if action == "cap" { // Untertitel aus dem eigenen Whisper (value = endgültig, reason = Text)
+		if len(hit) > 0 {
+			b, _ := json.Marshal(map[string]any{"t": "cap", "i": hit[0].idx, "u": hit[0].user, "x": capText(reason), "f": value})
+			r.broadcastLocked(ch, textMsg(b), nil)
+		}
+		r.mu.Unlock()
+		return len(hit) > 0
 	}
 	if len(hit) == 0 {
 		r.mu.Unlock()
@@ -1007,6 +1064,19 @@ func (r *Relay) controlOne(key, user, action string, value bool, reason string) 
 			}
 		case "mod":
 			p.mod = value
+		case "rec": // nimmt auf – alle sehen es
+			p.rec = value
+		case "forcemute": // „alle stummschalten“: selbst wieder einschaltbar
+			r.enqueueLocked(p, textMsg([]byte(`{"t":"forcemute"}`)))
+			continue
+		case "askunmute": // „bitte Mikrofon einschalten“ – die Person entscheidet
+			r.enqueueLocked(p, textMsg([]byte(`{"t":"askunmute"}`)))
+			continue
+		case "camsoff": // „alle Kameras aus“: wieder einschaltbar
+			if p.cam != "" {
+				r.camOffLocked(p)
+			}
+			continue
 		case "move": // in einen anderen Kanal schicken (reason = Ziel); der Browser tritt dort bei
 			b, _ := json.Marshal(map[string]any{"t": "move", "room": reason})
 			r.enqueueLocked(p, textMsg(b))

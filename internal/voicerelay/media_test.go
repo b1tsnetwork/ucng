@@ -165,3 +165,31 @@ func waitFor(t *testing.T, ok func() bool) {
 	}
 	t.Fatal("Bedingung nicht erreicht")
 }
+
+// Ein Zuschauer, der selbst nichts sendet, bleibt verbunden: Die Antworten auf die Pings des
+// Relays zählen als Lebenszeichen (früher trennte der Relay ihn nach readTimeout).
+func TestSilentViewerStays(t *testing.T) {
+	oldRead, oldPing := readTimeout, pingEvery
+	readTimeout, pingEvery = 400*time.Millisecond, 100*time.Millisecond
+	t.Cleanup(func() { readTimeout, pingEvery = oldRead, oldPing })
+	e := newEnv(t, Config{MaxMbit: 50})
+	scr := Ticket{Channel: "talk", Kind: KindScreen, Screen: true, ScreenKbps: 4000, MaxScreens: 1}
+	a, _ := e.join(withUser(scr, "a"))
+	b, _ := e.join(withUser(scr, "b"))
+	a.c.WriteText([]byte(`{"t":"share","on":true,"codec":"vp8"}`))
+	a.waitText("share")
+	b.c.WriteText([]byte(`{"t":"watch","i":` + itoa(a.you) + `,"on":true}`))
+	b.waitText("watch")
+	// b schweigt jetzt über ein Vielfaches der Frist; a sendet weiter Bilder
+	for i := 0; i < 15; i++ {
+		a.sendVideo(i == 0, uint16(i+1), 300)
+		time.Sleep(100 * time.Millisecond)
+	}
+	if e.r.Stats().MediaPeers != 2 {
+		t.Fatal("stiller Zuschauer wurde getrennt")
+	}
+	if got, _ := b.videos(300 * time.Millisecond); got[a.you] == 0 {
+		// die früheren Bilder hat videos() noch nicht gelesen – es müssen welche angekommen sein
+		t.Fatalf("keine Bilder beim stillen Zuschauer: %v", got)
+	}
+}

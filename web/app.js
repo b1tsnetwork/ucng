@@ -856,6 +856,7 @@
           break;
         case "pins": pinned = ev.messages || []; renderPins(); renderAll(); break;
         case "voice": if (window.UCNGVoice) UCNGVoice.onEvent(ev); break;
+        case "breakout": if (window.UCNGExtras && ev.breakout) UCNGExtras.onBreakout(ev.breakout); break;
         case "profiles": loadProfiles().then(() => { renderAll(); renderPresence(); if (thread) renderThread(); }); break;
         case "dm": if (ev.user === me.id) loadDMs().then(refreshUnread); break;
         case "layout": loadGroups().then(loadRooms); break;
@@ -1881,6 +1882,7 @@
   const menu = $("msgMenu");
   function openMsgMenu(anchor, m) { openMenu(anchor, msgMenuItems(m)); }
   function openMenu(anchor, items) {
+    if (!menu.dataset.keepClass) menu.className = "msg-menu popover";
     menu.replaceChildren(...items.map(([icon, label, fn, cls]) => {
       const b = h("button", "menu-item" + (cls ? " " + cls : ""));
       b.type = "button";
@@ -2794,11 +2796,16 @@
   // ---------- Bedienung wie bei Discord: Kontextmenüs, Mitgliederliste, Nutzerleiste, Kürzel ----------
 
   // Menü an der Mausposition
-  function openMenuAt(x, y, items) {
+  // above: Menü endet bei y (z. B. über einem Knopf unten); cls: zusätzliche Klasse (z. B. Reaktionen)
+  function openMenuAt(x, y, items, above, cls) {
     if (!items.length) return;
+    menu.className = "msg-menu popover" + (cls ? " " + cls : "");
+    menu.dataset.keepClass = "1";
     openMenu({ getBoundingClientRect: () => ({ left: x, right: x, top: y, bottom: y }) }, items);
+    delete menu.dataset.keepClass;
     menu.style.left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, x)) + "px";
-    menu.style.top = Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, y)) + "px";
+    const top = above ? y - menu.offsetHeight : y;
+    menu.style.top = Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, top)) + "px";
   }
   const ICON2 = {
     copy: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="9.5" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13 6.5V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v7.5A1.5 1.5 0 0 0 5.5 14H6.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
@@ -3057,7 +3064,8 @@
   });
 
   if (window.UCNGVoice) {
-    UCNGVoice.init({ api, toast, h, iconBtn, avatar, me: () => me, token: () => token, isBlocked,
+    UCNGVoice.init({ api, toast, h, iconBtn, avatar, me: () => me, token: () => token, isBlocked, menuAt: openMenuAt,
+      roomPath, locale: () => GoChatI18n.locale,
       requireName: () => { if (me.name) return true; askName(); return false; },
       canModerate: () => !!(me.team || (me.perms && me.perms.mute)),
       voiceRooms: () => rooms.filter((r) => r.voice).map((r) => r.name),

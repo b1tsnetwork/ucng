@@ -131,7 +131,8 @@ type Event struct {
 	ID          int64          `json:"id,omitempty"`
 	Users       []PresenceUser `json:"users,omitempty"`
 	Guests      int            `json:"guests,omitempty"`
-	Voice       []VoicePeer    `json:"voice,omitempty"` // bei "voice": Teilnehmer des Sprachkanals Room
+	Voice       []VoicePeer    `json:"voice,omitempty"`    // bei "voice": Teilnehmer des Sprachkanals Room
+	Breakout    *BreakoutInfo  `json:"breakout,omitempty"` // bei "breakout": Runde gestartet oder beendet
 }
 
 // Viewer ist eine angemeldete Person, die einen Kanal geöffnet hat (für die Online-Liste).

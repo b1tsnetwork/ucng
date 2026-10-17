@@ -27,6 +27,7 @@ type TempInfo struct {
 	OwnerName string `json:"ownerName,omitempty"` // Name zum Zeitpunkt des Anlegens
 	By        string `json:"by"`                  // "command" oder "bot:<id>"
 	Idle      int    `json:"idleMinutes"`         // löschen nach so vielen Minuten ohne Personen
+	Breakout  string `json:"breakout,omitempty"`  // Breakout-Raum dieses Kanals
 }
 
 // TempRoomsConfig: Einstellungen (Admin → Kanäle → Temporäre Kanäle).
@@ -174,6 +175,7 @@ type TempRoomInput struct {
 	VoiceSet    bool // Voice gilt (auch nil = nur Text); sonst die Vorlage aus den Einstellungen
 	ReadRoles   []string
 	WriteRoles  []string
+	Breakout    string // Breakout-Raum dieses Kanals (zählt nicht zur Grenze je Person)
 }
 
 // CreateTempRoom legt einen temporären Kanal an (Grenzen insgesamt und je Person).
@@ -214,12 +216,12 @@ func (h *Hub) CreateTempRoom(in TempRoomInput) (RoomInfo, error) {
 			continue
 		}
 		total++
-		if in.Owner != "" && r.temp.Owner == in.Owner {
+		if in.Owner != "" && r.temp.Owner == in.Owner && r.temp.Breakout == "" {
 			mine++
 			mineName = r.name
 		}
 	}
-	if in.Owner != "" && mine >= cfg.MaxPerUser {
+	if in.Owner != "" && in.Breakout == "" && mine >= cfg.MaxPerUser {
 		return RoomInfo{}, &TempMineError{Room: mineName}
 	}
 	if total >= cfg.MaxTotal {
@@ -240,7 +242,7 @@ func (h *Hub) CreateTempRoom(in TempRoomInput) (RoomInfo, error) {
 		return RoomInfo{}, err
 	}
 	r.readRoles, r.writeRoles, r.voice = readR, writeR, voice
-	r.temp = &TempInfo{Owner: in.Owner, OwnerName: in.OwnerName, By: in.By, Idle: idle}
+	r.temp = &TempInfo{Owner: in.Owner, OwnerName: in.OwnerName, By: in.By, Idle: idle, Breakout: in.Breakout}
 	if strings.HasPrefix(in.By, "bot:") {
 		r.createdBy = in.By
 	}
@@ -616,6 +618,8 @@ func (s *Server) handleRoomOwnerSettings(w http.ResponseWriter, r *http.Request)
 			Stage    *bool   `json:"stage"`
 			Screen   *string `json:"screen"` // "" oder speakers
 			Video    *string `json:"video"`  // "" oder speakers
+			E2EE     *bool   `json:"e2ee"`
+			Captions *bool   `json:"captions"`
 		} `json:"voice"`
 	}
 	if !decodeJSON(w, r, &in) {
@@ -645,6 +649,12 @@ func (s *Server) handleRoomOwnerSettings(w http.ResponseWriter, r *http.Request)
 		}
 		if g := in.Voice.Guests; g != nil {
 			v.Guests = *g
+		}
+		if e := in.Voice.E2EE; e != nil {
+			v.E2EE = *e
+		}
+		if c := in.Voice.Captions; c != nil {
+			v.Captions = *c
 		}
 		if st := in.Voice.Stage; st != nil {
 			v.Stage = *st

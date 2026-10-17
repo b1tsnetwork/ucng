@@ -540,7 +540,7 @@ Jeder Kanal kann zusätzlich ein **Sprachkanal** sein (Admin → Kanäle → Kan
 
 - **Beitreten:** Knopf *Beitreten* oben im Kanal oder das Kopfhörer-Symbol in der Kanalliste. Die Teilnehmer stehen unter dem Kanal in der Seitenleiste (grüner Ring = spricht gerade) – auch für alle, die nicht beigetreten sind.
 - **Selbst abmischen:** Ein Klick auf einen Namen öffnet einen Regler von 0 bis 200 % und *Für mich stummschalten*. Die Einstellung gilt nur im eigenen Browser und bleibt gespeichert; blockierte Personen sind automatisch stumm. Doppelklick auf den Regler setzt ihn auf 100 % zurück.
-- **Unten in der Seitenleiste:** Mikrofon aus/an und *Nichts hören* in der Nutzerleiste; in der Sprachleiste darüber Kamera, Bildschirm teilen, Melden (Bühne), Einstellungen (Mikrofon, Ausgabegerät, Sprachaktivierung mit Empfindlichkeit oder Push-to-Talk mit frei wählbarer Taste, Rauschunterdrückung) und Verlassen.
+- **Unten in der Seitenleiste:** Mikrofon aus/an und *Nichts hören* in der Nutzerleiste; in der Sprachleiste darüber Hand heben, Reaktion, Kamera, Bildschirm teilen, *Mehr* (Ansicht, Untertitel, Statistik, Nur Audio, Werkzeuge der Leitung, Spracheinstellungen: Mikrofon, Ausgabegerät, Sprachaktivierung mit Empfindlichkeit oder Push-to-Talk mit frei wählbarer Taste, Rauschunterdrückung) und Verlassen.
 - **Moderation:** Team und Rollen mit dem Recht *Stummschalten* können Teilnehmer im Sprachkanal stummschalten, entfernen (Wiedereintritt nach einer Minute) und auf der Bühne das Rederecht geben oder entziehen. Jede Aktion steht im Protokoll. Eine Sperre im Chat wirkt sofort: *Ausschließen* beendet die Sprachverbindung, *Stummschalten* schaltet auch die Sprache stumm. Geänderte Rollen oder Kanalrechte werden sofort übernommen.
 
 Einstellungen je Kanal:
@@ -577,7 +577,10 @@ In Sprachkanälen kann der Bildschirm (oder ein Fenster, ein Tab) geteilt werden
 - **Bandbreite nur, wo jemand hinsieht:** Der Relay schickt das Bild nur an Personen, die zusehen. Neue Zuschauer bekommen sofort ein Schlüsselbild; bei einer langsamen Verbindung wird zuerst Video ausgelassen (die Sprache bleibt). Ist ein Relay an seiner Grenze (`VOICE_MAX_MBIT` bzw. `MAX_MBIT`), werden keine weiteren Zuschauer angenommen.
 - **Auf den Sprach-Servern:** Bildschirmfreigaben laufen über die Sprach-Server (eingebaut oder Agenten), nie über den Chat-Server – und bei Bedarf auf einem anderen als die Sprache, siehe [Lastverteilung in einem Kanal](#lastverteilung-in-einem-kanal).
 - **Moderation:** Team und Rollen mit dem Recht *Stummschalten* können eine Freigabe beenden und das Teilen für die Person sperren (*Bildschirmfreigabe beenden und sperren*) bzw. wieder erlauben. Wer stummgeschaltet ist, kann nicht teilen.
-- Ton des Bildschirms wird nicht übertragen. In Chrome und Edge läuft das Teilen auch weiter, wenn das Chat-Fenster im Hintergrund ist; in Firefox kann es dann ruckeln.
+- **Ton mitteilen:** Beim Teilen bietet der Browser an, den Ton des Tabs (bzw. unter Windows den System-Ton) mitzuschicken. Er läuft als eigene Opus-Spur (Stereo, 128 kbit/s) zu den Zuschauern; die Lautstärke regelt jede Person im Kopf des Bildschirmfensters. Chrome und Edge können das, Firefox und Safari teilen nur das Bild.
+- **Übersteht Abrisse:** Reißt beim Teilenden die Verbindung ab (WLAN-Wechsel, kurzer Aussetzer), läuft die Aufnahme weiter; nach dem Neuverbinden geht die Freigabe ohne neue Bildschirmauswahl weiter, und die Zuschauer sehen automatisch wieder zu. Für die Kamera gilt dasselbe.
+- **Bild-in-Bild:** Knopf im Kopf des Bildschirmfensters (bzw. der Konferenz) – das Bild schwebt dann über anderen Fenstern.
+- In Chrome und Edge läuft das Teilen auch weiter, wenn das Chat-Fenster im Hintergrund ist; in Firefox kann es dann ruckeln.
 
 ### Konferenzraum (Kameras)
 
@@ -595,7 +598,63 @@ Ein Sprachkanal wird zum Konferenzraum, wenn unter *Kameras (Konferenz)* etwas a
 | Full HD 60 | 1920×1080 | 60 | 5 Mbit/s |
 
 - **Moderation:** wie bei der Bildschirmfreigabe – *Kamera beenden* sperrt die Kamera der Person, *Kamera erlauben* hebt das auf.
-- Braucht WebCodecs (aktueller Chrome, Edge, Firefox ab 130, Safari ab 17). Am effizientesten sendet Chrome/Edge; andere Browser greifen auf ein Video-Element zurück und brauchen etwas mehr CPU. Ansichten anheften gibt es noch nicht – groß sind immer die zuletzt Sprechenden.
+- **Ansichten:** *Sprecher-Ansicht* (Standard, die zuletzt Sprechenden groß) oder *Galerie-Ansicht* (alle gleich groß; bis vier Kameras in voller Qualität) – Knopf unten in der Konferenz. Läuft eine Bildschirmfreigabe, wird daraus die *Präsentation*: Bildschirm groß, die angeheftete bzw. sprechende Person etwas größer daneben.
+- **Anheften:** 📍 auf einer Kachel (oder im Menü der Person) zeigt diese Person fest groß, egal wer spricht. Der Relay schickt dann nur dir ihr großes Bild; andere bekommen es nicht unnötig.
+- Braucht WebCodecs (aktueller Chrome, Edge, Firefox ab 130, Safari ab 17). Am effizientesten sendet Chrome/Edge; andere Browser greifen auf ein Video-Element zurück und brauchen etwas mehr CPU.
+
+### Leitung einer Konferenz
+
+Wer moderiert – das Team, Rollen mit dem Recht *Stummschalten*, der Besitzer eines temporären Kanals und **Co-Hosts** –, findet im Menü *Mehr* (⋯) der Sprachleiste:
+
+| Aktion | Wirkung |
+|---|---|
+| Alle stummschalten | alle außer Moderierenden; jede Person kann sich selbst wieder einschalten |
+| Alle Kameras ausschalten | ebenso; die Kamera lässt sich wieder einschalten |
+| Breakout-Räume … | siehe unten |
+| Aufnahme starten | siehe unten |
+| Konferenz für alle beenden | alle verlassen den Sprachkanal |
+
+Im Menü einer Person außerdem: *Bitten, das Mikrofon einzuschalten* (die Person sieht eine Bitte mit „Einschalten“ / „Nicht jetzt“ – eingeschaltet wird nie ohne sie) und *Zum Co-Host machen* (nur Gastgeber, also nicht Co-Hosts selbst; gilt, bis der Kanal leer ist).
+
+**Hand heben und Reaktionen** gibt es in jedem Sprachkanal (✋ und 🙂 in der Sprachleiste). Reaktionen (👍 👏 😂 ❤️ 🎉 😮 👎 🙏) erscheinen kurz am Namen und auf der Kachel.
+
+**Verbindungsqualität:** Jeder Browser misst Ping, Verlust und Sendestau und meldet das Ergebnis; an Namen mit wackeliger oder schlechter Verbindung steht ein gelbes bzw. rotes Balkensymbol. *Mehr → Verbindung und Statistik* zeigt Einzelheiten: Ping, Verlust, Server für Bildschirm und Kameras, Auflösung, Bilder/s, Bitrate und Codec (mit „HW“ für Kodierung über die Grafikkarte). *Nur Audio* schaltet den Empfang von Bildschirm und Kameras ab – für schwache Leitungen.
+
+### Breakout-Räume
+
+*Mehr → Breakout-Räume …* teilt alle außer den Moderierenden zufällig und gleichmäßig auf 2–20 Gruppen auf – optional mit Countdown (bis 240 Minuten). Die Gruppen sind temporäre Kanäle mit den Einstellungen und Zugangsregeln (samt Passwort) des Hauptkanals, ohne Bühne. In jeder Gruppe steht ein Hinweis mit der Restzeit und *Zurück in den Hauptkanal*. Nach Ablauf – oder mit *Alle zurückholen* – kommen alle zurück; die Gruppen löschen sich danach wie jeder temporäre Kanal. API: `POST /api/voice/{room}/breakout` mit `{"groups":3,"minutes":10}`, `DELETE` holt alle zurück.
+
+### Aufnahme
+
+Moderierende nehmen über *Mehr → Aufnahme starten* auf – **im eigenen Browser**, als WebM-Datei (Bild: Bildschirm mit sprechender Kamera, sonst die Kameras, sonst die Namen; Ton: alle samt eigenem Mikrofon). Alle im Kanal sehen dabei deutlich „● … nimmt auf“, auch am Namen. Die Datei landet nur auf dem Gerät der aufnehmenden Person; der Server speichert nichts. Vorher das Einverständnis aller einholen.
+
+### Untertitel und Mitschrift
+
+Mit einer **eigenen** Spracherkennung (selbst betriebenes Whisper o. Ä., OpenAI-kompatible Schnittstelle) gibt es Live-Untertitel – je Kanal einschaltbar (*Untertitel*). Es gibt keinen Weg über fremde Dienste: Ohne `STT_URL` sind Untertitel aus.
+
+| Umgebungsvariable | Standard | Bedeutung |
+|---|---|---|
+| `STT_URL` | – | z. B. `http://whisper:8000/v1/audio/transcriptions` (faster-whisper-server, whisper.cpp server, LocalAI …) |
+| `STT_TOKEN` | – | Bearer-Schlüssel, falls die Spracherkennung einen will |
+| `STT_MODEL` | `whisper-1` | Modell-Name, z. B. `Systran/faster-whisper-large-v3` |
+| `STT_LANGUAGE` | – | Sprache fest vorgeben; sonst die Sprache der Person |
+| `STT_CONCURRENCY` | `4` | gleichzeitige Anfragen (mehr werden ausgelassen statt gestaut) |
+
+So funktioniert es: Solange eine Person spricht, sammelt ihr Browser die Sprache; nach einer kurzen Pause (oder spätestens nach 12 s) geht der Abschnitt als WAV (16 kHz, mono) an den Chat-Server, der ihn an `STT_URL` weiterreicht und den Text als Untertitel an alle im Kanal schickt. Jede Person kann Untertitel ausblenden und *Meine Sprache nicht verschriftlichen* wählen. *Mehr → Mitschrift herunterladen* speichert alles als Textdatei; Moderierende können die Mitschrift auch in den Kanal posten. In Ende-zu-Ende-verschlüsselten Kanälen gibt es keine Untertitel.
+
+Geeignet ist jeder Server mit der OpenAI-Schnittstelle `POST /v1/audio/transcriptions` (Felder `file`, `model`, `language`, Antwort `{"text": …}`), z. B. faster-whisper-server/speaches, whisper.cpp (`server`) oder LocalAI – Image, Modell und Port laut deren Anleitung. Läuft er im selben Docker-Netz wie der Chat, reicht etwa `STT_URL=http://whisper:8000/v1/audio/transcriptions`. Für Echtzeit-Untertitel empfiehlt sich ein kleines bis mittleres Modell oder eine GPU.
+
+### Ende-zu-Ende-Verschlüsselung
+
+Mit *Ende-zu-Ende-verschlüsselt* (Admin → Kanal, oder als Besitzer eines temporären Kanals) werden Sprache, Bildschirm samt Ton und Kameras in den Browsern verschlüsselt (AES-GCM, je Rahmen). Chat-Server und Sprach-Server leiten nur Geheimtext weiter.
+
+- **Schlüssel:** Jeder Browser erzeugt je Sitzung ein Schlüsselpaar (ECDH P-256). Die Person mit dem kleinsten Index erzeugt den Kanalschlüssel und schickt ihn jeder Person einzeln verpackt. Verlässt jemand den Kanal oder wechselt die Führung, gibt es sofort einen neuen Schlüssel – wer gegangen ist, kann nicht weiter mithören.
+- **Sicherheitscode:** In der Sprachleiste steht „🔒 Verschlüsselt · Code 1234 5678 …“. Vergleicht ihn mündlich: Stimmt er bei allen überein, hört niemand mit – auch kein manipulierter Server, der Schlüssel austauschen wollte.
+- Nicht verschlüsselt sind Metadaten, die die Sprach-Server zum Verteilen brauchen: wer im Kanal ist, wer gerade spricht (Lautstärke), Schlüsselbild-Markierungen. Musik von Bots und Untertitel sind in solchen Kanälen aus; die Aufnahme im eigenen Browser geht.
+
+### Auf dem Handy
+
+Im Sprachkanal erscheint auf schmalen Bildschirmen eine **Anrufleiste** (Mikrofon, Kopfhörer, Kamera, Hand, Auflegen). Auf Handys läuft der Ton über ein Audio-Element und spielt so auch weiter, wenn der Bildschirm aus ist oder eine andere App im Vordergrund ist; Mikrofon, Kamera und Auflegen gehen über die Medien-Steuerung des Systems. Während einer Konferenz bleibt der Bildschirm an (Wake Lock). Bedienelemente sind auf Touch-Geräten größer; Bild-in-Bild funktioniert in Chrome für Android und Safari.
 
 ### Personen verschieben
 
@@ -641,7 +700,7 @@ CHAT_URL=http://chat-intern:8080 AGENT_TOKEN='langer-zufälliger-schlüssel' \
 | `AGENT_ID` | Rechnername | Name in der Übersicht |
 | `ADDR` | `:8090` | Listen-Adresse |
 | `MAX_PARTICIPANTS` / `MAX_MBIT` | `200` / `50` | Grenzen dieses Agenten |
-| `MAX_PER_IP` | `12` | Verbindungen je IP-Adresse (je Person bis zu drei: Sprache, Bildschirm, Kameras) |
+| `MAX_PER_IP` | `40` | Verbindungen je IP-Adresse (je Person bis zu drei: Sprache, Bildschirm, Kameras – viele Personen hinter einem Firmen-NAT teilen sich eine IP) |
 | `ROLE` | leer | `media` = nur Bildschirm und Kameras (bekommt keine Sprachkanäle, nimmt ausgelagerte Medien zuerst) |
 | `ALLOWED_ORIGINS` | `PUBLIC_URL` des Chat-Servers | Seiten, von denen Browser verbinden dürfen |
 | `TRUST_PROXY`, `TRUSTED_PROXIES` | aus | wie beim Chat-Server |
@@ -656,6 +715,7 @@ Ein Kanal kann von mehreren Sprach-Servern zugleich bedient werden. Die **Sprach
 |---|---|---|
 | `VOICE_OFFLOAD_SCREEN` | `50` | Bildschirm auslagern, wenn der Sprach-Server mit ihm über diese Auslastung (Prozent der Bandbreite) käme. `0` = immer auslagern, `100` = nie |
 | `VOICE_OFFLOAD_VIDEO` | `75` | ebenso für die Kameras |
+| `VOICE_MAX_PER_IP` | `40` | eingebauter Relay: Verbindungen je IP-Adresse (je Person bis zu drei; an Firmen-NAT denken) |
 
 - **Wohin?** Auf den Sprach-Server mit der meisten Luft; Agenten mit `ROLE=media` (reine Medien-Server) zuerst. Gibt es keinen anderen, bleibt alles beim Sprach-Server.
 - **Wann?** Wenn die erste Person im Kanal eine Medienverbindung braucht, und erneut, wenn jemand zu senden beginnt, während in dieser Art gerade niemand sendet. Dann zieht die Art ohne Unterbrechung um – die Browser im Kanal verbinden sich von selbst neu. Laufende Freigaben werden nicht verschoben.

@@ -1322,6 +1322,20 @@
             </span>
             <input type="checkbox" class="switch" id="roomBotMusic">
           </label>
+          <label class="switch-row">
+            <span class="switch-text">
+              <strong data-i18n="admin.voice_e2ee">Ende-zu-Ende-verschlüsselt</strong>
+              <small data-i18n="admin.voice_e2ee_hint">Sprache, Bildschirm und Kameras werden in den Browsern verschlüsselt – Server und Sprach-Server sehen nichts. Alle vergleichen einen Sicherheitscode. Ohne Musik von Bots und Untertitel.</small>
+            </span>
+            <input type="checkbox" class="switch" id="roomE2EE">
+          </label>
+          <label class="switch-row">
+            <span class="switch-text">
+              <strong data-i18n="admin.voice_captions">Untertitel</strong>
+              <small id="roomCaptionsHint" data-i18n="admin.voice_captions_hint">Über die eigene Spracherkennung (STT_URL, z. B. selbst betriebenes Whisper). Der Ton verlässt deinen Server nicht.</small>
+            </span>
+            <input type="checkbox" class="switch" id="roomCaptions">
+          </label>
           <div class="field-row" id="roomScreenMore">
             <label class="field">
               <span data-i18n="admin.screen_max">Freigaben gleichzeitig</span>

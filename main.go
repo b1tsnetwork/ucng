@@ -73,6 +73,13 @@ type Config struct {
 	VoiceAgentToken      string  // Schlüssel, mit dem sich Agenten anmelden (leer = keine Agenten)
 	VoiceOffloadScreen   int     // Bildschirm auf einen anderen Relay auslagern ab dieser Auslastung (Prozent) des Sprach-Relays
 	VoiceOffloadVideo    int     // Kameras ebenso (Prozent)
+	VoiceMaxPerIP        int     // eingebauter Relay: Verbindungen je IP-Adresse (je Person bis zu drei)
+	// Untertitel (stt.go): eigene Spracherkennung, OpenAI-kompatibel (z. B. selbst betriebenes Whisper)
+	STTURL         string
+	STTToken       string
+	STTModel       string
+	STTLanguage    string
+	STTConcurrency int
 }
 
 func env(key, def string) string {
@@ -130,7 +137,13 @@ func loadConfig() Config {
 	flag.IntVar(&c.VoiceMaxParticipants, "voice-max-participants", envInt("VOICE_MAX_PARTICIPANTS", 200), "Eingebauter Sprach-Relay: Teilnehmer insgesamt")
 	flag.Float64Var(&c.VoiceMaxMbit, "voice-max-mbit", envFloat("VOICE_MAX_MBIT", 50), "Eingebauter Sprach-Relay: höchstens so viel ausgehende Bandbreite (Mbit/s, geschätzt)")
 	flag.IntVar(&c.VoiceOffloadScreen, "voice-offload-screen", envInt("VOICE_OFFLOAD_SCREEN", 50), "Bildschirmfreigaben auf einen anderen Sprach-Server auslagern, wenn der Server der Sprache sonst über diese Auslastung käme (Prozent; 0 = immer auslagern, 100 = nie)")
+	flag.IntVar(&c.VoiceMaxPerIP, "voice-max-per-ip", envInt("VOICE_MAX_PER_IP", 40), "Eingebauter Sprach-Relay: Verbindungen je IP-Adresse (je Person bis zu drei – an Firmen-NAT denken)")
 	flag.IntVar(&c.VoiceOffloadVideo, "voice-offload-video", envInt("VOICE_OFFLOAD_VIDEO", 75), "Kameras ebenso (Prozent)")
+	flag.StringVar(&c.STTURL, "stt-url", env("STT_URL", ""), "Untertitel: Adresse der eigenen Spracherkennung (OpenAI-kompatibel, z. B. http://whisper:8000/v1/audio/transcriptions); leer = keine Untertitel")
+	flag.StringVar(&c.STTToken, "stt-token", env("STT_TOKEN", ""), "Untertitel: Bearer-Schlüssel der Spracherkennung (optional)")
+	flag.StringVar(&c.STTModel, "stt-model", env("STT_MODEL", "whisper-1"), "Untertitel: Modell-Name für die Spracherkennung")
+	flag.StringVar(&c.STTLanguage, "stt-language", env("STT_LANGUAGE", ""), "Untertitel: Sprache fest vorgeben (z. B. de); leer = Sprache der Person")
+	flag.IntVar(&c.STTConcurrency, "stt-concurrency", envInt("STT_CONCURRENCY", 4), "Untertitel: gleichzeitige Anfragen an die Spracherkennung")
 	flag.StringVar(&c.VoiceAgentToken, "voice-agent-token", env("VOICE_AGENT_TOKEN", ""), "Schlüssel für Sprach-Agenten (cmd/ucng-voice); leer = keine Agenten")
 	flag.Parse()
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))

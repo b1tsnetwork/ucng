@@ -59,7 +59,7 @@ func loadConfig() config {
 	var c config
 	host, _ := os.Hostname()
 	maxP, _ := strconv.Atoi(env("MAX_PARTICIPANTS", "200"))
-	perIP, _ := strconv.Atoi(env("MAX_PER_IP", "12")) // je Person bis zu drei Verbindungen (Sprache, Bildschirm, Kameras)
+	perIP, _ := strconv.Atoi(env("MAX_PER_IP", "40")) // je Person bis zu drei Verbindungen (Sprache, Bildschirm, Kameras); an Firmen-NAT denken
 	maxM, _ := strconv.ParseFloat(env("MAX_MBIT", "50"), 64)
 	flag.StringVar(&c.Addr, "addr", env("ADDR", ":8090"), "Listen-Adresse")
 	flag.StringVar(&c.ChatURL, "chat-url", env("CHAT_URL", ""), "Adresse des Chat-Servers (intern erreichbar), z. B. http://chat:8080")
@@ -250,7 +250,7 @@ func (a *agent) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 	var ok bool
 	switch in.Action {
-	case "speak", "mute", "hand", "kick", "close", "screen", "video", "mod", "move", "mediakick", "remedia":
+	case "speak", "mute", "hand", "kick", "close", "screen", "video", "mod", "move", "mediakick", "remedia", "forcemute", "askunmute", "camsoff", "rec", "cap":
 		ok = a.relay.Control(in.Channel, in.User, in.Action, in.Value, in.Reason)
 	default:
 		http.Error(w, "unbekannte Aktion", http.StatusBadRequest)

@@ -68,7 +68,8 @@ func (r *Relay) camOn(p *peer, on bool, codec string) {
 			r.refeatureLocked(ch, r.cfg.Now(), true)
 		}
 		reply["on"], reply["codec"] = true, codec
-		reply["high"] = ch.isFeatured(p.idx)
+		p.highSent = ch.wantsHigh(p)
+		reply["high"] = p.highSent
 		r.camKeyReqLocked(p, 0)
 	}
 	if reply != nil {
@@ -84,6 +85,7 @@ func (r *Relay) camOn(p *peer, on bool, codec string) {
 
 func (r *Relay) camOffLocked(p *peer) {
 	p.cam = ""
+	p.highSent = false
 	for _, q := range p.ch.peers {
 		delete(q.camNeedKey, p.idx)
 	}
@@ -149,24 +151,21 @@ func (r *Relay) refeatureLocked(ch *channel, now time.Time, force bool) {
 	if equalIdx(next, old) {
 		return
 	}
-	for _, f := range old { // nicht mehr groß
-		if q := ch.peers[f]; q != nil && !containsIdx(next, f) {
-			r.enqueueLocked(q, textMsg([]byte(`{"t":"layer","high":false}`)))
-		}
-	}
 	for _, f := range next { // neu groß: alle brauchen ein großes Schlüsselbild
 		if containsIdx(old, f) {
 			continue
 		}
 		q := ch.peers[f]
-		r.enqueueLocked(q, textMsg([]byte(`{"t":"layer","high":true}`)))
 		for _, v := range ch.peers {
 			if v != q {
 				v.camKeys(f)[1] = true
 			}
 		}
-		r.camKeyReqLocked(q, 1)
+		if q.highSent {
+			r.camKeyReqLocked(q, 1)
+		}
 	}
+	r.updateHighLocked(ch) // sagt den Kameras, ob sie groß senden sollen
 	b, _ := json.Marshal(map[string]any{"t": "featured", "ids": next})
 	r.broadcastLocked(ch, textMsg(b), nil)
 }
@@ -213,7 +212,7 @@ func (r *Relay) camFrame(p *peer, layer int, flags uint8, seq uint16, data []byt
 	if p.gone || p.cam == "" || len(data) > maxVideoFrame {
 		return
 	}
-	if layer == 1 && !ch.isFeatured(p.idx) {
+	if layer == 1 && !p.highSent {
 		return
 	}
 	// Kontingent beider Ebenen: 1,5 × Bitrate, Vorrat für 2 s bzw. ein großes Schlüsselbild
@@ -245,7 +244,7 @@ func (r *Relay) camFrame(p *peer, layer int, flags uint8, seq uint16, data []byt
 	tid := frameTid(flags)
 	missing := false
 	for _, w := range ch.peers {
-		if w == p {
+		if w == p || layer == 1 && !ch.seesHigh(w, p) {
 			continue
 		}
 		if layer == 1 && w.highOff {
