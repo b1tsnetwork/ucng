@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -37,6 +39,16 @@ type sttClient struct {
 	client                  *http.Client
 	sem                     chan struct{}
 	rl                      *rateLimiter
+	lastWarn                atomic.Int64 // Unix-Sekunden der letzten Warnung im Log
+}
+
+// warn: Fehler der Spracherkennung ins Log – höchstens alle 5 Minuten (sonst je Satz eine Zeile).
+func (c *sttClient) warn(format string, args ...any) {
+	now := time.Now().Unix()
+	if last := c.lastWarn.Load(); now-last < 300 || !c.lastWarn.CompareAndSwap(last, now) {
+		return
+	}
+	log.Printf("Untertitel: "+format, args...)
 }
 
 func newSTT(cfg Config) *sttClient {
@@ -51,6 +63,7 @@ func newSTT(cfg Config) *sttClient {
 	if model == "" {
 		model = "whisper-1"
 	}
+	log.Printf("Untertitel: Spracherkennung %s (Modell %s)", cfg.STTURL, model)
 	return &sttClient{url: cfg.STTURL, token: cfg.STTToken, model: model, lang: cfg.STTLanguage,
 		client: &http.Client{Timeout: 45 * time.Second}, sem: make(chan struct{}, n), rl: newRateLimiter(40, time.Minute)}
 }
@@ -81,11 +94,16 @@ func (c *sttClient) transcribe(ctx context.Context, wav []byte, lang string) (st
 	}
 	res, err := c.client.Do(req)
 	if err != nil {
+		if ctx.Err() == nil {
+			c.warn("%s nicht erreichbar: %v", c.url, err)
+		}
 		return "", err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
+		msg, _ := io.ReadAll(io.LimitReader(res.Body, 300))
+		// ins Log, damit Fehler bei der Einrichtung auffallen (z. B. Modell nicht installiert)
+		c.warn("%s antwortet HTTP %d: %s (STT_MODEL=%s)", c.url, res.StatusCode, strings.TrimSpace(string(msg)), c.model)
 		return "", fmt.Errorf("Spracherkennung: HTTP %d", res.StatusCode)
 	}
 	var out struct {

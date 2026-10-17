@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Eigene Spracherkennung für Live-Untertitel (Whisper über speaches, OpenAI-kompatibel).
+# Der Ton bleibt auf deinem Server – kein Port nach außen, nur im Docker-Netz des Chats.
+#
+#   1. docker compose up -d          (lädt beim ersten Start das Modell, siehe „stt-model“)
+#   2. In deploy/chat/.env:
+#        STT_URL=http://ucng-stt:8000/v1/audio/transcriptions
+#        STT_MODEL=Systran/faster-whisper-small      (genau das Modell von hier)
+#      und den Chat neu starten:  docker compose up -d   (in deploy/chat)
+#   3. Admin → Kanal → Sprachkanal: „Untertitel“ einschalten
+#
+# Modelle (STT_MODEL): Systran/faster-whisper-small (CPU, gut für Deutsch, ~0,5 GB),
+# Systran/faster-whisper-medium (genauer, braucht kräftige CPU), mit NVIDIA-GPU:
+# deepdml/faster-whisper-large-v3-turbo-ct2 und das Image …:latest-cuda (siehe unten).
+
+name: ucng-stt
+
+services:
+  stt:
+    image: ghcr.io/speaches-ai/speaches:${STT_IMAGE_TAG:-latest-cpu}
+    container_name: ucng-stt
+    restart: unless-stopped
+    environment:
+      # Modell nach der letzten Anfrage so lange im Speicher halten (Sekunden; -1 = immer)
+      STT_MODEL_TTL: ${STT_MODEL_TTL:--1}
+      ENABLE_UI: "false"   # keine Weboberfläche nötig
+      # Optional: Schlüssel – dann denselben Wert als STT_TOKEN beim Chat setzen
+      API_KEY: ${STT_TOKEN:-}
+    volumes:
+      - stt-models:/home/ubuntu/.cache/huggingface/hub
+    networks:
+      - chat
+    # Mit NVIDIA-GPU: STT_IMAGE_TAG=latest-cuda und diesen Block einkommentieren
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Lädt das Modell einmalig herunter (danach liegt es im Volume) und beendet sich.
+  stt-model:
+    image: curlimages/curl:8.10.1
+    depends_on: [stt]
+    restart: "no"
+    networks:
+      - chat
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 60); do
+          if curl -fsS -X POST -H "Authorization: Bearer ${STT_TOKEN:-}" "http://ucng-stt:8000/v1/models/${STT_MODEL:-Systran/faster-whisper-small}" >/dev/null; then
+            echo "Modell ${STT_MODEL:-Systran/faster-whisper-small} ist bereit."; exit 0
+          fi
+          sleep 5
+        done
+        echo "Modell konnte nicht geladen werden"; exit 1
+
+volumes:
+  stt-models:
+
+networks:
+  chat:
+    external: true
+    name: ucng_default   # Netz des Chat-Projekts (deploy/chat, Projektname „ucng“)

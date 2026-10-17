@@ -51,6 +51,12 @@ services:
       VOICE_MAX_PARTICIPANTS: ${VOICE_MAX_PARTICIPANTS:-200}
       VOICE_MAX_MBIT: ${VOICE_MAX_MBIT:-50}
       VOICE_AGENT_TOKEN: ${VOICE_AGENT_TOKEN:-}
+      # Untertitel über die eigene Spracherkennung (deploy/stt) – leer = keine Untertitel.
+      # Der Ton geht nur an diese Adresse, nie an fremde Dienste.
+      STT_URL: ${STT_URL:-}
+      STT_MODEL: ${STT_MODEL:-whisper-1}
+      STT_LANGUAGE: ${STT_LANGUAGE:-}
+      STT_TOKEN: ${STT_TOKEN:-}
       TZ: ${TZ:-Europe/Berlin}
     volumes:
       # Kanäle, Nachrichten, Einstellungen, Bilder und Backups (/data/backups)

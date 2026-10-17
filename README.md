@@ -652,6 +652,19 @@ Mit einer **eigenen** Spracherkennung (selbst betriebenes Whisper o. Ä., OpenAI
 
 So funktioniert es: Solange eine Person spricht, sammelt ihr Browser die Sprache; nach einer kurzen Pause (oder spätestens nach 12 s) geht der Abschnitt als WAV (16 kHz, mono) an den Chat-Server, der ihn an `STT_URL` weiterreicht und den Text als Untertitel an alle im Kanal schickt. Jede Person kann Untertitel ausblenden und *Meine Sprache nicht verschriftlichen* wählen. *Mehr → Mitschrift herunterladen* speichert alles als Textdatei; Moderierende können die Mitschrift auch in den Kanal posten. In Ende-zu-Ende-verschlüsselten Kanälen gibt es keine Untertitel.
 
+**Mit Docker** (fertig in [`deploy/stt`](deploy/stt/compose.yml) – speaches mit faster-whisper, nur im Docker-Netz des Chats, kein Port nach außen):
+
+```bash
+cd deploy/stt && cp .env.example .env && docker compose up -d   # lädt beim ersten Start das Modell
+# in deploy/chat/.env:
+#   STT_URL=http://ucng-stt:8000/v1/audio/transcriptions
+#   STT_MODEL=Systran/faster-whisper-small
+cd ../chat && docker compose up -d
+docker logs ucng | grep Untertitel     # „Untertitel: Spracherkennung http://ucng-stt:8000/… (Modell …)“
+```
+
+Danach im Admin beim Kanal unter *Sprachkanal* das Häkchen *Untertitel* setzen. `STT_MODEL` muss genau das installierte Modell sein (sonst steht „antwortet HTTP 404“ im Log). Für Deutsch auf der CPU ist `Systran/faster-whisper-small` ein guter Start; genauer, aber langsamer ist `…-medium`; mit NVIDIA-GPU `STT_IMAGE_TAG=latest-cuda` und `deepdml/faster-whisper-large-v3-turbo-ct2`. Läuft die Spracherkennung auf einem anderen Rechner, `STT_URL` auf dessen Adresse setzen (am besten intern oder per HTTPS, mit `STT_TOKEN`).
+
 Geeignet ist jeder Server mit der OpenAI-Schnittstelle `POST /v1/audio/transcriptions` (Felder `file`, `model`, `language`, Antwort `{"text": …}`), z. B. faster-whisper-server/speaches, whisper.cpp (`server`) oder LocalAI – Image, Modell und Port laut deren Anleitung. Läuft er im selben Docker-Netz wie der Chat, reicht etwa `STT_URL=http://whisper:8000/v1/audio/transcriptions`. Für Echtzeit-Untertitel empfiehlt sich ein kleines bis mittleres Modell oder eine GPU.
 
 ### Ende-zu-Ende-Verschlüsselung
@@ -1386,7 +1399,7 @@ docker run -p 8090:8090 -v beacon:/data -e ADMIN_PASSWORD=… ghcr.io/<owner>/uc
 
 Dazu `ghcr.io/<owner>/ucng-voice` (zusätzlicher Sprach-Server) und `ghcr.io/<owner>/ucng-bot-music` (Musik-Bot, [examples/bot-music](examples/bot-music/README.md)).
 
-**Docker Compose:** fertige Dateien liegen in `deploy/chat/` und `deploy/beacon/` (dazu `deploy/voice/` für weitere Sprach-Server und `deploy/music/` für den Musik-Bot). Jeweils `.env.example` nach `.env` kopieren, `PUBLIC_URL` und `ADMIN_PASSWORD` eintragen, `docker compose up -d`. Der Port ist nur lokal (`127.0.0.1`) offen – davor gehört ein Reverse-Proxy mit HTTPS; die Container laufen schreibgeschützt, ohne Capabilities und mit Health-Check. Mit `UCNG_VERSION` bzw. `BEACON_VERSION` lässt sich eine feste Version wählen (Update: Version ändern, `docker compose pull && docker compose up -d` – erst die Chats, dann den Beacon).
+**Docker Compose:** fertige Dateien liegen in `deploy/chat/` und `deploy/beacon/` (dazu `deploy/voice/` für weitere Sprach-Server, `deploy/music/` für den Musik-Bot und `deploy/stt/` für Untertitel). Jeweils `.env.example` nach `.env` kopieren, `PUBLIC_URL` und `ADMIN_PASSWORD` eintragen, `docker compose up -d`. Der Port ist nur lokal (`127.0.0.1`) offen – davor gehört ein Reverse-Proxy mit HTTPS; die Container laufen schreibgeschützt, ohne Capabilities und mit Health-Check. Mit `UCNG_VERSION` bzw. `BEACON_VERSION` lässt sich eine feste Version wählen (Update: Version ändern, `docker compose pull && docker compose up -d` – erst die Chats, dann den Beacon).
 
 **Release veröffentlichen:** `git tag v1.0.0 && git push origin v1.0.0`. Der Workflow legt das GitHub-Release an (mit automatisch erzeugten Release-Notes) und hängt Archive für `linux/amd64`, `linux/arm64`, `windows/amd64`, `darwin/arm64` und `darwin/amd64` an – jeweils `ucng` und `ucng-beacon` – plus `SHA256SUMS.txt`. Die Version steht im Log beim Start („UCNG 1.0.0 läuft …“) und wird beim Beacon mitgemeldet.
 

@@ -320,7 +320,11 @@ dialog .field { margin-bottom: 16px; }
   font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;
 }
 
-.wide-dialog { width: min(600px, calc(100vw - 32px)); }
+/* Dialoge im Admin: breiter als im Chat – Formulare mit vielen Feldern brauchen Platz.
+   Nur Rückfragen (Löschen, Bestätigen) bleiben schmal. */
+dialog { width: min(680px, calc(100vw - 32px)); }
+.wide-dialog, #roomDialog, #roleDialog { width: min(860px, calc(100vw - 32px)); }
+#deleteDialog, #confirmDialog { width: min(480px, calc(100vw - 32px)); }
 .radio-row, .check-row { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; cursor: pointer; }
 .radio-row input, .check-row input { margin-top: 3px; accent-color: var(--accent); }
 .check-row { margin: 4px 0 8px; }
