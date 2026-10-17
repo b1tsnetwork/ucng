@@ -62,8 +62,9 @@ func (v *voiceMgr) announceBreakout(b BreakoutInfo) {
 	}
 }
 
-// startBreakout teilt die Anwesenden (außer Moderierenden) gleichmäßig und zufällig auf.
-func (v *voiceMgr) startBreakout(parent string, groups, minutes int, me Identity) (BreakoutInfo, error) {
+// startBreakout teilt die Anwesenden gleichmäßig und zufällig auf – außer der Person, die
+// aufteilt, und (ohne withMods) den Moderierenden.
+func (v *voiceMgr) startBreakout(parent string, groups, minutes int, withMods bool, me Identity) (BreakoutInfo, error) {
 	var b BreakoutInfo
 	if groups < 2 || groups > 20 {
 		return b, ErrBreakoutGroups
@@ -80,7 +81,7 @@ func (v *voiceMgr) startBreakout(parent string, groups, minutes int, me Identity
 	}
 	var move []VoicePeer
 	for _, p := range v.Peers(parent) {
-		if !p.Mod && p.Music == 0 && p.User != me.ID {
+		if (withMods || !p.Mod) && p.Music == 0 && p.User != me.ID {
 			move = append(move, p)
 		}
 	}
@@ -215,13 +216,14 @@ func (s *Server) handleVoiceBreakout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Groups  int `json:"groups"`
-		Minutes int `json:"minutes"`
+		Groups   int  `json:"groups"`
+		Minutes  int  `json:"minutes"`
+		WithMods bool `json:"withMods"` // Moderierende mit aufteilen
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	b, err := v.startBreakout(room, in.Groups, in.Minutes, me)
+	b, err := v.startBreakout(room, in.Groups, in.Minutes, in.WithMods, me)
 	if err != nil {
 		var tm *TempMineError
 		switch {
@@ -248,7 +250,7 @@ func (v *voiceMgr) mayHost(room string, me Identity) bool {
 	if !acc.Exists || !acc.Read || acc.Cfg == nil {
 		return false
 	}
-	if v.canModerate(who) || acc.Owner != "" && acc.Owner == me.ID {
+	if v.roomMod(acc.Cfg, who) || acc.Owner != "" && acc.Owner == me.ID {
 		return true
 	}
 	v.mu.Lock()

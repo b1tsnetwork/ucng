@@ -15,7 +15,7 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* egal */ } },
   };
   const DEFAULTS = { input: "", output: "", mode: "vad", sens: -50, pttKey: "F9", pttLabel: "F9", ns: true, vol: {}, mute: {},
-    audioOnly: false, noCapSend: false, captions: true, toneVol: 1 };
+    audioOnly: false, noCapSend: false, captions: true, toneVol: 1, saver: "auto" };
   let prefs = Object.assign({}, DEFAULTS, store.json("ucng:voice", {}));
   const savePrefs = () => store.set("ucng:voice", prefs);
 
@@ -250,6 +250,62 @@
     });
   }
 
+  // ---------- Sparmodus: weniger Video empfangen ----------
+  // Pause, solange nichts zu sehen ist (Tab im Hintergrund, Ansicht zu – außer Bild-in-Bild), und
+  // auf Wunsch nur jedes 2. bzw. 4. Bild (der Relay lässt obere Zeitebenen weg; der Sender
+  // muss dafür nichts ändern). Spart vor allem auf der Leitung zu mir.
+  const SAVER = ["auto", 0, 1, 2];
+  function saverDrop() {
+    if (prefs.saver === 0 || prefs.saver === 1 || prefs.saver === 2) return prefs.saver;
+    const slow = S && S.qSent === 1, save = navigator.connection && navigator.connection.saveData;
+    return slow || save ? 1 : 0;
+  }
+  function viewOpen(kind) {
+    const el = $(kind === "screen" ? "screenView" : "confView");
+    return !el || !el.hidden;
+  }
+  function sendLimits() {
+    if (!S || S.status !== "connected") return;
+    const pip = !!document.pictureInPictureElement, drop = saverDrop();
+    const conns = S.cfg && S.cfg.mediaConn ? Object.values(S.media || {})
+      : [{ kind: "", ws: S.ws, holder: S }]; // ältere Relays: alles über die Sprachverbindung
+    for (const m of conns) {
+      if (!m.ws || m.ws.readyState !== 1 || (m.kind && m.status !== "connected")) continue;
+      const pause = !pip && (document.hidden || (!!m.kind && !viewOpen(m.kind)));
+      const msg = JSON.stringify({ t: "limit", pause, drop });
+      const h = m.holder || m;
+      if (h.limSent === msg) continue;
+      h.limSent = msg;
+      m.ws.send(msg);
+    }
+  }
+  let limitQueued = false;
+  function queueLimits() {
+    if (limitQueued) return;
+    limitQueued = true;
+    setTimeout(() => { limitQueued = false; sendLimits(); }, 120);
+  }
+  document.addEventListener("visibilitychange", queueLimits);
+  document.addEventListener("enterpictureinpicture", queueLimits, true);
+  document.addEventListener("leavepictureinpicture", queueLimits, true);
+  const watchViews = () => {
+    for (const id of ["confView", "screenView"]) {
+      const el = $(id);
+      if (el) new MutationObserver(queueLimits).observe(el, { attributes: true, attributeFilter: ["hidden"] });
+    }
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", watchViews); else watchViews();
+  function setSaver(v) {
+    prefs.saver = SAVER.includes(v) ? v : "auto";
+    savePrefs();
+    sendLimits();
+    renderAll();
+  }
+  function saverLabel() {
+    const v = prefs.saver;
+    return t("voice.saver", { mode: v === 0 ? t("voice.saver_off") : v === 1 ? t("voice.saver_half") : v === 2 ? t("voice.saver_quarter") : t("voice.saver_auto") });
+  }
+
   // Wem sehe ich gerade zu? Nach dem Neuverbinden geht es dort weiter.
   function rememberWatch(s, kind) {
     if (kind === "screen" && window.UCNGScreen && UCNGScreen.watchingUser) s.rewatch = UCNGScreen.watchingUser;
@@ -316,6 +372,7 @@
         // Lebenszeichen, auch wenn ich selbst nichts sende (nur zusehe)
         clearInterval(m.pinger);
         m.pinger = setInterval(() => { if (m.ws && m.ws.readyState === 1) m.ws.send('{"t":"ping"}'); }, 10000);
+        m.limSent = ""; queueLimits();
         if (m.kind === "screen" && (s.rewatch || rewatchAfter) && mod) { // nach dem Neuverbinden weiter zusehen
           const uid = s.rewatch || rewatchAfter;
           s.rewatch = ""; rewatchAfter = "";
@@ -379,7 +436,11 @@
         S.pinger = setInterval(() => {
           if (S && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) }));
           measureQuality();
+          // Sparmodus regelmäßig bestätigen (Qualität kann ihn ändern; eine verlorene Nachricht heilt so)
+          S.limSent = ""; for (const m of Object.values(S.media || {})) m.limSent = "";
+          sendLimits();
         }, 5000);
+        S.limSent = ""; queueLimits();
         S.ws.send(JSON.stringify({ t: "ping", ts: Math.round(performance.now()) }));
         deps.toast(t("voice.joined", { room: S.room }));
         if (S.cfg.mediaConn) {
@@ -522,8 +583,39 @@
     if (p.mu) musicVol[p.u] = p.mu / 100;
     const old = S.peers.get(p.i);
     S.peers.set(p.i, p);
-    if (!old && S.play) S.play.port.postMessage({ type: "gain", idx: p.i, gain: gainFor(p.u) });
+    if ((!old || old.mu !== p.mu) && S.play) S.play.port.postMessage({ type: "gain", idx: p.i, gain: gainFor(p.u) }); // auch: Bot ändert die Lautstärke
     if (p.i === S.you) { S.hand = !!p.h; S.muted = p.m; S.speak = p.s; }
+    if (!!(old && old.h) !== !!p.h) {
+      if (window.UCNGVideo && UCNGVideo.refresh) queueMicrotask(() => UCNGVideo.refresh()); // große Hand auf der Kachel
+      if (p.h && old && p.i !== S.you && S.moderate) handAlert(p); // neue Meldung: Moderierende bekommen Ton und Hinweis
+    }
+  }
+
+  // Wer moderiert, hört bei einer neuen Meldung einen kurzen Doppelton und sieht einen Hinweis.
+  let lastHandTone = 0;
+  function handAlert(p) {
+    const n = handOrder(S.room).indexOf(p.u) + 1;
+    deps.toast(t("voice.hand_new", { name: p.n, n: n || 1 }));
+    const now = performance.now();
+    if (deaf || now - lastHandTone < 1500 || !S.ctx) return;
+    lastHandTone = now;
+    try {
+      const c = S.ctx, t0 = c.currentTime;
+      [[660, 0], [990, 0.14]].forEach(([f, d]) => {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = "triangle"; o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, t0 + d);
+        g.gain.exponentialRampToValueAtTime(0.12, t0 + d + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.25);
+        o.connect(g).connect(c.destination);
+        o.start(t0 + d); o.stop(t0 + d + 0.3);
+      });
+    } catch { /* kein Ton möglich */ }
+  }
+
+  // Reihenfolge der Meldungen (wer zuerst die Hand gehoben hat, ist dran): Liste von Nutzer-IDs.
+  function handOrder(room) {
+    return peersOf(room).filter((p) => p.h && !p.mu).sort((a, b) => (a.ha || 0) - (b.ha || 0) || a.i - b.i).map((p) => p.u);
   }
 
   function removePeer(idx) {
@@ -825,7 +917,7 @@
     const hash = a && a.querySelector(".hash");
     if (hash) { hash.innerHTML = r.voice.video ? ICON.cam : ICON.speaker; hash.classList.add("voice-icon"); }
     const row = li.querySelector(".room-row");
-    if (deps.canModerate && deps.canModerate()) { // Ziel für Drag-and-Drop
+    if (deps.canModerate && deps.canModerate() || S && S.moderate) { // Ziel für Drag-and-Drop (der Server prüft)
       li.addEventListener("dragover", (e) => {
         if (!e.dataTransfer.types.includes("text/x-ucng-voice")) return;
         e.preventDefault(); e.dataTransfer.dropEffect = "move"; li.classList.add("drop-target");
@@ -845,8 +937,20 @@
     row.append(b);
     const list = peersOf(r.name);
     if (!list.length) return;
+    // Meldungen nach oben (in der Reihenfolge, in der sich die Personen gemeldet haben) und ein
+    // blinkender Zähler am Kanal – auch sichtbar, wenn die Liste eingeklappt oder lang ist.
+    const order = handOrder(r.name);
+    if (order.length) {
+      const c = deps.h("span", "voice-hands", "✋ " + order.length);
+      c.title = t("voice.hands_count", { n: order.length });
+      c.setAttribute("role", "status");
+      if (a) a.append(c); else row.append(c);
+      li.classList.add("has-hands");
+    }
+    const rank = (p) => { const k = order.indexOf(p.u); return k < 0 ? 1e9 : k; };
+    const sorted = list.map((p, k) => [p, k]).sort((x, y) => rank(x[0]) - rank(y[0]) || x[1] - y[1]).map((x) => x[0]);
     const ul = deps.h("ul", "voice-peers");
-    for (const p of list) ul.append(peerItem(r.name, p, r.voice));
+    for (const p of sorted) ul.append(peerItem(r.name, p, r.voice, order.indexOf(p.u) + 1));
     li.append(ul);
   }
 
@@ -855,10 +959,11 @@
     return roomPeers[room] || [];
   }
 
-  function peerItem(room, p, cfg) {
+  function peerItem(room, p, cfg, handNo) {
     const li = deps.h("li", "voice-peer");
     li.dataset.user = p.u;
-    if (deps.canModerate && deps.canModerate() && !p.mu) { // Team: per Drag-and-Drop in einen anderen Sprachkanal
+    if (p.h && !p.mu) li.classList.add("hand-up");
+    if ((deps.canModerate && deps.canModerate() || S && S.room === room && S.moderate) && !p.mu) { // Moderierende: per Drag-and-Drop in einen anderen Sprachkanal
       li.draggable = true;
       li.addEventListener("dragstart", (e) => {
         e.dataTransfer.setData("text/x-ucng-voice", JSON.stringify({ user: p.u, name: p.n, from: room }));
@@ -878,7 +983,11 @@
     if (p.q === 1 || p.q === 2) flags.append(qualityFlag(p.q));
     if (p.mo && !p.mu) flags.append(flag(ICON.shield, t("voice.moderates"), "mod"));
     if (p.cm) flags.append(flag(ICON.cam, t("voice.camera_on"), "cam"));
-    if (p.h) flags.append(flag(ICON.hand, t("voice.hand_raised"), "hand"));
+    if (p.h) {
+      const f = flag(ICON.hand, t("voice.hand_raised_n", { n: handNo || 1 }), "hand");
+      if (handNo) f.append(deps.h("span", "voice-hand-no", String(handNo)));
+      flags.append(f);
+    }
     if (cfg && cfg.stage && p.s) flags.append(flag(ICON.stage, t("voice.on_stage"), "stage"));
     if (p.m) flags.append(flag(ICON.micOff, t("voice.muted_by_team"), "srv"));
     else if (p.sm) flags.append(flag(ICON.micOff, t("voice.self_muted"), ""));
@@ -982,7 +1091,7 @@
       if (S.cfg && S.cfg.screenOn) acts.push(p.so || p.sc ? [t("voice.screen_stop_other"), "stopscreen"] : [t("voice.screen_allow"), "allowscreen"]);
       if (S.stage) acts.push(p.s ? [t("voice.revoke_speak"), "nospeak"] : [t("voice.grant_speak"), "speak"]);
       if (p.h) acts.push([t("voice.lower_hand"), "lowerhand"]);
-      if (deps.canModerate && deps.canModerate() && deps.voiceRooms) {
+      if (deps.voiceRooms) { // „here“: moderiert diesen Kanal (je nach Kanal-Einstellung)
         for (const to of deps.voiceRooms()) if (to !== room) acts.push([t("voice.move_to", { room: to }), "", "", () => moveUser(p.u, p.n, room, to)]);
       }
       acts.push([t("voice.kick"), "kick", "danger"]);
@@ -1068,6 +1177,30 @@
       ptt.addEventListener("pointercancel", up);
       parts.push(ptt);
     }
+    if (S.status === "connected" && S.moderate) { // Meldungen der Reihe nach – ein Klick: Wort erteilen / Hand senken
+      const order = handOrder(S.room).filter((u) => !S.peers.has(S.you) || S.peers.get(S.you).u !== u);
+      if (order.length) {
+        const box = deps.h("div", "voice-hands-bar");
+        box.append(deps.h("span", "voice-hands", "✋ " + order.length));
+        for (const [k, u] of order.entries()) {
+          const p = [...S.peers.values()].find((x) => x.u === u);
+          if (!p) continue;
+          const b = deps.h("button", "voice-hand-chip", (k + 1) + ". " + p.n);
+          b.type = "button";
+          b.title = t("voice.hand_raised_n", { n: k + 1 });
+          b.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const r = b.getBoundingClientRect(), items = [];
+            if (S.stage && !p.s) items.push(["", t("voice.grant_speak"), () => { mod(p.u, "speak"); mod(p.u, "lowerhand"); }]);
+            else if (p.sm && !p.m) items.push(["", t("voice.ask_unmute"), () => { mod(p.u, "askunmute"); mod(p.u, "lowerhand"); }]);
+            items.push(["", t("voice.lower_hand"), () => mod(p.u, "lowerhand")]);
+            deps.menuAt(r.left, r.top - 8, items, true);
+          });
+          box.append(b);
+        }
+        parts.push(box);
+      }
+    }
     if (window.UCNGScreen && UCNGScreen.sharing) parts.push(deps.h("p", "voice-bar-note sharing", UCNGScreen.starting ? t("voice.screen_starting") : t("voice.screen_sharing_now")));
     if (S.status === "connected" && !S.speak) parts.push(deps.h("p", "voice-bar-note", S.stage ? t("voice.stage_note") : t("voice.listen_only")));
     if (S.askUnmute && (selfMute || deaf)) { // „bitte Mikrofon einschalten“
@@ -1112,6 +1245,9 @@
     const host = S && S.moderate;
     if (X()) items.push(...X().menuItems(S, { host, prefs }));
     items.push(["", prefs.audioOnly ? t("voice.audio_only_off") : t("voice.audio_only"), () => setAudioOnly(!prefs.audioOnly)]);
+    if (!prefs.audioOnly && S && S.cfg && (S.cfg.videoOn || S.cfg.screenOn)) { // Bildrate: Auto → alle → ½ → ¼
+      items.push(["", saverLabel(), () => setSaver(SAVER[(SAVER.indexOf(prefs.saver) + 1) % SAVER.length])]);
+    }
     items.push(["", t("voice.settings"), openSettings]);
     return items;
   }
@@ -1277,6 +1413,8 @@
     mod, sendReact, setAudioOnly, prefs: () => prefs, savePrefs, deps: () => deps, render: () => renderAll(),
     reaction(uid) { const r = reactions.get(uid); return r && performance.now() < r.until ? r : null; },
     addReaction(uid, e) { const now = performance.now(); reactions.set(uid, { e, at: now, until: now + 2500 }); setTimeout(() => { if (reactions.get(uid) && performance.now() >= reactions.get(uid).until) { reactions.delete(uid); renderAll(); } }, 2600); renderAll(); },
+    setSaver, saverDrop, sendLimits,
+    handNo(uid) { return S ? handOrder(S.room).indexOf(uid) + 1 : 0; }, // 0 = keine Meldung
     peerName(uid) { const p = S && [...S.peers.values()].find((x) => x.u === uid); return p ? p.n : ""; },
     get state() {
       return { selfMute, deaf, connected: !!(S && S.status === "connected"), canTalk: !S || (S.speak && !S.muted), serverMuted: !!(S && S.muted), listenOnly: !!(S && !S.speak) };

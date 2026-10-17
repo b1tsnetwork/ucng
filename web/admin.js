@@ -614,6 +614,8 @@
     $("roomVideoQuality").value = v && v.videoQuality ? v.videoQuality : "hd";
     $("roomVideoFeatured").value = v && v.featured ? v.featured : 1;
     fillRolePicks("roomVideoRoles", v ? v.videoRoles || [] : [], true);
+    $("roomVoiceMods").value = v && v.mods ? v.mods : "";
+    fillRolePicks("roomModRoles", v ? v.modRoles || [] : [], true);
     $("roomBotMusic").checked = !!(v && v.botMusic);
     $("roomE2EE").checked = !!(v && v.e2ee);
     $("roomCaptions").checked = !!(v && v.captions);
@@ -698,6 +700,7 @@
     const vid = $("roomVideoMode").value;
     $("roomVideoQualityRow").hidden = $("roomVideoMore").hidden = !vid;
     $("roomVideoRolesRow").hidden = vid !== "roles";
+    $("roomModRolesRow").hidden = $("roomVoiceMods").value !== "roles";
     const kb = VOICE_KBPS[$("roomVoicePreset").value] || 24;
     const sp = Math.max(1, Math.min(16, parseInt($("roomVoiceSpeakers").value, 10) || 4));
     const peers = Math.max(2, parseInt($("roomVoicePeers").value, 10) || 25);
@@ -717,7 +720,7 @@
     }
   }
   ["roomVoiceOn", "roomVoicePreset", "roomVoicePeers", "roomVoiceSpeakers", "roomVoiceStage", "roomScreenMode", "roomScreenQuality", "roomVideoMode"].forEach((id) => $(id).addEventListener("input", syncVoiceFields));
-  ["roomVoiceOn", "roomVoiceStage", "roomScreenMode", "roomScreenQuality", "roomVideoMode", "roomE2EE"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
+  ["roomVoiceOn", "roomVoiceStage", "roomScreenMode", "roomScreenQuality", "roomVideoMode", "roomE2EE", "roomVoiceMods"].forEach((id) => $(id).addEventListener("change", syncVoiceFields));
   $("roomName").addEventListener("input", () => {
     $("renameWarn").hidden = !editing || $("roomName").value.trim().toLowerCase() === editing.name;
   });
@@ -739,6 +742,7 @@
         video: $("roomVideoMode").value, videoQuality: $("roomVideoQuality").value,
         featured: parseInt($("roomVideoFeatured").value, 10) || 1, videoRoles: pickedRoles("roomVideoRoles"),
         botMusic: $("roomBotMusic").checked && !$("roomE2EE").checked,
+        mods: $("roomVoiceMods").value, modRoles: $("roomVoiceMods").value === "roles" ? pickedRoles("roomModRoles") : [],
         e2ee: $("roomE2EE").checked,
         captions: $("roomCaptions").checked && !$("roomE2EE").checked,
       } : null;

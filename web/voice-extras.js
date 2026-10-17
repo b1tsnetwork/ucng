@@ -77,10 +77,13 @@
     const dlg = $("breakoutDialog");
     const S = V().session();
     if (!dlg || !S) return;
-    const n = [...S.peers.values()].filter((p) => !p.mo && !p.mu).length;
+    const count = () => [...S.peers.values()].filter((p) => !p.mu && p.i !== S.you && ($("breakoutMods").checked || !p.mo)).length;
+    const n = count();
     $("breakoutGroups").value = String(Math.max(2, Math.min(20, Math.round(n / 3) || 2)));
     $("breakoutError").textContent = "";
-    $("breakoutInfo").textContent = t("voice.breakout_people", { n });
+    const info = () => { $("breakoutInfo").textContent = t("voice.breakout_people", { n: count() }); };
+    info();
+    $("breakoutMods").onchange = info;
     dlg.showModal();
   }
   function bindBreakout() {
@@ -93,7 +96,7 @@
       if (!S) return;
       try {
         await D().api(`/api/voice/${encodeURIComponent(S.room)}/breakout`, { method: "POST",
-          body: JSON.stringify({ groups: +$("breakoutGroups").value, minutes: +$("breakoutMinutes").value }) });
+          body: JSON.stringify({ groups: +$("breakoutGroups").value, minutes: +$("breakoutMinutes").value, withMods: $("breakoutMods").checked }) });
         $("breakoutDialog").close();
       } catch (err) { $("breakoutError").textContent = err.message; }
     });

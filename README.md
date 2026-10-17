@@ -541,7 +541,7 @@ Jeder Kanal kann zusätzlich ein **Sprachkanal** sein (Admin → Kanäle → Kan
 - **Beitreten:** Knopf *Beitreten* oben im Kanal oder das Kopfhörer-Symbol in der Kanalliste. Die Teilnehmer stehen unter dem Kanal in der Seitenleiste (grüner Ring = spricht gerade) – auch für alle, die nicht beigetreten sind.
 - **Selbst abmischen:** Ein Klick auf einen Namen öffnet einen Regler von 0 bis 200 % und *Für mich stummschalten*. Die Einstellung gilt nur im eigenen Browser und bleibt gespeichert; blockierte Personen sind automatisch stumm. Doppelklick auf den Regler setzt ihn auf 100 % zurück.
 - **Unten in der Seitenleiste:** Mikrofon aus/an und *Nichts hören* in der Nutzerleiste; in der Sprachleiste darüber Hand heben, Reaktion, Kamera, Bildschirm teilen, *Mehr* (Ansicht, Untertitel, Statistik, Nur Audio, Werkzeuge der Leitung, Spracheinstellungen: Mikrofon, Ausgabegerät, Sprachaktivierung mit Empfindlichkeit oder Push-to-Talk mit frei wählbarer Taste, Rauschunterdrückung) und Verlassen.
-- **Moderation:** Team und Rollen mit dem Recht *Stummschalten* können Teilnehmer im Sprachkanal stummschalten, entfernen (Wiedereintritt nach einer Minute) und auf der Bühne das Rederecht geben oder entziehen. Jede Aktion steht im Protokoll. Eine Sperre im Chat wirkt sofort: *Ausschließen* beendet die Sprachverbindung, *Stummschalten* schaltet auch die Sprache stumm. Geänderte Rollen oder Kanalrechte werden sofort übernommen.
+- **Moderation:** Wer moderiert, kann Teilnehmer im Sprachkanal stummschalten, entfernen (Wiedereintritt nach einer Minute) und auf der Bühne das Rederecht geben oder entziehen. Wer das ist, stellt man je Kanal unter *Moderieren im Sprachkanal* ein – unabhängig von den Lese- und Schreibrechten: *Team und Rollen mit „Stummschalten“* (Standard), *Nur das Team* oder *Nur gewählte Rollen* (dann moderiert auch das Team nur mit einer dieser Rollen). Besitzer temporärer Kanäle und Co-Hosts moderieren immer. Jede Aktion steht im Protokoll. Eine Sperre im Chat wirkt sofort: *Ausschließen* beendet die Sprachverbindung, *Stummschalten* schaltet auch die Sprache stumm. Geänderte Rollen oder Kanalrechte werden sofort übernommen.
 
 Einstellungen je Kanal:
 
@@ -552,6 +552,7 @@ Einstellungen je Kanal:
 | Teilnehmer höchstens | Standard 25 |
 | Sprecher gleichzeitig | Standard 4 – sprechen mehr gleichzeitig, sind die lautesten zu hören. Bestimmt die Bandbreite je Zuhörer. |
 | Bühne | Nur das Team und die gewählten Rollen sprechen; alle anderen hören zu, können sich melden und von Moderierenden freigeschaltet werden. |
+| Moderieren im Sprachkanal | *Team und Rollen mit „Stummschalten“*, *Nur das Team* oder *Nur gewählte Rollen* (siehe oben) |
 
 Wer den Kanal lesen darf, darf zuhören; sprechen darf, wer schreiben darf (ohne Bühne). Private Kanäle bleiben privat – auch die Teilnehmerliste sieht nur, wer den Kanal lesen darf.
 
@@ -604,7 +605,7 @@ Ein Sprachkanal wird zum Konferenzraum, wenn unter *Kameras (Konferenz)* etwas a
 
 ### Leitung einer Konferenz
 
-Wer moderiert – das Team, Rollen mit dem Recht *Stummschalten*, der Besitzer eines temporären Kanals und **Co-Hosts** –, findet im Menü *Mehr* (⋯) der Sprachleiste:
+Wer moderiert – je nach Einstellung *Moderieren im Sprachkanal* das Team und/oder gewählte Rollen, dazu immer der Besitzer eines temporären Kanals und **Co-Hosts** –, findet im Menü *Mehr* (⋯) der Sprachleiste:
 
 | Aktion | Wirkung |
 |---|---|
@@ -618,11 +619,20 @@ Im Menü einer Person außerdem: *Bitten, das Mikrofon einzuschalten* (die Perso
 
 **Hand heben und Reaktionen** gibt es in jedem Sprachkanal (✋ und 🙂 in der Sprachleiste). Reaktionen (👍 👏 😂 ❤️ 🎉 😮 👎 🙏) erscheinen kurz am Namen und auf der Kachel.
 
+Gemeldete Personen sind kaum zu übersehen: Sie rücken in der Seitenleiste nach oben – in der Reihenfolge, in der sie sich gemeldet haben, mit Nummer –, ihre Zeile pulsiert gelb, und am Kanal blinkt ein Zähler „✋ 2“ (auch für alle, die nicht im Kanal sind). Auf der Kamera-Kachel erscheint eine große, winkende Hand mit Nummer. Wer moderiert, bekommt bei jeder neuen Meldung einen kurzen Doppelton und einen Hinweis und sieht in der Sprachleiste die Warteschlange („1. Anna“, „2. Ben“) – ein Klick darauf: *Rederecht geben* bzw. *Bitten, das Mikrofon einzuschalten* (senkt die Hand gleich mit) oder *Hand senken*. Bei „Bewegung reduzieren“ im System bleibt die gelbe Markierung, nur ohne Blinken.
+
 **Verbindungsqualität:** Jeder Browser misst Ping, Verlust und Sendestau und meldet das Ergebnis; an Namen mit wackeliger oder schlechter Verbindung steht ein gelbes bzw. rotes Balkensymbol. *Mehr → Verbindung und Statistik* zeigt Einzelheiten: Ping, Verlust, Server für Bildschirm und Kameras, Auflösung, Bilder/s, Bitrate und Codec (mit „HW“ für Kodierung über die Grafikkarte). *Nur Audio* schaltet den Empfang von Bildschirm und Kameras ab – für schwache Leitungen.
+
+**Bandbreite sparen** (automatisch bzw. je Person):
+
+- **Pause, wenn niemand hinsieht:** Ist der Tab im Hintergrund oder die Konferenz-Ansicht zu, schickt der Relay dieser Person kein Video mehr (Ton läuft weiter; Bild-in-Bild zählt als „sieht hin“). Beim Zurückkommen gibt es sofort ein frisches Schlüsselbild. Sieht niemand eine Kamera groß, sendet sie auch kein großes Bild mehr.
+- **Weniger Bilder empfangen:** *Mehr → Bildrate empfangen*: *automatisch* (bei schlechter Verbindung oder „Datensparmodus“ des Geräts jedes 2. Bild), *alle Bilder*, *jedes 2. Bild* oder *jedes 4. Bild*. Der Relay lässt dafür nur obere zeitliche Ebenen weg – das Bild bleibt scharf und ruckelfrei dekodierbar, der Sender muss nichts ändern. Wirkt bei Sendern mit zeitlichen Ebenen (Chrome, Edge; sonst bleibt es bei allen Bildern).
+
+> **Warum nicht UDP?** Die Daten selbst würden über UDP kaum kleiner – Opus und VP9/AV1 sind schon dicht; ein WebSocket kostet je Rahmen nur wenige Bytes mehr. UDP hilft bei **Verzögerung unter Paketverlust** (kein Warten auf verlorene Pakete). Aus dem Browser geht UDP aber nur über WebRTC (ICE, DTLS, SRTP, SCTP) oder WebTransport (HTTP/3, QUIC) – beides ohne fremde Bibliotheken nachzubauen wäre groß und fehleranfällig. UCNG holt die Ersparnis deshalb dort, wo sie wirklich liegt: nur senden, was jemand sieht, Video vor der Sprache opfern, alte Bilder auslassen statt stauen, zeitliche Ebenen je Zuschauer. Sobald Go QUIC/HTTP/3 in der Standardbibliothek hat, ist WebTransport der naheliegende nächste Schritt.
 
 ### Breakout-Räume
 
-*Mehr → Breakout-Räume …* teilt alle außer den Moderierenden zufällig und gleichmäßig auf 2–20 Gruppen auf – optional mit Countdown (bis 240 Minuten). Die Gruppen sind temporäre Kanäle mit den Einstellungen und Zugangsregeln (samt Passwort) des Hauptkanals, ohne Bühne. In jeder Gruppe steht ein Hinweis mit der Restzeit und *Zurück in den Hauptkanal*. Nach Ablauf – oder mit *Alle zurückholen* – kommen alle zurück; die Gruppen löschen sich danach wie jeder temporäre Kanal. API: `POST /api/voice/{room}/breakout` mit `{"groups":3,"minutes":10}`, `DELETE` holt alle zurück.
+*Mehr → Breakout-Räume …* teilt alle außer dir und den Moderierenden zufällig und gleichmäßig auf 2–20 Gruppen auf – mit *Moderierende mit aufteilen* auch diese (außer dir); optional mit Countdown (bis 240 Minuten). Die Gruppen sind temporäre Kanäle mit den Einstellungen und Zugangsregeln (samt Passwort) des Hauptkanals, ohne Bühne. In jeder Gruppe steht ein Hinweis mit der Restzeit und *Zurück in den Hauptkanal*. Nach Ablauf – oder mit *Alle zurückholen* – kommen alle zurück; die Gruppen löschen sich danach wie jeder temporäre Kanal. API: `POST /api/voice/{room}/breakout` mit `{"groups":3,"minutes":10,"withMods":false}`, `DELETE` holt alle zurück.
 
 ### Aufnahme
 
@@ -658,7 +668,7 @@ Im Sprachkanal erscheint auf schmalen Bildschirmen eine **Anrufleiste** (Mikrofo
 
 ### Personen verschieben
 
-Team und Rollen mit dem Recht *Stummschalten* ziehen eine Person in der Seitenleiste mit der Maus auf einen anderen Sprachkanal (Drag-and-drop) oder wählen im Menü der Person *Verschieben nach #…*. Das geht auch in Kanäle, die die Person sonst nicht betreten dürfte – die Freigabe gilt, solange sie drin bleibt (danach noch zwei Minuten für einen Wiedereintritt). Die Person bekommt einen Hinweis; jede Verschiebung steht im Protokoll. API: `POST /api/voice/{room}/move` mit `{"userId":"…","to":"zielkanal"}`.
+Wer moderiert, zieht eine Person in der Seitenleiste mit der Maus auf einen anderen Sprachkanal (Drag-and-drop) oder wählt im Menü der Person *Verschieben nach #…*. Das geht auch in Kanäle, die die Person sonst nicht betreten dürfte – die Freigabe gilt, solange sie drin bleibt (danach noch zwei Minuten für einen Wiedereintritt). Die Person bekommt einen Hinweis; jede Verschiebung steht im Protokoll. API: `POST /api/voice/{room}/move` mit `{"userId":"…","to":"zielkanal"}`.
 
 ### Musik von Bots
 
@@ -668,6 +678,8 @@ In Kanälen mit *Musik von Bots* darf ein Bot mit dem Recht **Musik** Musik eins
 |---|---|---|
 | `GET`  | `/api/bot/voice/{room}` | läuft gerade etwas? `{"playing":true,"track":{"title","volume","loop","lengthSeconds",…}}` |
 | `POST` | `/api/bot/voice/{room}/play?volume=20&loop=1&title=Lounge` | Ogg-Opus-Datei als Inhalt (höchstens 32 MB), ersetzt ein laufendes Stück; `volume` 1–100 |
+| `POST` | `/api/bot/voice/{room}/play?stream=1&title=…&kbps=128` | **Streaming:** Ogg-Opus wird gelesen, während es gespielt wird – ohne Längengrenze, Start sofort. Die Antwort kommt am Ende: `{"ended":true,"reason":"eof\|stopped\|gone\|error"}` |
+| `POST` | `/api/bot/voice/{room}/volume?volume=30` | Lautstärke sofort ändern (auch mitten im Stück) |
 | `POST` | `/api/bot/voice/{room}/stop` | anhalten |
 
 ```bash
@@ -678,6 +690,8 @@ curl -X POST -H "Authorization: Bearer gcb_…" --data-binary @musik.opus \
 ```
 
 Das Stück wird in Echtzeit vom Chat-Server an den Relay des Kanals geschickt (auch an einen Agenten). Achte auf die Rechte an der Musik.
+
+**Fertiger Musik-Bot:** [`examples/bot-music`](examples/bot-music/README.md) spielt MP3s aus einem Ordner oder YouTube-Videos/-Playlists (`!play`, `!folder`, `!skip`, `!stop`, `!queue`, `!vol` …) – als offizielles Image `ghcr.io/<owner>/ucng-bot-music` mit compose-Datei in `deploy/music`. Beim Streaming den Bot direkt mit dem Chat-Server verbinden oder im Reverse-Proxy das Puffern des Request-Bodys abschalten (nginx: `proxy_request_buffering off;`).
 
 ### Mehr Sprach-Server (Agenten)
 
@@ -1044,7 +1058,7 @@ Der Bot sollte die Signatur mit konstanter Laufzeit vergleichen und Aufrufe mit 
 
 ### Beispiel-Bots
 
-Im Ordner `examples/` liegen zwei lauffähige Bots (nur Go-Standardbibliothek):
+Im Ordner `examples/` liegen drei lauffähige Bots (nur Go-Standardbibliothek):
 
 ```bash
 # Live-Verbindung: beantwortet !hilfe, !ping, !zeit und !würfel
@@ -1053,6 +1067,13 @@ UCNG_URL=http://localhost:8080 UCNG_BOT_TOKEN=gcb_… go run ./examples/bot-stre
 # Webhook: beantwortet !ping und Fragen nach Öffnungszeiten
 UCNG_WEBHOOK_SECRET=… PORT=9000 go run ./examples/bot-webhook
 # im Admin als Webhook-URL eintragen: http://<rechner>:9000/hook
+```
+
+Dazu der **Musik-Bot** [`examples/bot-music`](examples/bot-music/README.md) mit offiziellem Docker-Image (ffmpeg, yt-dlp, deno): MP3s aus einem Ordner oder YouTube-Videos/-Playlists in einen Sprachkanal.
+
+```bash
+cd deploy/music && cp .env.example .env   # Token und Musik-Ordner eintragen
+docker compose up -d                       # Image: ghcr.io/<owner>/ucng-bot-music
 ```
 
 Schnelltest ohne Programm:
@@ -1318,6 +1339,7 @@ assets/          Logo, Schriftzug, Social-Preview (für README und GitHub)
 examples/
   bot-stream/    Beispiel-Bot mit Live-Verbindung
   bot-webhook/   Beispiel-Bot per Webhook
+  bot-music/     Musik-Bot (Ordner, YouTube); Image: Dockerfile.music, compose: deploy/music
 web/
   index.html     Weboberfläche
   app.css/js
@@ -1344,7 +1366,7 @@ Im Ordner `.github/` liegt alles für GitHub:
 
 | Datei | Zweck |
 |-------|-------|
-| `workflows/ci.yml` | Bei jedem Pull Request: `gofmt`, `go vet`, `go test -race`, JavaScript-Syntax, Builds mit allen Speicher-Varianten (Dateien, SQLite, MySQL, beides) samt Rauchtest beider Programme |
+| `workflows/ci.yml` | Bei jedem Pull Request: `gofmt`, `go vet`, `go test -race`, JavaScript-Syntax, Builds mit allen Speicher-Varianten (Dateien, SQLite, MySQL, beides) samt Rauchtest beider Programme, dazu Bauen und Rauchtest des Musik-Bot-Images (ffmpeg, yt-dlp, deno) |
 | `workflows/release.yml` | Bei jedem Push auf `main` und jedem Tag `v*`: erst die CI, dann Container-Images für **amd64 und arm64** in die GitHub Container Registry und Programmdateien für Linux, Windows und macOS |
 | `workflows/deps.yml` | „Treiber festschreiben“ (manuell): SQLite-/MySQL-Treiber mit Prüfsummen in `go.mod`/`go.sum` und Pull Request |
 | `workflows/cla.yml` | Fragt bei Pull Requests nach der Zustimmung zum [CLA](CLA.md); Unterschriften landen im Branch `cla-signatures` (legt der Workflow beim ersten Lauf an; darf nicht geschützt sein) |
@@ -1362,7 +1384,9 @@ docker run -p 8080:8080 -v ucng:/data -e ADMIN_PASSWORD=… ghcr.io/<owner>/ucng
 docker run -p 8090:8090 -v beacon:/data -e ADMIN_PASSWORD=… ghcr.io/<owner>/ucng-beacon:latest
 ```
 
-**Docker Compose:** fertige Dateien liegen in `deploy/chat/` und `deploy/beacon/`. Jeweils `.env.example` nach `.env` kopieren, `PUBLIC_URL` und `ADMIN_PASSWORD` eintragen, `docker compose up -d`. Der Port ist nur lokal (`127.0.0.1`) offen – davor gehört ein Reverse-Proxy mit HTTPS; die Container laufen schreibgeschützt, ohne Capabilities und mit Health-Check. Mit `UCNG_VERSION` bzw. `BEACON_VERSION` lässt sich eine feste Version wählen (Update: Version ändern, `docker compose pull && docker compose up -d` – erst die Chats, dann den Beacon).
+Dazu `ghcr.io/<owner>/ucng-voice` (zusätzlicher Sprach-Server) und `ghcr.io/<owner>/ucng-bot-music` (Musik-Bot, [examples/bot-music](examples/bot-music/README.md)).
+
+**Docker Compose:** fertige Dateien liegen in `deploy/chat/` und `deploy/beacon/` (dazu `deploy/voice/` für weitere Sprach-Server und `deploy/music/` für den Musik-Bot). Jeweils `.env.example` nach `.env` kopieren, `PUBLIC_URL` und `ADMIN_PASSWORD` eintragen, `docker compose up -d`. Der Port ist nur lokal (`127.0.0.1`) offen – davor gehört ein Reverse-Proxy mit HTTPS; die Container laufen schreibgeschützt, ohne Capabilities und mit Health-Check. Mit `UCNG_VERSION` bzw. `BEACON_VERSION` lässt sich eine feste Version wählen (Update: Version ändern, `docker compose pull && docker compose up -d` – erst die Chats, dann den Beacon).
 
 **Release veröffentlichen:** `git tag v1.0.0 && git push origin v1.0.0`. Der Workflow legt das GitHub-Release an (mit automatisch erzeugten Release-Notes) und hängt Archive für `linux/amd64`, `linux/arm64`, `windows/amd64`, `darwin/arm64` und `darwin/amd64` an – jeweils `ucng` und `ucng-beacon` – plus `SHA256SUMS.txt`. Die Version steht im Log beim Start („UCNG 1.0.0 läuft …“) und wird beim Beacon mitgemeldet.
 

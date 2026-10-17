@@ -246,3 +246,75 @@ func TestVoiceCaptions(t *testing.T) {
 		t.Fatal("Whisper-Halluzination nicht gefiltert")
 	}
 }
+
+// Moderation je Sprachkanal: unabhängig vom Chat-Recht „Stummschalten“.
+func TestVoiceModsSetting(t *testing.T) {
+	ts, srv := voiceServer(t, nil)
+	roles, err := srv.hub.Roles().Set([]Role{{Name: "Staff", Color: "#ff0000", Perms: Perms{Mute: true}}, {Name: "Moderation", Color: "#00ff00"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staff, modr := roles[0].ID, roles[1].ID
+	for _, n := range []string{"standard", "nurteam", "rollen"} {
+		name := n
+		cfg := &VoiceConfig{}
+		switch n {
+		case "nurteam":
+			cfg.Mods = ModsTeam
+		case "rollen":
+			cfg.Mods, cfg.ModRoles = ModsRoles, []string{modr}
+		}
+		if _, err := srv.hub.CreateRoomWith(RoomInput{Name: &name, Voice: cfg}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claim(t, ts.URL, "Sam")
+	claim(t, ts.URL, "Tea")
+	claim(t, ts.URL, "Mo")
+	sam, tea, mo := userID(t, srv, "Sam"), userID(t, srv, "Tea"), userID(t, srv, "Mo")
+	srv.users.SetRoles(sam, []string{staff}) // Chat-Recht „Stummschalten“
+	srv.users.SetTeam(tea, true)
+	srv.users.SetRoles(mo, []string{modr})
+	want := map[string][3]bool{ // standard, nurteam, rollen
+		"Sam": {true, false, false},
+		"Tea": {true, true, false},
+		"Mo":  {false, false, true},
+	}
+	for name, exp := range want {
+		w, _ := srv.voice.whoByID(userID(t, srv, name))
+		for i, room := range []string{"standard", "nurteam", "rollen"} {
+			d, err := srv.voice.decide(room, w)
+			if err != nil || d.Mod != exp[i] {
+				t.Errorf("%s in #%s: moderiert=%v, erwartet %v (%v)", name, room, d.Mod, exp[i], err)
+			}
+		}
+	}
+	if _, err := srv.hub.validVoice(&VoiceConfig{Mods: "alle"}); err == nil {
+		t.Fatal("unbekannte Moderation angenommen")
+	}
+}
+
+// Breakout mit Moderierenden: werden mit aufgeteilt (außer der aufteilenden Person).
+func TestVoiceBreakoutWithMods(t *testing.T) {
+	ts, srv := voiceServer(t, nil)
+	name := "talk"
+	srv.hub.CreateRoomWith(RoomInput{Name: &name, Voice: &VoiceConfig{}})
+	toks := map[string]string{}
+	for _, n := range []string{"Mia", "Ana", "Bo", "Cy"} {
+		toks[n] = claim(t, ts.URL, n)
+		srv.users.SetTeam(userID(t, srv, n), true) // alle moderieren
+		j, _ := voiceJoin(t, ts.URL, toks[n], "talk")
+		voiceDial(t, ts.URL, j)
+	}
+	waitPeers(t, srv.voice, "talk", 4)
+	res := post(t, ts.URL+"/api/voice/talk/breakout", toks["Mia"], `{"groups":2}`)
+	if res.StatusCode != http.StatusBadRequest { // ohne Häkchen: niemand zum Aufteilen
+		t.Fatalf("ohne Moderierende: %d", res.StatusCode)
+	}
+	res = post(t, ts.URL+"/api/voice/talk/breakout", toks["Mia"], `{"groups":2,"withMods":true}`)
+	var b BreakoutInfo
+	json.NewDecoder(res.Body).Decode(&b)
+	if res.StatusCode != 200 || len(b.Rooms) != 2 {
+		t.Fatalf("mit Moderierenden: %d %+v", res.StatusCode, b)
+	}
+}

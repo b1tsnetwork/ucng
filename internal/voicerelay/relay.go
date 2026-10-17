@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -106,6 +107,7 @@ type PeerInfo struct {
 	Muted    bool   `json:"m,omitempty"` // vom Team stummgeschaltet
 	SelfMute bool   `json:"sm,omitempty"`
 	Hand     bool   `json:"h,omitempty"`
+	HandAt   int64  `json:"ha,omitempty"`  // seit wann (Unix-Millisekunden) – für die Reihenfolge der Meldungen
 	Screen   string `json:"sc,omitempty"`  // teilt den Bildschirm (Codec, z. B. "vp8")
 	ScreenOK bool   `json:"so,omitempty"`  // darf den Bildschirm teilen
 	Cam      string `json:"cm,omitempty"`  // Kamera an (Codec)
@@ -190,6 +192,7 @@ type peer struct {
 	muted    bool
 	selfMute bool
 	hand     bool
+	handAt   int64 // Unix-Millisekunden der Meldung (0 = keine)
 	bitrate  int
 	conn     *wsock.Conn
 	out      chan []byte // Steuerung und Sprache (Vorrang)
@@ -230,17 +233,22 @@ type peer struct {
 	// Hinweise der Sprachverbindung, wenn Bildschirm/Kamera über eine Medienverbindung laufen
 	hintScreen string
 	hintCam    string
-	lastSpk    time.Time
-	quality    int
-	rec        bool
-	pubKey     string
-	pins       map[uint16]bool // Kamera: diese Personen groß sehen (angeheftet, Galerie)
-	highSent   bool            // Kamera: dem Browser gesagt, er soll das große Bild senden
-	lastReact  time.Time
-	ctlTok     float64 // Kontingent für Reaktionen, Untertitel, Schlüssel
-	ctlRefill  time.Time
-	tBytes     float64 // Ton der Bildschirmfreigabe
-	tRefill    time.Time
+	// Sparmodus dieser Person als Zuschauer: pausiert (kein Video) bzw. obere Zeitebenen weglassen
+	paused    bool
+	drop      uint8
+	resumedAt time.Time
+	topTid    uint8 // als Sendende: höchste bisher gesehene Zeitebene
+	lastSpk   time.Time
+	quality   int
+	rec       bool
+	pubKey    string
+	pins      map[uint16]bool // Kamera: diese Personen groß sehen (angeheftet, Galerie)
+	highSent  bool            // Kamera: dem Browser gesagt, er soll das große Bild senden
+	lastReact time.Time
+	ctlTok    float64 // Kontingent für Reaktionen, Untertitel, Schlüssel
+	ctlRefill time.Time
+	tBytes    float64 // Ton der Bildschirmfreigabe
+	tRefill   time.Time
 }
 
 // New startet einen Relay.
@@ -385,6 +393,16 @@ func (r *Relay) peersLocked(ch *channel) []PeerInfo {
 	return out
 }
 
+// setHand: melden bzw. Meldung zurücknehmen; der Zeitpunkt bleibt bei erneutem Melden erhalten.
+func (p *peer) setHand(v bool, now time.Time) {
+	if v && !p.hand {
+		p.handAt = now.UnixMilli()
+	} else if !v {
+		p.handAt = 0
+	}
+	p.hand = v
+}
+
 func (p *peer) info() PeerInfo {
 	sc, cm := p.codec, p.cam
 	if sc == "" {
@@ -393,7 +411,7 @@ func (p *peer) info() PeerInfo {
 	if cm == "" {
 		cm = p.hintCam
 	}
-	return PeerInfo{Idx: p.idx, User: p.user, Name: p.name, Speak: p.speak, Muted: p.muted, SelfMute: p.selfMute, Hand: p.hand, Screen: sc, ScreenOK: p.screenOK,
+	return PeerInfo{Idx: p.idx, User: p.user, Name: p.name, Speak: p.speak, Muted: p.muted, SelfMute: p.selfMute, Hand: p.hand, HandAt: p.handAt, Screen: sc, ScreenOK: p.screenOK,
 		Cam: cm, CamOK: p.videoOK, Music: p.music, Mod: p.mod, Quality: p.quality, Rec: p.rec, PubKey: p.pubKey}
 }
 
@@ -409,15 +427,17 @@ type ctlMsg struct {
 	I      uint16   `json:"i,omitempty"`
 	L      int      `json:"l,omitempty"`
 	Codec  string   `json:"codec,omitempty"`
-	Sc     *string  `json:"sc,omitempty"`  // state: Hinweis „teile den Bildschirm“ (über die Medienverbindung)
-	Cm     *string  `json:"cm,omitempty"`  // state: Hinweis „Kamera an“
-	Q      *int     `json:"q,omitempty"`   // state: Verbindungsqualität 1–3
-	PK     *string  `json:"pk,omitempty"`  // state: öffentlicher Schlüssel (Ende-zu-Ende)
-	E      string   `json:"e,omitempty"`   // react: Emoji
-	X      string   `json:"x,omitempty"`   // e2k: verpackter Schlüssel
-	To     uint16   `json:"to,omitempty"`  // e2k: Empfänger
-	Ep     int      `json:"ep,omitempty"`  // e2k: Schlüssel-Generation
-	IDs    []uint16 `json:"ids,omitempty"` // pins
+	Sc     *string  `json:"sc,omitempty"`    // state: Hinweis „teile den Bildschirm“ (über die Medienverbindung)
+	Cm     *string  `json:"cm,omitempty"`    // state: Hinweis „Kamera an“
+	Q      *int     `json:"q,omitempty"`     // state: Verbindungsqualität 1–3
+	PK     *string  `json:"pk,omitempty"`    // state: öffentlicher Schlüssel (Ende-zu-Ende)
+	E      string   `json:"e,omitempty"`     // react: Emoji
+	X      string   `json:"x,omitempty"`     // e2k: verpackter Schlüssel
+	To     uint16   `json:"to,omitempty"`    // e2k: Empfänger
+	Ep     int      `json:"ep,omitempty"`    // e2k: Schlüssel-Generation
+	IDs    []uint16 `json:"ids,omitempty"`   // pins
+	Pause  *bool    `json:"pause,omitempty"` // limit: gerade kein Video (Tab versteckt, Ansicht zu)
+	Drop   *int     `json:"drop,omitempty"`  // limit: so viele obere Zeitebenen weglassen (0–2: alle, ½, ¼ der Bilder)
 }
 
 // ServeHTTP nimmt eine Sprachverbindung an (GET, WebSocket).
@@ -522,6 +542,9 @@ func (r *Relay) join(t Ticket, conn *wsock.Conn) (*peer, error) {
 		bitrate: ch.bitrate, conn: conn, videoOK: t.Video, camNeedKey: map[uint16]*[2]bool{}, camSkip: map[uint16]*[2]uint8{}, mod: t.ModUser, pins: map[uint16]bool{},
 		out: make(chan []byte, outQueue), vout: make(chan []byte, videoQueue), tokens: 10, refill: now,
 		screenOK: t.Screen && ch.maxScreens > 0, watchers: map[uint16]*peer{}, watching: map[uint16]bool{}, needKey: map[uint16]bool{}, skipTid: map[uint16]uint8{}}
+	if t.Hand {
+		p.handAt = now.UnixMilli()
+	}
 	// Video-Vorrat: etwa 0,3 s der größten möglichen Bitrate, mindestens ein Schlüsselbild
 	kbps := ch.screenKbps + ch.videoKbps*ch.featuredN + ch.thumbKbps*8
 	p.vBudget = max(int64(minVBudget), int64(float64(kbps)*125*videoLatency))
@@ -681,7 +704,7 @@ func (r *Relay) reader(p *peer) {
 				p.selfMute = *m.Mute
 			}
 			if m.Hand != nil {
-				p.hand = *m.Hand
+				p.setHand(*m.Hand, r.cfg.Now())
 			}
 			if m.Sc != nil && (*m.Sc == "" || validCodec(*m.Sc)) {
 				p.hintScreen = *m.Sc
@@ -701,7 +724,7 @@ func (r *Relay) reader(p *peer) {
 			ch := p.ch
 			r.mu.Unlock()
 			r.changedCh(ch, peers)
-		case "react", "e2k", "pins":
+		case "react", "e2k", "pins", "limit":
 			r.small(p, m)
 		case "spk": // Medienverbindung (Kamera): „ich spreche gerade“ – für die großen Bilder
 			now := r.cfg.Now()
@@ -1051,7 +1074,7 @@ func (r *Relay) controlOne(key, user, action string, value bool, reason string) 
 		case "mute":
 			p.muted = value
 		case "hand":
-			p.hand = value
+			p.setHand(value, r.cfg.Now())
 		case "screen": // Recht zum Teilen; false beendet eine laufende Freigabe
 			p.screenOK = value && ch.maxScreens > 0
 			if !p.screenOK && p.codec != "" {
@@ -1066,6 +1089,13 @@ func (r *Relay) controlOne(key, user, action string, value bool, reason string) 
 			p.mod = value
 		case "rec": // nimmt auf – alle sehen es
 			p.rec = value
+		case "musicvol": // Musik eines Bots: neue Voreinstellung der Lautstärke (reason = Prozent)
+			if p.music == 0 {
+				continue
+			}
+			if n, err := strconv.Atoi(reason); err == nil {
+				p.music = clamp(n, 1, 100)
+			}
 		case "forcemute": // „alle stummschalten“: selbst wieder einschaltbar
 			r.enqueueLocked(p, textMsg([]byte(`{"t":"forcemute"}`)))
 			continue
@@ -1308,8 +1338,12 @@ func (r *Relay) video(p *peer, flags uint8, seq uint16, data []byte) {
 	binary.BigEndian.PutUint16(msg[4:], seq)
 	copy(msg[6:], data)
 	tid := frameTid(flags)
+	p.topTid = max(p.topTid, tid)
 	missing := false
 	for _, w := range p.watchers {
+		if w.paused || !w.allowTid(p, tid) { // Sparmodus: nichts bzw. nur die unteren Zeitebenen
+			continue
+		}
 		if w.needKey[p.idx] {
 			if !key {
 				missing = true
@@ -1339,6 +1373,15 @@ func (r *Relay) video(p *peer, flags uint8, seq uint16, data []byte) {
 	if missing {
 		r.keyReqLocked(p)
 	}
+}
+
+// allowTid: Bekommt w (Sparmodus) Bilder dieser Zeitebene von s? Mit drop=1 fällt die oberste
+// Ebene weg (halbe Bildrate), mit drop=2 auch die darunter (ein Viertel) – nie die Grundebene.
+func (w *peer) allowTid(s *peer, tid uint8) bool {
+	if w.drop == 0 || tid == 0 {
+		return true
+	}
+	return tid+w.drop <= s.topTid
 }
 
 // frameTid: Zeitebene eines Video-Bildes (flags Bit 1–2; 0 = Grundebene, ohne SVC immer 0).

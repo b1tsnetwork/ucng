@@ -242,9 +242,10 @@ func (r *Relay) camFrame(p *peer, layer int, flags uint8, seq uint16, data []byt
 	binary.BigEndian.PutUint16(msg[5:], seq)
 	copy(msg[7:], data)
 	tid := frameTid(flags)
+	p.topTid = max(p.topTid, tid)
 	missing := false
 	for _, w := range ch.peers {
-		if w == p || layer == 1 && !ch.seesHigh(w, p) {
+		if w == p || layer == 1 && !ch.seesHigh(w, p) || w.paused || !w.allowTid(p, tid) {
 			continue
 		}
 		if layer == 1 && w.highOff {

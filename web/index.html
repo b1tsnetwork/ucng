@@ -511,7 +511,8 @@
       <p id="breakoutInfo"></p>
       <label class="voice-field"><span data-i18n="voice.breakout_groups">Gruppen</span><input type="number" id="breakoutGroups" min="2" max="20" value="2"></label>
       <label class="voice-field"><span data-i18n="voice.breakout_minutes">Dauer in Minuten (0 = ohne Countdown)</span><input type="number" id="breakoutMinutes" min="0" max="240" value="10"></label>
-      <p class="hint" data-i18n="voice.breakout_hint">Alle außer den Moderierenden werden zufällig und gleichmäßig verteilt. Nach Ablauf – oder mit „Alle zurückholen“ – kommen alle hierher zurück.</p>
+      <label class="check"><input type="checkbox" id="breakoutMods"> <span data-i18n="voice.breakout_with_mods">Moderierende mit aufteilen (außer mir)</span></label>
+      <p class="hint" data-i18n="voice.breakout_hint">Alle (außer dir und – ohne Häkchen – den Moderierenden) werden zufällig und gleichmäßig verteilt. Nach Ablauf – oder mit „Alle zurückholen“ – kommen alle hierher zurück.</p>
       <p class="form-error" id="breakoutError" role="alert"></p>
       <div class="actions">
         <button type="button" class="btn-quiet" data-close data-i18n="app.abbrechen">Abbrechen</button>

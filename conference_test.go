@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -263,5 +264,78 @@ func TestTempOwnerSettings(t *testing.T) {
 	do(t, "PATCH", ts.URL+"/api/rooms/spielrunde/settings", anna, `{"temp":null,"permanent":true}`)
 	if i, _ := h.roomInfo("spielrunde"); i.Temp == nil {
 		t.Fatal("dauerhaft geworden")
+	}
+}
+
+// Streaming: Abspielen während des Hochladens; Antwort erst am Ende; Lautstärke live ändern.
+func TestBotMusicStream(t *testing.T) {
+	ts, srv := voiceServer(t, nil)
+	name := "talk"
+	srv.hub.CreateRoomWith(RoomInput{Name: &name, Voice: &VoiceConfig{BotMusic: true}})
+	_, tok, _ := srv.hub.Bots().Create(BotInput{Name: "DJ", AllRooms: true, Perms: &BotPerms{Write: true, Music: true}})
+	file := oggOpus(150) // 3 s
+	pr, pw := io.Pipe()
+	type result struct {
+		code int
+		body map[string]any
+	}
+	done := make(chan result, 1)
+	go func() {
+		req, _ := http.NewRequest("POST", ts.URL+"/api/bot/voice/talk/play?stream=1&volume=20&title=Live", pr)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			done <- result{0, nil}
+			return
+		}
+		var m map[string]any
+		json.NewDecoder(res.Body).Decode(&m)
+		res.Body.Close()
+		done <- result{res.StatusCode, m}
+	}()
+	// erst den Kopf, dann langsam weiter – der Bot ist schon im Kanal
+	pw.Write(file[:len(file)/3])
+	waitVoice(t, func() bool {
+		for _, p := range srv.voice.Peers("talk") {
+			if p.Music == 20 && p.Name == "DJ" {
+				return true
+			}
+		}
+		return false
+	})
+	select {
+	case r := <-done:
+		t.Fatalf("Antwort vor dem Ende: %+v", r)
+	default:
+	}
+	// Lautstärke während des Abspielens
+	if res := post(t, ts.URL+"/api/bot/voice/talk/volume?volume=35", tok, ""); res.StatusCode != 200 {
+		t.Fatalf("Lautstärke: %d", res.StatusCode)
+	}
+	waitVoice(t, func() bool {
+		for _, p := range srv.voice.Peers("talk") {
+			if p.Music == 35 {
+				return true
+			}
+		}
+		return false
+	})
+	pw.Write(file[len(file)/3:])
+	pw.Close()
+	select {
+	case r := <-done:
+		if r.code != 200 || r.body["ended"] != true || r.body["reason"] != "eof" {
+			t.Fatalf("Ende: %+v", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("kein Ende")
+	}
+	waitVoice(t, func() bool { return len(srv.voice.Peers("talk")) == 0 })
+	// kein Ogg: Fehler
+	req, _ := http.NewRequest("POST", ts.URL+"/api/bot/voice/talk/play?stream=1", strings.NewReader("kein ogg"))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	res, _ := http.DefaultClient.Do(req)
+	if res.StatusCode != http.StatusBadRequest || len(srv.voice.Peers("talk")) != 0 {
+		t.Fatalf("kein Ogg: %d", res.StatusCode)
 	}
 }

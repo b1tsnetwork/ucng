@@ -55,7 +55,20 @@ type VoiceConfig struct {
 	BotMusic     bool     `json:"botMusic,omitempty"`     // Bots dürfen Musik einspielen
 	Captions     bool     `json:"captions,omitempty"`     // Untertitel über das eigene Whisper (STT_URL)
 	E2EE         bool     `json:"e2ee,omitempty"`         // Ende-zu-Ende-verschlüsselt (Schlüssel nur in den Browsern)
+	// Wer moderiert im Sprachkanal? "" = Team und Rollen mit dem Recht „Stummschalten“,
+	// "team" = nur das Team, "roles" = nur ModRoles (dann auch das Team nur mit einer dieser Rollen).
+	// Besitzer temporärer Kanäle und Co-Hosts moderieren immer.
+	Mods     string   `json:"mods,omitempty"`
+	ModRoles []string `json:"modRoles,omitempty"`
 }
+
+const (
+	ModsDefault = ""
+	ModsTeam    = "team"
+	ModsRoles   = "roles"
+)
+
+var ErrModsMode = errors.New("Moderation: leer, team oder roles")
 
 // videoPreset: Qualität des großen Kamerabildes; Miniansichten haben immer thumbPreset.
 type videoPreset struct {
@@ -176,6 +189,17 @@ func (h *Hub) validVoice(in *VoiceConfig) (*VoiceConfig, error) {
 	}
 	if v.E2EE { // der Server kennt den Schlüssel nicht: keine Musik von Bots, keine Untertitel
 		v.BotMusic, v.Captions = false, false
+	}
+	switch v.Mods {
+	case ModsDefault, ModsTeam:
+		v.ModRoles = nil
+	case ModsRoles:
+		v.ModRoles = h.roles.Filter(v.ModRoles)
+		if len(v.ModRoles) == 0 {
+			v.ModRoles = nil
+		}
+	default:
+		return nil, ErrModsMode
 	}
 	switch v.Screen {
 	case "off":
@@ -626,7 +650,7 @@ func (v *voiceMgr) decide(name string, w voiceWho) (voiceDecision, error) {
 		return d, ErrNoVoice
 	}
 	d.Owner = acc.Owner != "" && acc.Owner == w.ID
-	d.Mod = v.canModerate(w) || d.Owner
+	d.Mod = v.roomMod(cfg, w) || d.Owner
 	d.Cfg = *cfg
 	ip := w.IPHash
 	if w.Team {
@@ -689,6 +713,21 @@ func (v *voiceMgr) decide(name string, w voiceWho) (voiceDecision, error) {
 	return d, nil
 }
 
+// roomMod: Moderiert w in einem Sprachkanal mit diesen Einstellungen? (ohne Besitzer und Co-Hosts)
+func (v *voiceMgr) roomMod(cfg *VoiceConfig, w voiceWho) bool {
+	if cfg == nil {
+		return v.canModerate(w)
+	}
+	switch cfg.Mods {
+	case ModsTeam:
+		return w.Team
+	case ModsRoles:
+		return intersects(cfg.ModRoles, w.Roles)
+	}
+	return v.canModerate(w)
+}
+
+// canModerate: Team oder Rollen mit dem Chat-Recht „Stummschalten“ (Voreinstellung).
 func (v *voiceMgr) canModerate(w voiceWho) bool {
 	return w.Team || v.s.hub.Roles().PermsOf(w.Roles, w.Team).Mute
 }
@@ -1035,7 +1074,7 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 		"screen": d.Screen, "screenOn": d.Cfg.Screen != ScreenOff, "screenKbps": sp.Kbps, "screenFps": sp.FPS, "screenHeight": sp.Height,
 		"video": d.Video, "videoOn": d.Cfg.Video != ScreenOff, "videoPreset": vp, "thumbPreset": thumbPreset,
 		"featured": d.Cfg.Featured, "owner": d.Owner,
-		"host":      d.Owner || v.canModerate(who), // darf Co-Hosts ernennen
+		"host":      d.Owner || v.roomMod(&d.Cfg, who), // darf Co-Hosts ernennen
 		"e2ee":      d.Cfg.E2EE,
 		"captions":  d.Cfg.Captions && !d.Cfg.E2EE && v.stt != nil,
 		"breakout":  v.breakoutFor(room),
@@ -1114,7 +1153,7 @@ func (s *Server) handleVoiceMod(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	host := v.canModerate(who) || (acc.Owner != "" && acc.Owner == me.ID) // Team, Recht „Stummschalten“ oder Besitzer
+	host := v.roomMod(acc.Cfg, who) || (acc.Owner != "" && acc.Owner == me.ID) // laut Einstellung des Kanals, oder Besitzer
 	v.mu.Lock()
 	cohost := v.rooms[room] != nil && v.rooms[room].cohosts[me.ID]
 	v.mu.Unlock()
@@ -1378,10 +1417,6 @@ func (s *Server) handleVoiceMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	who := s.voiceWhoOf(me, "")
-	if !v.canModerate(who) {
-		fail(w, ErrNoPerm)
-		return
-	}
 	var in struct {
 		UserID string `json:"userId"`
 		To     string `json:"to"`
@@ -1390,6 +1425,10 @@ func (s *Server) handleVoiceMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room, to := NormRoom(r.PathValue("room")), NormRoom(in.To)
+	if !v.mayHost(room, me) { // verschieben darf, wer im Ausgangskanal moderiert
+		fail(w, ErrNoPerm)
+		return
+	}
 	if room == to {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return

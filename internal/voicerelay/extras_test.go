@@ -169,3 +169,34 @@ loop:
 	case <-time.After(150 * time.Millisecond):
 	}
 }
+
+// Hand heben: Zeitpunkt der Meldung für die Reihenfolge; bleibt beim erneuten Senden gleich.
+func TestHandOrder(t *testing.T) {
+	e := newEnv(t, Config{MaxMbit: 50})
+	a, _ := e.join(withUser(Ticket{Channel: "talk", Speak: true}, "a"))
+	b, _ := e.join(withUser(Ticket{Channel: "talk", Speak: true}, "b"))
+	at := func(u string) int64 {
+		for _, p := range e.r.Peers("talk") {
+			if p.User == u {
+				return p.HandAt
+			}
+		}
+		return -1
+	}
+	b.c.WriteText([]byte(`{"t":"state","hand":true}`))
+	waitFor(t, func() bool { return at("b") > 0 })
+	time.Sleep(5 * time.Millisecond)
+	a.c.WriteText([]byte(`{"t":"state","hand":true}`))
+	waitFor(t, func() bool { return at("a") > 0 })
+	first := at("b")
+	if at("a") <= first {
+		t.Fatalf("Reihenfolge: a=%d b=%d", at("a"), first)
+	}
+	b.c.WriteText([]byte(`{"t":"state","hand":true,"mute":true}`)) // nochmal gesendet: Platz bleibt
+	time.Sleep(50 * time.Millisecond)
+	if at("b") != first {
+		t.Fatal("Zeitpunkt der Meldung hat sich geändert")
+	}
+	e.r.Control("talk", "b", "hand", false, "")
+	waitFor(t, func() bool { return at("b") == 0 })
+}

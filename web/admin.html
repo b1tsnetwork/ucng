@@ -1315,6 +1315,21 @@
               <div class="role-picks" id="roomVideoRoles"></div>
             </div>
           </div>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="admin.voice_mods">Moderieren im Sprachkanal</span>
+              <select id="roomVoiceMods">
+                <option value="" data-i18n="admin.voice_mods_default">Team und Rollen mit „Stummschalten“</option>
+                <option value="team" data-i18n="admin.voice_mods_team">Nur das Team</option>
+                <option value="roles" data-i18n="admin.voice_mods_roles">Nur gewählte Rollen</option>
+              </select>
+              <small data-i18n="admin.voice_mods_hint">Unabhängig von Lese- und Schreibrechten. Moderierende schalten stumm, entfernen, verschieben, teilen in Breakout-Räume auf und nehmen auf. Besitzer temporärer Kanäle und Co-Hosts moderieren immer.</small>
+            </label>
+            <div class="field" id="roomModRolesRow">
+              <span data-i18n="admin.voice_mods_pick">Rollen, die hier moderieren</span>
+              <div class="role-picks" id="roomModRoles"></div>
+            </div>
+          </div>
           <label class="switch-row">
             <span class="switch-text">
               <strong data-i18n="admin.bot_music">Musik von Bots</strong>

@@ -1,4 +1,4 @@
-# Baut und veröffentlicht UCNG und den Beacon:
+# Baut und veröffentlicht UCNG, den Beacon, den Sprach-Server und den Musik-Bot:
 #   - Container-Images in der GitHub Container Registry (ghcr.io), amd64 + arm64
 #   - Programmdateien für Linux, Windows und macOS (Tags: als GitHub Release)
 #
@@ -46,6 +46,8 @@ jobs:
             file: ./Dockerfile.beacon
           - image: ucng-voice
             file: ./Dockerfile.voice
+          - image: ucng-bot-music
+            file: ./Dockerfile.music
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -213,7 +215,7 @@ jobs:
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --title "UCNG $TAG" --generate-notes \
-              --notes "Container-Images: \`ghcr.io/${OWNER}/ucng:${TAG#v}\`, \`ghcr.io/${OWNER}/ucng-beacon:${TAG#v}\` und \`ghcr.io/${OWNER}/ucng-voice:${TAG#v}\`"
+              --notes "Container-Images: \`ghcr.io/${OWNER}/ucng:${TAG#v}\`, \`ghcr.io/${OWNER}/ucng-beacon:${TAG#v}\`, \`ghcr.io/${OWNER}/ucng-voice:${TAG#v}\` und \`ghcr.io/${OWNER}/ucng-bot-music:${TAG#v}\`"
           fi
           gh release upload "$TAG" --clobber dist/*
 
@@ -227,6 +229,7 @@ jobs:
             echo "- \`ghcr.io/${OWNER}/ucng\`"
             echo "- \`ghcr.io/${OWNER}/ucng-beacon\`"
             echo "- \`ghcr.io/${OWNER}/ucng-voice\`"
+            echo "- \`ghcr.io/${OWNER}/ucng-bot-music\`"
             echo
             echo "| Datei | SHA256 |"
             echo "|-------|--------|"

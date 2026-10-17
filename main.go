@@ -553,6 +553,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/bot/voice/{room}", s.requireBot(s.handleBotMusicStatus))
 	mux.HandleFunc("POST /api/bot/voice/{room}/play", s.requireBot(s.handleBotMusicPlay))
 	mux.HandleFunc("POST /api/bot/voice/{room}/stop", s.requireBot(s.handleBotMusicStop))
+	mux.HandleFunc("POST /api/bot/voice/{room}/volume", s.requireBot(s.handleBotMusicVolume))
 	mux.HandleFunc("GET /api/admin/temprooms", mod(s.handleAdminTempGet))
 	mux.HandleFunc("PUT /api/admin/temprooms", adm(s.handleAdminTempPut))
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {

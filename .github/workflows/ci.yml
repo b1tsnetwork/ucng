@@ -99,6 +99,9 @@ jobs:
       - name: Build Sprach-Relay
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/ucng-voice ./cmd/ucng-voice
 
+      - name: Build Musik-Bot
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/ucng-bot-music ./examples/bot-music
+
       - name: Speicher-Tests mit Treiber
         if: contains(matrix.tags, 'sqlite')
         run: go test -tags "${{ matrix.tags }}" -count=1 -run 'SQL|Storage|Persist' .
@@ -120,3 +123,41 @@ jobs:
           done
           echo "::error::Programme antworten nicht"
           exit 1
+
+  # Das Musik-Image hängt an Debian-Paketen und Downloads (yt-dlp, deno) – Fehler dort sollen
+  # schon im Pull Request auffallen, nicht erst beim Veröffentlichen.
+  music-image:
+    name: Musik-Bot-Image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.music
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ucng-bot-music:ci
+          cache-from: type=gha,scope=ucng-bot-music
+          build-args: |
+            VERSION=ci
+
+      - name: Rauchtest
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --read-only --tmpfs /tmp:uid=10001,gid=10001 --entrypoint sh ucng-bot-music:ci -c \
+            'bot-music -version && ffmpeg -hide_banner -encoders | grep -q libopus && yt-dlp --version && deno --version | head -1'
+          # Ohne Token beendet sich der Bot mit einer klaren Meldung (Einstieg samt yt-dlp-Update)
+          out="$(docker run --rm --read-only --tmpfs /tmp:uid=10001,gid=10001 -e YTDLP_UPDATE=0 ucng-bot-music:ci 2>&1 || true)"
+          echo "$out"
+          grep -q "UCNG_BOT_TOKEN" <<<"$out"

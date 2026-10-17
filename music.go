@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -160,6 +161,138 @@ func opusDuration(p []byte) time.Duration {
 	return frame * time.Duration(count)
 }
 
+// --- Quellen ---
+
+// packetSource liefert Opus-Pakete mit Dauer. io.EOF = Ende; reset = von vorn (Schleife).
+type packetSource interface {
+	next() ([]byte, time.Duration, error)
+	reset() bool
+}
+
+type trackSource struct {
+	t *opusTrack
+	i int
+}
+
+func (s *trackSource) next() ([]byte, time.Duration, error) {
+	if s.i >= len(s.t.packets) {
+		return nil, 0, io.EOF
+	}
+	s.i++
+	return s.t.packets[s.i-1], s.t.durs[s.i-1], nil
+}
+func (s *trackSource) reset() bool { s.i = 0; return true }
+
+// oggStream liest Ogg-Opus während des Abspielens (Streaming-Modus): Seite für Seite, so schnell
+// wie abgespielt wird. Mehrere hintereinander gehängte Ströme (neue Seriennummer mit OpusHead)
+// werden nacheinander gespielt.
+type oggStream struct {
+	r       *bufio.Reader
+	serial  uint32
+	n       int // Pakete im aktuellen Strom (0 = OpusHead, 1 = OpusTags)
+	pkt     []byte
+	pending [][]byte
+	started bool
+}
+
+func newOggStream(r io.Reader) *oggStream { return &oggStream{r: bufio.NewReaderSize(r, 8<<10)} } // klein: Stopp wirkt sofort
+
+func (o *oggStream) reset() bool { return false }
+
+// prime liest bis zum ersten Opus-Paket – so fällt ein falsches Format auf, bevor der Bot dem
+// Sprachkanal beitritt.
+func (o *oggStream) prime() error {
+	for len(o.pending) == 0 {
+		if err := o.page(); err != nil {
+			if err == io.EOF || err == ErrMusicFormat {
+				return ErrMusicFormat
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *oggStream) next() ([]byte, time.Duration, error) {
+	for {
+		for len(o.pending) > 0 {
+			p := o.pending[0]
+			o.pending = o.pending[1:]
+			if len(p) == 0 || len(p) > 1275 {
+				continue
+			}
+			if d := opusDuration(p); d > 0 {
+				return p, d, nil
+			}
+		}
+		if err := o.page(); err != nil {
+			if err == io.EOF && !o.started {
+				return nil, 0, ErrMusicFormat
+			}
+			return nil, 0, err
+		}
+	}
+}
+
+func (o *oggStream) page() error {
+	var hdr [27]byte
+	if _, err := io.ReadFull(o.r, hdr[:]); err != nil {
+		if err == io.ErrUnexpectedEOF {
+			return io.EOF
+		}
+		return err
+	}
+	if string(hdr[:4]) != "OggS" {
+		return ErrMusicFormat
+	}
+	serial := binary.LittleEndian.Uint32(hdr[14:])
+	if hdr[5]&2 != 0 { // Anfang eines Stroms
+		o.serial, o.n, o.pkt = serial, 0, nil
+	}
+	lace := make([]byte, hdr[26])
+	if _, err := io.ReadFull(o.r, lace); err != nil {
+		return io.EOF
+	}
+	total := 0
+	for _, l := range lace {
+		total += int(l)
+	}
+	data := make([]byte, total)
+	if _, err := io.ReadFull(o.r, data); err != nil {
+		return io.EOF
+	}
+	if serial != o.serial {
+		return nil // anderer Strom (z. B. Bild): auslassen
+	}
+	pos := 0
+	for _, l := range lace {
+		o.pkt = append(o.pkt, data[pos:pos+int(l)]...)
+		pos += int(l)
+		if len(o.pkt) > 1<<16 {
+			return ErrMusicFormat
+		}
+		if l == 255 {
+			continue
+		}
+		switch o.n {
+		case 0:
+			if len(o.pkt) < 19 || string(o.pkt[:8]) != "OpusHead" || o.pkt[9] < 1 || o.pkt[9] > 2 {
+				return ErrMusicFormat
+			}
+		case 1:
+			if len(o.pkt) < 8 || string(o.pkt[:8]) != "OpusTags" {
+				return ErrMusicFormat
+			}
+		default:
+			o.pending = append(o.pending, o.pkt)
+			o.started = true
+		}
+		o.n++
+		o.pkt = nil
+	}
+	return nil
+}
+
 // --- Abspielen ---
 
 type musicPlayers struct {
@@ -177,14 +310,17 @@ type musicPlayer struct {
 	Loop    bool      `json:"loop"`
 	Started time.Time `json:"started"`
 	Length  float64   `json:"lengthSeconds"`
+	Stream  bool      `json:"stream,omitempty"`
 	stop    chan struct{}
 	once    sync.Once
+	done    chan struct{} // geschlossen, wenn das Abspielen endet
+	reason  string        // warum (eof, stopped, gone, error)
 }
 
 func (p *musicPlayer) Stop() { p.once.Do(func() { close(p.stop) }) }
 
 // play verbindet sich mit dem Relay des Kanals und spielt die Datei in Echtzeit ab.
-func (s *Server) playMusic(b Bot, room string, cfg VoiceConfig, track *opusTrack, mp *musicPlayer) error {
+func (s *Server) playMusic(b Bot, room string, cfg VoiceConfig, src packetSource, bitrate int, mp *musicPlayer) error {
 	v := s.voice
 	choice, err := v.pick(room, cfg)
 	if err != nil {
@@ -193,7 +329,7 @@ func (s *Server) playMusic(b Bot, room string, cfg VoiceConfig, track *opusTrack
 	pr := cfg.preset()
 	ticket := voicerelay.SignTicket(v.priv, voicerelay.Ticket{
 		Channel: room, User: "bot:" + b.ID, Name: b.Name, Speak: true, Music: mp.Volume,
-		Bitrate: min(max(track.maxRate*5/4, 24000), 256000), MaxSpeakers: cfg.MaxSpeakers, MaxPeers: cfg.MaxPeers, Stereo: pr.Stereo,
+		Bitrate: min(max(bitrate*5/4, 24000), 256000), MaxSpeakers: cfg.MaxSpeakers, MaxPeers: cfg.MaxPeers, Stereo: pr.Stereo,
 	}, time.Now())
 	var conn *wsock.Client
 	if choice.id == builtinRelay {
@@ -231,6 +367,7 @@ func (s *Server) playMusic(b Bot, room string, cfg VoiceConfig, track *opusTrack
 		}
 	}()
 	go func() {
+		reason := "eof"
 		defer func() {
 			conn.Close()
 			s.music.mu.Lock()
@@ -238,43 +375,61 @@ func (s *Server) playMusic(b Bot, room string, cfg VoiceConfig, track *opusTrack
 				delete(s.music.byRm, room)
 			}
 			s.music.mu.Unlock()
+			mp.reason = reason
+			close(mp.done)
 		}()
 		seq := uint16(0)
+		start := time.Now()
+		var at time.Duration
 		for {
-			start := time.Now()
-			var at time.Duration
-			for i, pkt := range track.packets {
-				select {
-				case <-mp.stop:
-					return
-				case <-done:
-					return
-				default:
-				}
-				if wait := time.Until(start.Add(at)); wait > 0 {
-					select {
-					case <-time.After(wait):
-					case <-mp.stop:
-						return
-					case <-done:
-						return
-					}
-				}
-				seq++
-				msg := make([]byte, 4+len(pkt))
-				msg[0] = voicerelay.MsgAudio
-				binary.BigEndian.PutUint16(msg[1:], seq)
-				msg[3] = 128
-				copy(msg[4:], pkt)
-				if conn.WriteBinary(msg) != nil {
-					return
-				}
-				at += track.durs[i]
+			select {
+			case <-mp.stop:
+				reason = "stopped"
+				return
+			case <-done:
+				reason = "gone"
+				return
+			default:
 			}
-			if !mp.Loop {
+			pkt, d, err := src.next()
+			if err == io.EOF {
+				if mp.Loop && src.reset() {
+					start, at = time.Now(), 0
+					continue
+				}
 				time.Sleep(200 * time.Millisecond) // Rest abspielen lassen
 				return
 			}
+			if err != nil {
+				reason = "error"
+				return
+			}
+			wait := time.Until(start.Add(at))
+			if wait < -300*time.Millisecond { // Quelle kam zu spät (Streaming): neu ausrichten statt aufzuholen
+				start, wait = time.Now().Add(-at), 0
+			}
+			if wait > 0 {
+				select {
+				case <-time.After(wait):
+				case <-mp.stop:
+					reason = "stopped"
+					return
+				case <-done:
+					reason = "gone"
+					return
+				}
+			}
+			seq++
+			msg := make([]byte, 4+len(pkt))
+			msg[0] = voicerelay.MsgAudio
+			binary.BigEndian.PutUint16(msg[1:], seq)
+			msg[3] = 128
+			copy(msg[4:], pkt)
+			if conn.WriteBinary(msg) != nil {
+				reason = "gone"
+				return
+			}
+			at += d
 		}
 	}()
 	return nil
@@ -306,21 +461,44 @@ func (s *Server) botMusicRoom(w http.ResponseWriter, r *http.Request) (Bot, stri
 	return b, room, info.Voice, true
 }
 
-// POST /api/bot/voice/{room}/play?volume=20&loop=1&title=… – Ogg-Opus-Datei als Inhalt
+// POST /api/bot/voice/{room}/play?volume=20&loop=1&title=… – Ogg-Opus-Datei als Inhalt.
+// Mit &stream=1 wird während des Hochladens abgespielt (ohne Längengrenze, z. B. direkt aus
+// ffmpeg); die Antwort kommt erst, wenn das Stück zu Ende ist: {"ended":true,"reason":"eof|stopped|gone|error"}.
 func (s *Server) handleBotMusicPlay(w http.ResponseWriter, r *http.Request) {
 	b, room, cfg, ok := s.botMusicRoom(w, r)
 	if !ok {
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxMusicFile))
-	if err != nil {
-		writeErr(w, http.StatusRequestEntityTooLarge, ErrMusicLarge.Error())
-		return
-	}
-	track, err := parseOggOpus(body)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
+	stream := r.URL.Query().Get("stream") == "1"
+	var src packetSource
+	bitrate := 64000
+	length := 0.0
+	if stream {
+		rc := http.NewResponseController(w) // ein Stück darf länger dauern als die übliche Lesefrist
+		rc.SetReadDeadline(time.Time{})
+		rc.SetWriteDeadline(time.Time{})
+		bitrate = 128000
+		if k, err := strconv.Atoi(r.URL.Query().Get("kbps")); err == nil && k >= 16 && k <= 256 {
+			bitrate = k * 1000
+		}
+		og := newOggStream(r.Body)
+		if err := og.prime(); err != nil {
+			writeErr(w, http.StatusBadRequest, ErrMusicFormat.Error())
+			return
+		}
+		src = og
+	} else {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxMusicFile))
+		if err != nil {
+			writeErr(w, http.StatusRequestEntityTooLarge, ErrMusicLarge.Error())
+			return
+		}
+		track, err := parseOggOpus(body)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		src, bitrate, length = &trackSource{t: track}, track.maxRate, track.total.Seconds()
 	}
 	vol := 20
 	if q := r.URL.Query().Get("volume"); q != "" {
@@ -332,15 +510,15 @@ func (s *Server) handleBotMusicPlay(w http.ResponseWriter, r *http.Request) {
 	if len([]rune(title)) > 100 {
 		title = string([]rune(title)[:100])
 	}
-	mp := &musicPlayer{Room: room, Bot: b.Name, Title: title, Volume: vol, Loop: r.URL.Query().Get("loop") == "1",
-		Started: time.Now().UTC(), Length: track.total.Seconds(), stop: make(chan struct{})}
+	mp := &musicPlayer{Room: room, Bot: b.Name, Title: title, Volume: vol, Loop: r.URL.Query().Get("loop") == "1" && !stream,
+		Started: time.Now().UTC(), Length: length, Stream: stream, stop: make(chan struct{}), done: make(chan struct{})}
 	s.music.mu.Lock()
 	if old := s.music.byRm[room]; old != nil { // ein Musikstück je Kanal
 		old.Stop()
 	}
 	s.music.byRm[room] = mp
 	s.music.mu.Unlock()
-	if err := s.playMusic(b, room, *cfg, track, mp); err != nil {
+	if err := s.playMusic(b, room, *cfg, src, bitrate, mp); err != nil {
 		s.music.mu.Lock()
 		delete(s.music.byRm, room)
 		s.music.mu.Unlock()
@@ -348,8 +526,44 @@ func (s *Server) handleBotMusicPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hub.AuditLog().Add(botAudit(b, AuditEntry{Action: "voice.music", Room: room, Detail: title}))
-	log.Printf("Musik von %s in #%s (%.0f s, Lautstärke %d %%)", b.Name, room, track.total.Seconds(), vol)
-	writeJSON(w, http.StatusAccepted, mp)
+	if !stream {
+		log.Printf("Musik von %s in #%s (%.0f s, Lautstärke %d %%)", b.Name, room, length, vol)
+		writeJSON(w, http.StatusAccepted, mp)
+		return
+	}
+	select { // Streaming: bis zum Ende warten
+	case <-mp.done:
+	case <-r.Context().Done():
+		mp.Stop()
+		<-mp.done
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ended": true, "reason": mp.reason})
+}
+
+// POST /api/bot/voice/{room}/volume?volume=30 – Lautstärke des laufenden Stücks ändern
+// (Voreinstellung für alle; wer sie selbst verstellt hat, behält seine).
+func (s *Server) handleBotMusicVolume(w http.ResponseWriter, r *http.Request) {
+	b, room, _, ok := s.botMusicRoom(w, r)
+	if !ok {
+		return
+	}
+	vol, err := strconv.Atoi(r.URL.Query().Get("volume"))
+	if err != nil || vol < 1 || vol > 100 {
+		writeErr(w, http.StatusBadRequest, "volume: 1 bis 100")
+		return
+	}
+	s.music.mu.Lock()
+	mp := s.music.byRm[room]
+	if mp != nil {
+		mp.Volume = vol
+	}
+	s.music.mu.Unlock()
+	if mp == nil {
+		writeErr(w, http.StatusNotFound, "Gerade läuft keine Musik")
+		return
+	}
+	s.voice.control(room, "bot:"+b.ID, "musicvol", false, strconv.Itoa(vol))
+	writeJSON(w, http.StatusOK, map[string]any{"volume": vol})
 }
 
 // POST /api/bot/voice/{room}/stop

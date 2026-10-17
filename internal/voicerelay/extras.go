@@ -85,6 +85,48 @@ func (r *Relay) small(p *peer, m ctlMsg) {
 		}
 		b, _ := json.Marshal(map[string]any{"t": "e2k", "from": p.idx, "ep": m.Ep, "x": m.X})
 		r.enqueueLocked(q, textMsg(b))
+	case "limit": // Sparmodus als Zuschauer
+		if m.Drop != nil && *m.Drop >= 0 && *m.Drop <= 2 {
+			p.drop = uint8(*m.Drop)
+		}
+		if m.Pause == nil || *m.Pause == p.paused {
+			return
+		}
+		p.paused = *m.Pause
+		if p.paused { // beim Fortsetzen zuerst ein Schlüsselbild abwarten
+			for i := range p.watching {
+				p.needKey[i] = true
+			}
+			for _, q := range ch.peers {
+				if q != p && q.cam != "" {
+					*p.camKeys(q.idx) = [2]bool{true, true}
+				}
+			}
+		} else { // sofort ein Schlüsselbild anfordern – auch wenn gerade erst eins angefordert wurde
+			// (das kam womöglich während der Pause an); höchstens einmal je Sekunde und Zuschauer
+			force := now.Sub(p.resumedAt) >= keyReqGap
+			p.resumedAt = now
+			for i := range p.watching {
+				if s := ch.peers[i]; s != nil && s.codec != "" {
+					if force {
+						s.lastKeyRq = time.Time{}
+					}
+					r.keyReqLocked(s)
+				}
+			}
+			for _, q := range ch.peers {
+				if q != p && q.cam != "" {
+					if force {
+						q.camKeyRq = [2]time.Time{}
+					}
+					r.camKeyReqLocked(q, 0)
+					if q.highSent && ch.seesHigh(p, q) {
+						r.camKeyReqLocked(q, 1)
+					}
+				}
+			}
+		}
+		r.updateHighLocked(ch) // niemand schaut hin: großes Bild nicht mehr senden
 	case "pins":
 		next := map[uint16]bool{}
 		for _, id := range m.IDs {
@@ -115,11 +157,9 @@ func (ch *channel) wantsHigh(q *peer) bool {
 	if q.cam == "" {
 		return false
 	}
-	if ch.isFeatured(q.idx) {
-		return true
-	}
+	feat := ch.isFeatured(q.idx)
 	for _, v := range ch.peers {
-		if v != q && v.pins[q.idx] {
+		if v != q && !v.paused && (feat || v.pins[q.idx]) {
 			return true
 		}
 	}

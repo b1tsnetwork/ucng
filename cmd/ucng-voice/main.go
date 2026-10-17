@@ -250,7 +250,7 @@ func (a *agent) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 	var ok bool
 	switch in.Action {
-	case "speak", "mute", "hand", "kick", "close", "screen", "video", "mod", "move", "mediakick", "remedia", "forcemute", "askunmute", "camsoff", "rec", "cap":
+	case "speak", "mute", "hand", "kick", "close", "screen", "video", "mod", "move", "mediakick", "remedia", "forcemute", "askunmute", "camsoff", "rec", "cap", "musicvol":
 		ok = a.relay.Control(in.Channel, in.User, in.Action, in.Value, in.Reason)
 	default:
 		http.Error(w, "unbekannte Aktion", http.StatusBadRequest)

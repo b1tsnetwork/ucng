@@ -466,8 +466,17 @@
     n.className = "conf-name";
     // Zustand aus der Sprachverbindung (Hand, stumm) – dort steht er, nicht in der Medienverbindung
     const V = window.UCNGVoice, S = V && V.session(), ap = S && S.peers ? [...S.peers.values()].find((x) => x.u === p.u) : null;
-    n.textContent = (ap && ap.h ? "✋ " : "") + p.n + ((ap ? ap.m || ap.sm : p.m || p.sm) ? " 🔇" : "");
+    n.textContent = p.n + ((ap ? ap.m || ap.sm : p.m || p.sm) ? " 🔇" : "");
     d.append(n);
+    if (ap && ap.h) { // gemeldet: große, pulsierende Hand mit der Nummer in der Reihenfolge
+      d.classList.add("hand-up");
+      const hb = document.createElement("span");
+      hb.className = "conf-hand";
+      const no = V.handNo ? V.handNo(p.u) : 0;
+      hb.textContent = "✋" + (no ? " " + no : "");
+      hb.title = t("voice.hand_raised_n", { n: no || 1 });
+      d.append(hb);
+    }
     const pin = document.createElement("button");
     pin.type = "button";
     pin.className = "conf-pin";

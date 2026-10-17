@@ -1087,7 +1087,32 @@ code { font-size: .9em; }
 .voice-flags { display: inline-flex; align-items: center; gap: 3px; color: var(--ink-muted); }
 .voice-flag svg { width: 14px; height: 14px; }
 .voice-flag.srv, .voice-flag.local { color: var(--danger); }
-.voice-flag.hand { color: #f0b429; }
+.voice-flag.hand { color: #f0b429; display: inline-flex; align-items: center; gap: 1px; }
+.voice-hand-no { font-size: 10.5px; font-weight: 700; line-height: 1; min-width: 13px; padding: 1px 3px; border-radius: 7px; background: #f0b429; color: #1b1300; text-align: center; }
+/* Gemeldet: gelb hinterlegt und pulsierend – auch ohne Animation (reduzierte Bewegung) deutlich */
+.voice-peer.hand-up > .voice-peer-btn { background: color-mix(in srgb, #f0b429 20%, transparent); box-shadow: inset 3px 0 0 #f0b429; animation: hand-pulse 1.6s ease-in-out infinite; }
+.voice-peer.hand-up .voice-name { color: var(--ink-strong); font-weight: 600; }
+.voice-hands {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 9px; font-size: 11.5px; font-weight: 700; line-height: 18px;
+  background: #f0b429; color: #1b1300; vertical-align: 1px; animation: hand-blink 1.2s ease-in-out infinite;
+}
+@keyframes hand-pulse { 50% { background: color-mix(in srgb, #f0b429 38%, transparent); } }
+@keyframes hand-blink { 50% { opacity: .45; transform: scale(.92); } }
+.voice-hands-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px 2px; }
+.voice-hands-bar .voice-hands { margin-left: 0; }
+.voice-hand-chip {
+  border: 1px solid #f0b429; border-radius: 12px; padding: 1px 8px; font: inherit; font-size: 12px; cursor: pointer;
+  background: color-mix(in srgb, #f0b429 16%, transparent); color: var(--ink-strong); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.voice-hand-chip:hover { background: color-mix(in srgb, #f0b429 32%, transparent); }
+.conf-tile.hand-up { box-shadow: 0 0 0 3px #f0b429; }
+.conf-hand {
+  position: absolute; top: 8px; left: 8px; padding: 2px 9px; border-radius: 14px; font-size: 22px; font-weight: 700; line-height: 1.3;
+  background: #f0b429; color: #1b1300; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); pointer-events: none; animation: hand-wave 1.8s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+.conf-strip .conf-tile .conf-hand { font-size: 15px; top: 4px; left: 4px; padding: 1px 6px; }
+@keyframes hand-wave { 0%, 60%, 100% { transform: rotate(0); } 15% { transform: rotate(-12deg); } 30% { transform: rotate(10deg); } 45% { transform: rotate(-6deg); } }
 .voice-flag.stage { color: var(--online); }
 .voice-vol { font-size: 10.5px; font-variant-numeric: tabular-nums; }
 

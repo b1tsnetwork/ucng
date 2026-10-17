@@ -193,3 +193,71 @@ func TestSilentViewerStays(t *testing.T) {
 		t.Fatalf("keine Bilder beim stillen Zuschauer: %v", got)
 	}
 }
+
+// Sparmodus: pausierte Zuschauer bekommen kein Video und danach zuerst ein Schlüsselbild;
+// mit drop fallen obere Zeitebenen weg (halbe bzw. Viertel-Bildrate).
+func TestViewerLimit(t *testing.T) {
+	e := newEnv(t, Config{MaxMbit: 500})
+	scr := Ticket{Channel: "talk", Kind: KindScreen, Screen: true, ScreenKbps: 20000, MaxScreens: 1}
+	a, _ := e.join(withUser(scr, "a"))
+	b, _ := e.join(withUser(scr, "b"))
+	a.c.WriteText([]byte(`{"t":"share","on":true,"codec":"vp8"}`))
+	a.waitText("share")
+	b.c.WriteText([]byte(`{"t":"watch","i":` + itoa(a.you) + `,"on":true}`))
+	b.waitText("watch")
+	// L1T3-Muster: 0 2 1 2 0 2 1 2 …
+	pattern := []uint8{0, 2, 1, 2}
+	seq := uint16(0)
+	burst := func(n int) {
+		for i := 0; i < n; i++ {
+			seq++
+			tid := pattern[int(seq-1)%4]
+			a.sendVideoTid(tid == 0 && seq == 1 || tid == 0 && int(seq-1)%8 == 0, tid, seq, 200)
+			time.Sleep(3 * time.Millisecond)
+		}
+	}
+	burst(8)
+	if got, _ := b.videos(300 * time.Millisecond); got[a.you] != 8 {
+		t.Fatalf("ohne Sparmodus: %v", got)
+	}
+	b.c.WriteText([]byte(`{"t":"limit","drop":1}`)) // halbe Bildrate
+	time.Sleep(50 * time.Millisecond)
+	burst(8)
+	if got, _ := b.videos(300 * time.Millisecond); got[a.you] != 4 {
+		t.Fatalf("halbe Bildrate: %v", got)
+	}
+	b.c.WriteText([]byte(`{"t":"limit","drop":2}`)) // ein Viertel
+	time.Sleep(50 * time.Millisecond)
+	burst(8)
+	if got, _ := b.videos(300 * time.Millisecond); got[a.you] != 2 {
+		t.Fatalf("Viertel: %v", got)
+	}
+	b.c.WriteText([]byte(`{"t":"limit","pause":true,"drop":0}`))
+	time.Sleep(50 * time.Millisecond)
+	burst(8)
+	if got, _ := b.videos(300 * time.Millisecond); got[a.you] != 0 {
+		t.Fatalf("pausiert: %v", got)
+	}
+	for len(a.text) > 0 { // alte Anfragen verwerfen
+		<-a.text
+	}
+	b.c.WriteText([]byte(`{"t":"limit","pause":false}`))
+	a.waitText("keyreq") // Fortsetzen fordert sofort ein Schlüsselbild an
+	waitFor(t, func() bool {
+		e.r.mu.Lock()
+		defer e.r.mu.Unlock()
+		for _, p := range e.r.channels[MediaKey("talk", KindScreen)].peers {
+			if p.user == "b" {
+				return !p.paused
+			}
+		}
+		return false
+	})
+	seq = 1 // nächstes Bild ist kein Schlüsselbild …
+	a.sendVideoTid(false, 2, 100, 200)
+	a.sendVideoTid(true, 0, 101, 200) // … erst ab hier geht es weiter
+	a.sendVideoTid(false, 2, 102, 200)
+	if got, key := b.videos(300 * time.Millisecond); got[a.you] != 2 || !key {
+		t.Fatalf("nach der Pause: %v Schlüsselbild zuerst=%v", got, key)
+	}
+}

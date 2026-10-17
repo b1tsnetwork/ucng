@@ -16,7 +16,7 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Dockerfile und Dockerfile.beacon (golang- und alpine-Images).
+  # Dockerfile, Dockerfile.beacon, Dockerfile.voice und Dockerfile.music (golang-, alpine- und debian-Images).
   - package-ecosystem: docker
     directory: /
     schedule:

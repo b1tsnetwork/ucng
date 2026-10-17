@@ -1,0 +1,50 @@
+# Musik-Bot (examples/bot-music):  docker build -f Dockerfile.music -t ucng-bot-music .
+#
+# Der Bot selbst ist reines Go (Standardbibliothek). Mit im Image:
+#   ffmpeg  – wandelt MP3/FLAC/M4A/… in Opus um
+#   yt-dlp  – YouTube-Videos und -Playlists (aktuelle Fassung; YTDLP_UPDATE=1 holt beim Start die neueste)
+#   deno    – JavaScript-Laufzeit, die yt-dlp für YouTube braucht
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+ARG VERSION=dev
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+      go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /bot-music ./examples/bot-music
+
+FROM debian:bookworm-slim
+ARG TARGETARCH
+# "latest" oder eine feste Fassung, z. B. YTDLP_VERSION=2026.09.30 bzw. DENO_VERSION=v2.5.4
+ARG YTDLP_VERSION=latest
+ARG DENO_VERSION=latest
+# yt-dlp wird über python3 aufgerufen – so läuft die beim Start aktualisierte Fassung auch auf
+# einem noexec-tmpfs (YTDLP_BIN zeigt dann dorthin).
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ffmpeg python3 ca-certificates curl unzip tini; \
+    rm -rf /var/lib/apt/lists/*; \
+    case "$TARGETARCH" in amd64) da=x86_64 ;; arm64) da=aarch64 ;; *) echo "Architektur $TARGETARCH nicht unterstützt"; exit 1 ;; esac; \
+    if [ "$DENO_VERSION" = latest ]; then du=https://github.com/denoland/deno/releases/latest/download; \
+    else du=https://github.com/denoland/deno/releases/download/$DENO_VERSION; fi; \
+    curl -fsSL -o /tmp/deno.zip "$du/deno-$da-unknown-linux-gnu.zip"; \
+    unzip -q /tmp/deno.zip -d /usr/local/bin; rm /tmp/deno.zip; chmod 755 /usr/local/bin/deno; \
+    if [ "$YTDLP_VERSION" = latest ]; then yu=https://github.com/yt-dlp/yt-dlp/releases/latest/download; \
+    else yu=https://github.com/yt-dlp/yt-dlp/releases/download/$YTDLP_VERSION; fi; \
+    mkdir -p /opt/yt-dlp; \
+    curl -fsSL -o /opt/yt-dlp/yt-dlp "$yu/yt-dlp"; chmod 644 /opt/yt-dlp/yt-dlp; \
+    printf '#!/bin/sh\nexec python3 "${YTDLP_BIN:-/opt/yt-dlp/yt-dlp}" "$@"\n' > /usr/local/bin/yt-dlp; \
+    chmod 755 /usr/local/bin/yt-dlp; \
+    groupadd -r -g 10001 music; useradd -r -u 10001 -g music -M -d /tmp -s /usr/sbin/nologin music; mkdir -p /music; \
+    deno --version; yt-dlp --version; ffmpeg -hide_banner -encoders | grep -q libopus
+COPY --from=build /bot-music /usr/local/bin/bot-music
+COPY --from=build /src/LICENSE /usr/share/licenses/ucng-bot-music/
+COPY examples/bot-music/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh
+USER 10001:10001
+WORKDIR /tmp
+# Caches (yt-dlp, deno) im beschreibbaren /tmp – das Image läuft auch mit read_only
+ENV UCNG_URL=http://ucng:8080 MUSIC_DIR=/music TMP_DIR=/tmp YTDLP_UPDATE=1 \
+    HOME=/tmp XDG_CACHE_HOME=/tmp/.cache DENO_DIR=/tmp/.cache/deno
+VOLUME /music
+ENTRYPOINT ["tini", "--", "entrypoint.sh"]
