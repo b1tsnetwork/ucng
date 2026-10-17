@@ -66,37 +66,65 @@ MODE=hosted STORAGE=sqlite PUBLIC_URL=https://chat.example.org ADMIN_PASSWORD='�
 
 ## Konfiguration
 
-Jede Option geht als Flag oder als Umgebungsvariable:
+Jede Option geht als Flag oder als Umgebungsvariable. Mit Docker stehen alle in den Vorlagen `deploy/*/.env.example` – kommentiert und mit Standardwerten:
 
-| Flag           | Umgebungsvariable | Standard | Bedeutung |
-|----------------|-------------------|----------|-----------|
-| `-addr`        | `ADDR`            | `:8080`  | Listen-Adresse |
-| `-admin-password` | `ADMIN_PASSWORD` | zufällig | Passwort für `/admin` (mind. 10 Zeichen empfohlen) |
-| `-origins`     | `ALLOWED_ORIGINS` | leer     | Zusätzlich erlaubte Webseiten für das Widget, kommagetrennt (`https://shop.de,https://blog.de`); `*` = alle. Leer = es gilt die Einstellung unter **Widgets** im Admin-Bereich |
-| `-data`        | `DATA_DIR`        | `data`   | Ordner für alle Daten; `none` = nichts speichern (nur zum Testen) |
-| `-max-rooms`   | `MAX_ROOMS`       | `0`      | Maximale Anzahl Kanäle; `0` = unbegrenzt |
-| `-rate`        | `RATE_LIMIT`      | `10`     | Nachrichten pro 10 Sekunden und IP |
-| `-trust-proxy` | `TRUST_PROXY=1`   | aus      | Client-IP aus `X-Forwarded-For`/`X-Real-IP` lesen – nur bei Verbindungen von vertrauenswürdigen Proxys, von rechts gelesen (siehe [Reverse-Proxy](#reverse-proxy-und-client-ip)) |
+| Programm | Vorlage | Beschreibung |
+|---|---|---|
+| Chat-Server `ucng` | [`deploy/chat/.env.example`](deploy/chat/.env.example) | Tabelle unten |
+| Sprach-Server `ucng-voice` | [`deploy/voice/.env.example`](deploy/voice/.env.example) | [Mehr Sprach-Server](#mehr-sprach-server-agenten), [docs/voice-deployment.md](docs/voice-deployment.md) |
+| Beacon `ucng-beacon` | [`deploy/beacon/.env.example`](deploy/beacon/.env.example) | [Beacon](#beacon-instanz-verzeichnis-und-gif-hub) |
+| Spracherkennung (speaches) | [`deploy/stt/.env.example`](deploy/stt/.env.example) | [Untertitel und Live-Transkription](#untertitel-und-live-transkription) |
+| Musik-Bot | [`deploy/music/.env.example`](deploy/music/.env.example) | [examples/bot-music](examples/bot-music/README.md) |
+
+**Chat-Server:**
+
+| Flag | Umgebungsvariable | Standard | Bedeutung |
+|------|-------------------|----------|-----------|
+| *Grundlegendes* | | | |
+| `-addr` | `ADDR` | `:8080` | Listen-Adresse |
+| `-admin-password` | `ADMIN_PASSWORD` | zufällig (steht im Log) | Passwort für `/admin` (mind. 10 Zeichen empfohlen) |
+| `-public-url` | `PUBLIC_URL` | leer | Öffentliche Adresse, z. B. `https://chat.example.org` – für Links in E-Mails, Föderation, Beacon und als erlaubte Herkunft für die Sprach-Server (dort Pflicht) |
+| `-mode` | `MODE` | `simple` | `simple` (Namen ohne Konto) oder `hosted` (Nutzerkonten, 2FA, E2E, Föderation) |
+| – | `TZ` | System | Zeitzone des Prozesses (Log). Die Zeitzone des Chats (Backups, Öffnungszeiten, Ankündigungen) stellst du im Admin-Bereich ein |
+| *Speicher und Backups* | | | |
+| `-data` | `DATA_DIR` | `data` | Ordner für alle Daten; `none` = nichts speichern (nur zum Testen). Ältere Konfigurationen mit `DATA_FILE` werden noch erkannt (dann der Ordner dieser Datei) |
+| `-storage` | `STORAGE` | `files` | `files`, `sqlite` oder `mysql` (die beiden letzten nur mit Build-Tag – im offiziellen Image enthalten), siehe [Datenbank](#datenbank-sqlite-oder-mysql) |
+| `-db` | `DB_DSN` | `<data>/ucng.db` (eine vorhandene `gochat.db` wird weiter genutzt) | Datenbank: bei SQLite ein Dateipfad, bei MySQL z. B. `ucng:passwort@tcp(db:3306)/ucng` |
+| `-backup-dir` | `BACKUP_DIR` | `<data>-backups` (Docker: `/data/backups`) | Ordner für die täglichen Backups |
+| `-backup-keep` | `BACKUP_KEEP` | `7` | Anzahl aufbewahrter Backups; `0` = keine automatischen Backups |
+| *Netz und Widget* | | | |
+| `-origins` | `ALLOWED_ORIGINS` | leer | Zusätzlich erlaubte Webseiten für das Widget, kommagetrennt (`https://shop.de,https://blog.de`); `*` = alle. Leer = es gilt die Einstellung unter **Widgets** im Admin-Bereich |
+| `-trust-proxy` | `TRUST_PROXY=1` | aus (Docker-Vorlage: an) | Client-IP aus `X-Forwarded-For`/`X-Real-IP` lesen – nur bei Verbindungen von vertrauenswürdigen Proxys, von rechts gelesen (siehe [Reverse-Proxy](#reverse-proxy-und-client-ip)) |
 | `-trusted-proxies` | `TRUSTED_PROXIES` | Loopback und private Netze | Vertrauenswürdige Proxys: IP-Adressen oder Netze, kommagetrennt (`127.0.0.1,10.0.0.0/8`) – bei einem CDN dessen Adressbereiche ergänzen |
-| `-max-streams` | `MAX_STREAMS`     | `10000`  | Gleichzeitige Live-Verbindungen insgesamt (darüber: `429`, der Browser versucht es später erneut) |
+| *Grenzen und Spam-Bremsen* | | | |
+| `-rate` | `RATE_LIMIT` | `10` | Nachrichten pro 10 Sekunden und IP |
+| `-bot-rate` | `BOT_RATE` | `30` | Nachrichten pro 10 Sekunden und Bot |
+| `-claim-rate` | `CLAIM_RATE` | `5` | Namensreservierungen pro Minute und IP |
+| `-max-users` | `MAX_USERS` | `10000` | Maximale Anzahl reservierter Namen |
+| `-name-ttl` | `NAME_TTL_DAYS` | `30` | Tage ohne Aktivität, nach denen ein Name wieder frei wird (`0` = nie) |
+| `-max-rooms` | `MAX_ROOMS` | `0` | Maximale Anzahl Kanäle; `0` = unbegrenzt |
+| `-max-streams` | `MAX_STREAMS` | `10000` | Gleichzeitige Live-Verbindungen insgesamt (darüber: `429`, der Browser versucht es später erneut) |
 | `-max-streams-ip` | `MAX_STREAMS_PER_IP` | `50` | Gleichzeitige Live-Verbindungen je IP-Adresse (jeder offene Tab ist eine; hinter NAT mehrere Personen) |
-| `-name-ttl`    | `NAME_TTL_DAYS`   | `30`     | Tage ohne Aktivität, nach denen ein Name wieder frei wird (`0` = nie) |
-| `-max-users`   | `MAX_USERS`       | `10000`  | Maximale Anzahl reservierter Namen |
-| `-claim-rate`  | `CLAIM_RATE`      | `5`      | Namensreservierungen pro Minute und IP |
-| `-bot-rate`    | `BOT_RATE`        | `30`     | Nachrichten pro 10 Sekunden und Bot |
-| `-backup-dir`  | `BACKUP_DIR`      | `<data>-backups` | Ordner für die täglichen Backups |
-| `-backup-keep` | `BACKUP_KEEP`     | `7`      | Anzahl aufbewahrter Backups; `0` = keine automatischen Backups |
-| `-mode`        | `MODE`            | `simple` | `simple` (Namen ohne Konto) oder `hosted` (Nutzerkonten, 2FA, E2E, Föderation) |
-| `-storage`     | `STORAGE`         | `files`  | `files`, `sqlite` oder `mysql` (die beiden letzten nur mit Build-Tag, siehe unten) |
-| `-db`          | `DB_DSN`          | `<data>/ucng.db` (eine vorhandene `gochat.db` wird weiter genutzt) | Datenbank: bei SQLite ein Dateipfad, bei MySQL z. B. `ucng:passwort@tcp(db:3306)/ucng` |
-| `-public-url`  | `PUBLIC_URL`      | leer     | Öffentliche Adresse, z. B. `https://chat.example.org` – für Links in E-Mails und die Föderation |
-| `-source-url`  | `SOURCE_URL`      | bei Releases das GitHub-Repository | Adresse des Quellcodes dieser Fassung – Pflicht nach der AGPL, wenn du eine **geänderte** Fassung öffentlich betreibst; erscheint im Chat, in der Verwaltung, in `/.well-known/ucng` und im Beacon |
-| `-fed-insecure`| `FED_INSECURE=1`  | aus      | Föderation auch über `http://` und zu Adressen im lokalen Netz (nur zum Testen!) |
-| `-voice-off`   | `VOICE=0`         | an       | Sprachkanäle ganz ausschalten |
-| `-voice-no-builtin` | `VOICE_BUILTIN=0` | an | Keinen eingebauten Sprach-Relay starten – Sprache läuft dann nur über Agenten (`ucng-voice`) |
+| *Quellcode* | | | |
+| `-source-url` | `SOURCE_URL` | bei Releases das GitHub-Repository | Adresse des Quellcodes dieser Fassung – Pflicht nach der AGPL, wenn du eine **geänderte** Fassung öffentlich betreibst; erscheint im Chat, in der Verwaltung, in `/.well-known/ucng` und im Beacon |
+| *Sprachkanäle* | | | |
+| `-voice-off` | `VOICE=0` | an | Sprachkanäle ganz ausschalten |
+| `-voice-no-builtin` | `VOICE_BUILTIN=0` | an | Keinen eingebauten Sprach-Relay starten – Sprache läuft dann nur über Sprach-Server (`ucng-voice`) |
 | `-voice-max-participants` | `VOICE_MAX_PARTICIPANTS` | `200` | Eingebauter Relay: Teilnehmer insgesamt |
 | `-voice-max-mbit` | `VOICE_MAX_MBIT` | `50` | Eingebauter Relay: höchstens so viel ausgehende Bandbreite (Mbit/s, aus den Kanal-Einstellungen geschätzt) |
-| `-voice-agent-token` | `VOICE_AGENT_TOKEN` | leer | Schlüssel, mit dem sich weitere Sprach-Server anmelden; leer = keine Agenten |
+| `-voice-max-per-ip` | `VOICE_MAX_PER_IP` | `40` | Eingebauter Relay: Verbindungen je IP-Adresse (je Person bis zu drei: Sprache, Bildschirm, Kameras – an Firmen-NAT denken) |
+| `-voice-agent-token` | `VOICE_AGENT_TOKEN` | leer | Schlüssel, mit dem sich weitere Sprach-Server anmelden; leer = keine |
+| `-voice-offload-screen` | `VOICE_OFFLOAD_SCREEN` | `50` | Bildschirmfreigaben auf einen anderen Sprach-Server auslagern, wenn der Server der Sprache sonst über diese Auslastung (Prozent der Bandbreite) käme; `0` = immer, `100` = nie ([Lastverteilung](#lastverteilung-in-einem-kanal)) |
+| `-voice-offload-video` | `VOICE_OFFLOAD_VIDEO` | `75` | ebenso für die Kameras |
+| *Untertitel und Live-Transkription* | | | |
+| `-stt-url` | `STT_URL` | leer | Eigene Spracherkennung (OpenAI-kompatibel, z. B. `http://ucng-stt:8000/v1/audio/transcriptions`); leer = der Chat-Server verschriftlicht nicht (Sprach-Server können eine eigene haben) |
+| `-stt-model` | `STT_MODEL` | `whisper-1` | Modell-Name, genau wie in der Spracherkennung installiert, z. B. `Systran/faster-whisper-small` |
+| `-stt-token` | `STT_TOKEN` | leer | Bearer-Schlüssel, falls die Spracherkennung einen will |
+| `-stt-language` | `STT_LANGUAGE` | leer | Sprache fest vorgeben (`de`); leer = Sprache der Oberfläche der sprechenden Person bzw. der Live-Transkription |
+| `-stt-concurrency` | `STT_CONCURRENCY` | `4` | Gleichzeitige Anfragen an die Spracherkennung – für alle Kanäle zusammen |
+| `-transcript-keep-days` | `TRANSCRIPT_KEEP_DAYS` | `0` | Live-Transkripte nach so vielen Tagen löschen; `0` = behalten, bis der Admin sie löscht |
+| *Nur zum Testen* | | | |
+| `-fed-insecure` | `FED_INSECURE=1` | aus | Föderation auch über `http://` und zu Adressen im lokalen Netz – niemals im Betrieb |
 
 Beispiel für den Produktivbetrieb:
 
@@ -540,7 +568,7 @@ Jeder Kanal kann zusätzlich ein **Sprachkanal** sein (Admin → Kanäle → Kan
 
 - **Beitreten:** Knopf *Beitreten* oben im Kanal oder das Kopfhörer-Symbol in der Kanalliste. Die Teilnehmer stehen unter dem Kanal in der Seitenleiste (grüner Ring = spricht gerade) – auch für alle, die nicht beigetreten sind.
 - **Selbst abmischen:** Ein Klick auf einen Namen öffnet einen Regler von 0 bis 200 % und *Für mich stummschalten*. Die Einstellung gilt nur im eigenen Browser und bleibt gespeichert; blockierte Personen sind automatisch stumm. Doppelklick auf den Regler setzt ihn auf 100 % zurück.
-- **Unten in der Seitenleiste:** Mikrofon aus/an und *Nichts hören* in der Nutzerleiste; in der Sprachleiste darüber Hand heben, Reaktion, Kamera, Bildschirm teilen, *Mehr* (Ansicht, Untertitel, Statistik, Nur Audio, Werkzeuge der Leitung, Spracheinstellungen: Mikrofon, Ausgabegerät, Sprachaktivierung mit Empfindlichkeit oder Push-to-Talk mit frei wählbarer Taste, Rauschunterdrückung) und Verlassen.
+- **Unten in der Seitenleiste:** Mikrofon aus/an und *Nichts hören* in der Nutzerleiste; in der Sprachleiste darüber Hand heben, Reaktion, Kamera, Bildschirm teilen, *Mehr* (Ansicht, Untertitel, Transkript, Statistik, Nur Audio, Bildrate empfangen, Werkzeuge der Leitung, Spracheinstellungen: Mikrofon, Ausgabegerät, Sprachaktivierung mit Empfindlichkeit oder Push-to-Talk mit frei wählbarer Taste, Rauschunterdrückung) und Verlassen.
 - **Moderation:** Wer moderiert, kann Teilnehmer im Sprachkanal stummschalten, entfernen (Wiedereintritt nach einer Minute) und auf der Bühne das Rederecht geben oder entziehen. Wer das ist, stellt man je Kanal unter *Moderieren im Sprachkanal* ein – unabhängig von den Lese- und Schreibrechten: *Team und Rollen mit „Stummschalten“* (Standard), *Nur das Team* oder *Nur gewählte Rollen* (dann moderiert auch das Team nur mit einer dieser Rollen). Besitzer temporärer Kanäle und Co-Hosts moderieren immer. Jede Aktion steht im Protokoll. Eine Sperre im Chat wirkt sofort: *Ausschließen* beendet die Sprachverbindung, *Stummschalten* schaltet auch die Sprache stumm. Geänderte Rollen oder Kanalrechte werden sofort übernommen.
 
 Einstellungen je Kanal:
@@ -613,6 +641,7 @@ Wer moderiert – je nach Einstellung *Moderieren im Sprachkanal* das Team und/o
 | Alle Kameras ausschalten | ebenso; die Kamera lässt sich wieder einschalten |
 | Breakout-Räume … | siehe unten |
 | Aufnahme starten | siehe unten |
+| Live-Transkription starten | siehe [Untertitel und Live-Transkription](#untertitel-und-live-transkription) |
 | Konferenz für alle beenden | alle verlassen den Sprachkanal |
 
 Im Menü einer Person außerdem: *Bitten, das Mikrofon einzuschalten* (die Person sieht eine Bitte mit „Einschalten“ / „Nicht jetzt“ – eingeschaltet wird nie ohne sie) und *Zum Co-Host machen* (nur Gastgeber, also nicht Co-Hosts selbst; gilt, bis der Kanal leer ist).
@@ -737,14 +766,28 @@ CHAT_URL=http://chat-intern:8080 AGENT_TOKEN='langer-zufälliger-schlüssel' \
 | `AGENT_TOKEN` | – | derselbe Wert wie `VOICE_AGENT_TOKEN` beim Chat-Server |
 | `PUBLIC_URL` | – | Adresse für Browser: `wss://voice1.example.org` (der Agent hängt `/ws` an) |
 | `CONTROL_URL` | `http://<hostname><ADDR>/control` | Adresse, unter der der Chat-Server den Agenten erreicht (Steuerbefehle: stummschalten, entfernen) |
-| `AGENT_ID` | Rechnername | Name in der Übersicht |
+| `AGENT_ID` | Rechnername | Name in Admin → *Sprach-Server* (je Server ein eigener) |
 | `ADDR` | `:8090` | Listen-Adresse |
 | `MAX_PARTICIPANTS` / `MAX_MBIT` | `200` / `50` | Grenzen dieses Agenten |
 | `MAX_PER_IP` | `40` | Verbindungen je IP-Adresse (je Person bis zu drei: Sprache, Bildschirm, Kameras – viele Personen hinter einem Firmen-NAT teilen sich eine IP) |
-| `ROLE` | leer | `media` = nur Bildschirm und Kameras (bekommt keine Sprachkanäle, nimmt ausgelagerte Medien zuerst) |
+| `ROLE` | leer | Aufgabe des Sprach-Servers: leer = Sprache und Medien, `media` = nur ausgelagerte Bildschirme und Kameras – siehe unten |
 | `ALLOWED_ORIGINS` | `PUBLIC_URL` des Chat-Servers | Seiten, von denen Browser verbinden dürfen |
 | `TRUST_PROXY`, `TRUSTED_PROXIES` | aus | wie beim Chat-Server |
 | `STT_URL`, `STT_MODEL`, `STT_TOKEN`, `STT_LANGUAGE`, `STT_CONCURRENCY` | leer | **eigene Spracherkennung** dieses Sprach-Servers (wie beim Chat-Server). Gesetzt: Er verschriftlicht selbst und schickt nur noch Text an den Chat-Server. Leer: Die Abschnitte gehen an den Chat-Server, der sie verschriftlicht |
+
+**Aufgaben (`ROLE`):**
+
+| `ROLE` | Bekommt | Gedacht für |
+|---|---|---|
+| leer (Standard) | neue Sprachkanäle (die Sprache bleibt dort, bis der Kanal leer ist), deren Bildschirm und Kameras, ausgelagerte Medien anderer Kanäle, den Mitschnitt für Untertitel und Live-Transkription | normale Sprach-Server – einer oder viele |
+| `media` | **nie** die Sprache eines Kanals – nur Bildschirmfreigaben und Kameras, die der Chat-Server auslagert; reine Medien-Server werden dabei zuerst gewählt | Server mit viel Upload-Bandbreite für große Konferenzen und viele Freigaben |
+
+Wann ausgelagert wird, bestimmt der Chat-Server (`VOICE_OFFLOAD_SCREEN`, `VOICE_OFFLOAD_VIDEO`, siehe [Lastverteilung](#lastverteilung-in-einem-kanal)). Ein Medien-Server allein trägt keine Sprachkanäle – es braucht daneben immer den eingebauten Relay oder einen Sprach-Server mit leerem `ROLE`. Mitschnitt und eigene Spracherkennung spielen bei `ROLE=media` keine Rolle (dort läuft keine Sprache). Typische Aufstellungen:
+
+- **Klein:** nur der eingebaute Relay – kein Agent nötig.
+- **Mehr Personen:** eingebauter Relay plus ein oder mehrere Agenten mit leerem `ROLE`; neue Kanäle landen auf dem am wenigsten ausgelasteten.
+- **Große Konferenzen:** Sprache auf dem eingebauten Relay oder normalen Agenten, dazu ein Agent mit `ROLE=media` und großem `MAX_MBIT` für Bildschirme und Kameras.
+- **Mit GPU:** ein Agent mit eigener Spracherkennung (`STT_URL` zu Whisper auf derselben Maschine) – dort wird verschriftlicht, an den Chat geht nur Text.
 
 Wichtig: Beim Chat-Server muss `PUBLIC_URL` gesetzt sein – der Agent lässt nur Browser von dieser Adresse zu. Chat-Server und Agent sprechen am besten über ein internes Netz miteinander (`CHAT_URL`, `CONTROL_URL`); über das Internet nur per HTTPS – beide Richtungen sind mit dem Agenten-Schlüssel geschützt. Ein fertiges Compose-Beispiel (Agent auf demselben Server wie der Chat oder auf einem eigenen) liegt in `deploy/voice/`. Schritt für Schritt: [docs/voice-deployment.md](docs/voice-deployment.md).
 
@@ -760,7 +803,7 @@ Ein Kanal kann von mehreren Sprach-Servern zugleich bedient werden. Die **Sprach
 
 - **Wohin?** Auf den Sprach-Server mit der meisten Luft; Agenten mit `ROLE=media` (reine Medien-Server) zuerst. Gibt es keinen anderen, bleibt alles beim Sprach-Server.
 - **Wann?** Wenn die erste Person im Kanal eine Medienverbindung braucht, und erneut, wenn jemand zu senden beginnt, während in dieser Art gerade niemand sendet. Dann zieht die Art ohne Unterbrechung um – die Browser im Kanal verbinden sich von selbst neu. Laufende Freigaben werden nicht verschoben.
-- **Freiwerdende Kapazität:** Was ausgelagert ist, zählt beim Sprach-Server sofort nicht mehr; er nimmt also wieder mehr Personen auf. Die Übersicht im Admin-Bereich zeigt je Server Teilnehmer, Medienverbindungen und laufende Freigaben.
+- **Freiwerdende Kapazität:** Was ausgelagert ist, zählt beim Sprach-Server sofort nicht mehr; er nimmt also wieder mehr Personen auf. Admin → *Sprach-Server* zeigt je Server Teilnehmer, Medienverbindungen, laufende Freigaben und welche Kanäle (Sprache, Bildschirm, Kameras) er gerade bedient.
 - **Ausfall:** Fällt ein Medien-Server aus, verbinden sich Bildschirm und Kameras nach etwa 15 Sekunden mit einem anderen; die Sprache läuft weiter.
 - Ältere Agenten (ohne Medienverbindungen) bekommen keine ausgelagerten Medien; gibt es nur solche, läuft alles wie früher über die Sprachverbindung.
 
@@ -1303,7 +1346,14 @@ profile.go       Profilbild und Status
 dms.go           Direktnachrichten
 blocks.go        Blockieren und Unterhaltungen löschen (Direktnachrichten)
 limits.go        Grenzen für Live-Verbindungen
-voice.go         Sprachkanäle: Einstellungen, Rechte, Zutrittskarten, Relay-Auswahl, Agenten, Moderation
+voice.go         Sprachkanäle: Einstellungen, Rechte, Zutrittskarten, Relay-Auswahl, Agenten, Moderation, Übersicht der Sprach-Server
+mediaroute.go    Lastverteilung in einem Kanal: Bildschirm und Kameras auf andere Sprach-Server auslagern
+breakout.go      Breakout-Räume: aufteilen, Countdown, zurückholen
+music.go         Musik von Bots: Ogg-Opus als Datei oder Strom in einen Sprachkanal einspielen
+stt.go           Untertitel: Anbindung an internal/stt (eigene Spracherkennung des Chat-Servers)
+transcripts.go   Live-Transkription: starten/beenden, Speicherung, Download, Admin, Abschnitte und Text von Agenten
+roompass.go      Passwortgeschützte Kanäle
+imgcompat.go     leer (Platzhalter aus einer früheren Version)
 temprooms.go     Temporäre Kanäle: Befehl, Ablauf, Bot-API zum Verwalten von Kanälen
 preview.go       Zwischenspeicher und Grenzen für Vorschaubilder der GIF-Suche
 perf_test.go     Last- und Speichermessungen (go test -tags loadtest -run Load -v .)
@@ -1358,10 +1408,14 @@ internal/
   fedsig/        Ed25519-Signaturen für Föderation und Beacon
   i18n/          Sprachdateien, eigene Änderungen, Platzhalter/Mehrzahl, Server-Meldungen, Übersetzungspakete, HTTP-Schnittstelle
   wsock/         WebSocket (RFC 6455) – nur Standardbibliothek
-  voicerelay/    Sprach-Relay: Zutrittskarten, Weiterleitung, Sprecher-Auswahl, Grenzen
+  voicerelay/    Sprach-Relay: Zutrittskarten, Weiterleitung, Sprecher-Auswahl, Grenzen, Medienverbindungen, Mitschnitt (tap.go: Abschnitte als Ogg-Opus)
+  stt/           Spracherkennung (OpenAI-kompatibel): Warteschlange, Arbeiter, Statistik – für Chat-Server und Sprach-Server
 cmd/
   ucng-beacon/   Beacon-Programm: Verzeichnis, GIF-Hub, Verwaltung (Web-Oberfläche eingebettet)
-  ucng-voice/    Sprach-Agent: zusätzlicher Relay für Sprachkanäle
+  ucng-voice/    Sprach-Server (Agent): zusätzlicher Relay für Sprachkanäle, optional mit eigener Spracherkennung
+deploy/          Docker Compose mit .env-Vorlagen: chat, beacon, voice, stt (Spracherkennung), music (Musik-Bot)
+docs/            voice-deployment.md: weitere Sprach-Server Schritt für Schritt
+Dockerfile*      Images: ucng (Dockerfile), ucng-beacon, ucng-voice, ucng-bot-music (Dockerfile.music)
 assets/          Logo, Schriftzug, Social-Preview (für README und GitHub)
 examples/
   bot-stream/    Beispiel-Bot mit Live-Verbindung
@@ -1373,7 +1427,12 @@ web/
   account.js     Konten, 2FA und Ende-zu-Ende-Verschlüsselung im Browser (WebCrypto)
   voice.js       Sprachkanäle im Browser (Opus über WebCodecs, Lautstärke je Person, Bühne)
   voice-worklet.js  Audio-Worklets: Aufnahme in 20-ms-Rahmen, Jitter-Puffer und Mischen
-  voice-screen.js   Bildschirm teilen und ansehen (VP9/VP8 über WebCodecs)
+  voice-screen.js   Bildschirm teilen und ansehen (VP9/VP8/H.264/AV1 über WebCodecs, Ton der Freigabe)
+  voice-video.js    Kameras: Simulcast, Sprecher- und Galerie-Ansicht, Anheften, große Hand
+  voice-media.js    Encoder-Auswahl (Grafikkarte zuerst), zeitliche Ebenen
+  voice-e2ee.js     Ende-zu-Ende-Verschlüsselung in Sprachkanälen (ECDH, AES-GCM, Sicherheitscode)
+  voice-extras.js   Reaktionen, Leitung, Breakout, Aufnahme, Untertitel, Statistik, Bild-in-Bild, Handy
+  voice-transcript.js  Live-Transkription im Kanal: Hinweis, Live-Fenster, frühere Transkripte
   admin.html     Verwaltung
   admin.css/js
   demo.html      Demo-Seite für das Widget
@@ -1393,7 +1452,7 @@ Im Ordner `.github/` liegt alles für GitHub:
 
 | Datei | Zweck |
 |-------|-------|
-| `workflows/ci.yml` | Bei jedem Pull Request: `gofmt`, `go vet`, `go test -race`, JavaScript-Syntax, Builds mit allen Speicher-Varianten (Dateien, SQLite, MySQL, beides) samt Rauchtest beider Programme, dazu Bauen und Rauchtest des Musik-Bot-Images (ffmpeg, yt-dlp, deno) |
+| `workflows/ci.yml` | Bei jedem Pull Request: `gofmt`, `go vet`, `go test -race`, JavaScript-Syntax, Builds mit allen Speicher-Varianten (Dateien, SQLite, MySQL, beides) samt Rauchtest von Chat und Beacon, Build von Sprach-Server und Musik-Bot, dazu Bauen und Rauchtest des Musik-Bot-Images (ffmpeg, yt-dlp, deno) |
 | `workflows/release.yml` | Bei jedem Push auf `main` und jedem Tag `v*`: erst die CI, dann Container-Images für **amd64 und arm64** in die GitHub Container Registry und Programmdateien für Linux, Windows und macOS |
 | `workflows/deps.yml` | „Treiber festschreiben“ (manuell): SQLite-/MySQL-Treiber mit Prüfsummen in `go.mod`/`go.sum` und Pull Request |
 | `workflows/cla.yml` | Fragt bei Pull Requests nach der Zustimmung zum [CLA](CLA.md); Unterschriften landen im Branch `cla-signatures` (legt der Workflow beim ersten Lauf an; darf nicht geschützt sein) |
@@ -1413,9 +1472,19 @@ docker run -p 8090:8090 -v beacon:/data -e ADMIN_PASSWORD=… ghcr.io/<owner>/uc
 
 Dazu `ghcr.io/<owner>/ucng-voice` (zusätzlicher Sprach-Server) und `ghcr.io/<owner>/ucng-bot-music` (Musik-Bot, [examples/bot-music](examples/bot-music/README.md)).
 
-**Docker Compose:** fertige Dateien liegen in `deploy/chat/` und `deploy/beacon/` (dazu `deploy/voice/` für weitere Sprach-Server, `deploy/music/` für den Musik-Bot und `deploy/stt/` für Untertitel). Jeweils `.env.example` nach `.env` kopieren, `PUBLIC_URL` und `ADMIN_PASSWORD` eintragen, `docker compose up -d`. Der Port ist nur lokal (`127.0.0.1`) offen – davor gehört ein Reverse-Proxy mit HTTPS; die Container laufen schreibgeschützt, ohne Capabilities und mit Health-Check. Mit `UCNG_VERSION` bzw. `BEACON_VERSION` lässt sich eine feste Version wählen (Update: Version ändern, `docker compose pull && docker compose up -d` – erst die Chats, dann den Beacon).
+**Docker Compose:** fertige Dateien liegen in `deploy/`:
 
-**Release veröffentlichen:** `git tag v1.0.0 && git push origin v1.0.0`. Der Workflow legt das GitHub-Release an (mit automatisch erzeugten Release-Notes) und hängt Archive für `linux/amd64`, `linux/arm64`, `windows/amd64`, `darwin/arm64` und `darwin/amd64` an – jeweils `ucng` und `ucng-beacon` – plus `SHA256SUMS.txt`. Die Version steht im Log beim Start („UCNG 1.0.0 läuft …“) und wird beim Beacon mitgemeldet.
+| Ordner | Dienst | Pflicht in `.env` |
+|---|---|---|
+| `deploy/chat/` | Chat-Server | `PUBLIC_URL`, `ADMIN_PASSWORD` |
+| `deploy/beacon/` | Beacon | `PUBLIC_URL`, `ADMIN_PASSWORD` |
+| `deploy/voice/` | weiterer Sprach-Server | `AGENT_TOKEN`, `PUBLIC_URL` |
+| `deploy/stt/` | eigene Spracherkennung (speaches/Whisper) | – |
+| `deploy/music/` | Musik-Bot | `UCNG_BOT_TOKEN` |
+
+Jeweils `.env.example` nach `.env` kopieren – dort stehen **alle** Einstellungen des Dienstes mit Erklärung und Standardwert – und `docker compose up -d`. Ports sind nur lokal (`127.0.0.1`) offen bzw. gar nicht (Spracherkennung, Musik-Bot: nur im Docker-Netz) – davor gehört ein Reverse-Proxy mit HTTPS. Chat, Beacon, Sprach-Server und Musik-Bot laufen schreibgeschützt, ohne Root und ohne Capabilities; Chat, Beacon und Sprach-Server mit Health-Check. Mit `UCNG_VERSION` bzw. `BEACON_VERSION` lässt sich eine feste Version wählen (Update: Version ändern, `docker compose pull && docker compose up -d` – erst die Chats, dann den Beacon).
+
+**Release veröffentlichen:** `git tag v1.0.0 && git push origin v1.0.0`. Der Workflow legt das GitHub-Release an (mit automatisch erzeugten Release-Notes) und hängt Archive für `linux/amd64`, `linux/arm64`, `windows/amd64`, `darwin/arm64` und `darwin/amd64` an – jeweils `ucng`, `ucng-beacon` und `ucng-voice` – plus `SHA256SUMS.txt`. Container-Images: `ucng`, `ucng-beacon`, `ucng-voice` und `ucng-bot-music`. Die Version steht im Log beim Start („UCNG 1.0.0 läuft …“) und wird beim Beacon mitgemeldet.
 
 **Einmalig in GitHub einstellen:**
 
@@ -1436,7 +1505,9 @@ Dazu `ghcr.io/<owner>/ucng-voice` (zusätzlicher Sprach-Server) und `ghcr.io/<ow
 - **Einbetten einschränken:** Unter Widgets „Nur auf eingetragenen Domains“ wählen und bei jedem Widget die Domains eintragen.
 - **Eigene Konten statt geteiltem Passwort:** Jede Person im Team bekommt ein eigenes Konto – so steht im Protokoll, wer was getan hat, und ein Konto lässt sich einzeln sperren.
 - **Modus „hosted“:** `PUBLIC_URL` mit `https://` setzen (Links in E-Mails, Föderation, 2FA-Bezeichnung) und `TRUST_PROXY=1` hinter dem Reverse-Proxy. Die Browser-Kryptografie (WebCrypto) funktioniert nur über HTTPS oder auf `localhost`. Der Reverse-Proxy muss `/.well-known/ucng` und `/api/fed/` an UCNG durchreichen, wenn die Föderation an ist.
-- **Daten schützen:** Der Datenordner enthält Nachrichten, Originaltexte gelöschter Nachrichten, Token- und Passwort-Hashes (Rechte `0600`). Die Backups ebenso – lege sie auf einen geschützten Datenträger.
+- **Daten schützen:** Der Datenordner enthält Nachrichten, Originaltexte gelöschter Nachrichten, Live-Transkripte (`transcripts/`), Token- und Passwort-Hashes (Rechte `0600`). Die Backups ebenso – lege sie auf einen geschützten Datenträger. Die `.env`-Dateien enthalten Passwörter und Schlüssel: Rechte `600`, nie ins Repository.
+- **Sprachkanäle:** Der Reverse-Proxy muss WebSockets durchreichen (Chat: `/api/voice/ws`, Sprach-Server: `/ws`) – siehe [Lastverteilung → Reverse-Proxy](#lastverteilung-in-einem-kanal). Den Musik-Bot direkt im Docker-Netz anbinden oder `proxy_request_buffering off;` setzen.
+- **Spracherkennung** nur intern erreichbar machen (deploy/stt öffnet keinen Port) bzw. mit `STT_TOKEN` schützen.
 - **Hinter einem Proxy** `TRUST_PROXY=1` setzen, sonst sehen Rate-Limit und Verbindungssperre nur die Adresse des Proxys (Details unten).
 - **Skalierung:** Der Zustand liegt im Speicher einer Instanz. Für mehrere Instanzen bräuchte es einen gemeinsamen Pub/Sub (z. B. Redis).
 - Die Moderationsansicht und die Einbettungs-Vorschau sind normale Verbindungen und zählen in der Online-Anzeige mit.

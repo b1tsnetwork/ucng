@@ -1,19 +1,22 @@
 # SPDX-FileCopyrightText: 2026 The UCNG authors (see NOTICE)
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Eigene Spracherkennung für Live-Untertitel (Whisper über speaches, OpenAI-kompatibel).
-# Der Ton bleibt auf deinem Server – kein Port nach außen, nur im Docker-Netz des Chats.
+# Eigene Spracherkennung für Untertitel und Live-Transkription (Whisper über speaches,
+# OpenAI-kompatibel). Der Ton bleibt auf deinem Server – kein Port nach außen, nur im Docker-Netz.
 #
-#   1. docker compose up -d          (lädt beim ersten Start das Modell, siehe „stt-model“)
-#   2. In deploy/chat/.env:
+#   1. .env.example nach .env kopieren, docker compose up -d
+#      (lädt beim ersten Start das Modell, siehe Dienst „stt-model“)
+#   2. Beim Chat-Server (deploy/chat/.env) – oder bei einem Sprach-Server (deploy/voice/.env),
+#      der selbst verschriftlichen soll:
 #        STT_URL=http://ucng-stt:8000/v1/audio/transcriptions
 #        STT_MODEL=Systran/faster-whisper-small      (genau das Modell von hier)
-#      und den Chat neu starten:  docker compose up -d   (in deploy/chat)
-#   3. Admin → Kanal → Sprachkanal: „Untertitel“ einschalten
+#      und dort neu starten:  docker compose up -d
+#   3. Admin → Kanal → Sprachkanal: „Untertitel und Live-Transkription“ einschalten;
+#      Admin → Sprach-Server zeigt, wo verschriftlicht wird und ob es klappt
 #
-# Modelle (STT_MODEL): Systran/faster-whisper-small (CPU, gut für Deutsch, ~0,5 GB),
-# Systran/faster-whisper-medium (genauer, braucht kräftige CPU), mit NVIDIA-GPU:
-# deepdml/faster-whisper-large-v3-turbo-ct2 und das Image …:latest-cuda (siehe unten).
+# Läuft der Sprach-Server auf einem anderen Rechner, diese Datei dort starten und den Block
+# „networks“ an das Docker-Netz des Sprach-Servers anpassen (oder entfernen).
+# Modelle: siehe .env.example.
 
 name: ucng-stt
 

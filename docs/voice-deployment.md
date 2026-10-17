@@ -36,7 +36,9 @@ Diese Anleitung beschreibt, wie du zusätzliche Sprach-Server (`ucng-voice`, im 
 |---|---|---|---|
 | Browser | Agent | `PUBLIC_URL` des Agenten (`wss://…/ws`) | Sprache, Bildschirm, Kameras (je eine Verbindung) |
 | Agent | Chat-Server | `CHAT_URL` + `/api/voice/agents/report` | Anmeldung und Meldungen |
-| Chat-Server | Agent | `CONTROL_URL` (`…/control`) | Steuerbefehle |
+| Chat-Server | Agent | `CONTROL_URL` (`…/control`) | Steuerbefehle (auch: Mitschnitt für Untertitel an/aus) |
+| Agent | Chat-Server | `CHAT_URL` + `/api/voice/agents/segment` bzw. `/text` | Sprach-Abschnitte (Ogg-Opus) für Untertitel und Live-Transkription – oder nur deren Text, wenn der Agent selbst verschriftlicht |
+| Agent | eigene Spracherkennung | `STT_URL` des Agenten (optional) | Abschnitte verschriftlichen |
 
 Beide Richtungen zwischen Chat-Server und Agent sind mit demselben geheimen Schlüssel geschützt (`VOICE_AGENT_TOKEN` = `AGENT_TOKEN`). Am besten laufen sie über ein internes Netz. Über das Internet nur mit HTTPS.
 
@@ -92,7 +94,7 @@ Das sind vorsichtige Schätzungen (gemessen wurde etwa ein Viertel weniger). Set
    cd deploy/chat && docker compose up -d
    ```
 
-4. Prüfen: Admin-Bereich → **Übersicht** → *Sprach-Server*. Dort steht jetzt „Weitere Sprach-Server melden sich mit VOICE_AGENT_TOKEN an …“.
+4. Prüfen: Admin-Bereich → **Sprach-Server**. Dort steht jetzt „Weitere Sprach-Server melden sich mit VOICE_AGENT_TOKEN an …“.
 
 > Der Reverse-Proxy des **Chat-Servers** muss ebenfalls WebSockets durchreichen, wenn der eingebaute Relay aktiv ist (Pfad `/api/voice/ws`). Siehe README → *Sprachkanäle → Reverse-Proxy*.
 
@@ -118,9 +120,13 @@ Am einfachsten: Der Agent tritt dem Docker-Netz des Chats bei. Chat-Server und A
    CHAT_URL=http://ucng:8080
    CONTROL_URL=http://ucng-voice:8090/control
    VOICE_PORT=8091
+   ROLE=
    MAX_PARTICIPANTS=200
    MAX_MBIT=50
+   MAX_PER_IP=40
    ```
+
+   Alle Einstellungen mit Erklärung stehen in `deploy/voice/.env.example`.
 
    - `CHAT_URL`: `ucng` ist der Containername des Chats aus `deploy/chat`.
    - `CONTROL_URL`: der Containername des Agenten (= `AGENT_ID`) plus `:8090/control`.
@@ -182,14 +188,33 @@ Auf dem Agent-Server brauchst du nur `deploy/voice/compose.yml` und `.env`.
 
 3. Starten und Log prüfen wie in Variante A.
 
-### Untertitel (eigenes Whisper)
+### Untertitel und Live-Transkription (eigenes Whisper)
 
 Untertitel und Live-Transkription laufen nur über eine Spracherkennung, die du selbst betreibst (OpenAI-kompatibel, z. B. speaches aus `deploy/stt`). Die Sprach-Server schneiden die Sprache in Abschnitte (Ogg-Opus, 0,4–10 s). Wo verschriftlicht wird, entscheidest du:
 
 - **Beim Chat-Server** (`STT_URL` dort): Die Agenten schicken die Abschnitte an den Chat-Server (etwa 24 kbit/s je sprechender Person), der sie an sein Whisper gibt. Eine Stelle für alles.
 - **Auf dem Sprach-Server** (`STT_URL` beim Agenten, dazu `STT_MODEL`, `STT_TOKEN`, `STT_LANGUAGE`, `STT_CONCURRENCY`): Der Agent verschriftlicht selbst und schickt nur Text. Sinnvoll, wenn neben dem Agenten eine GPU mit Whisper steht, der Agent weit weg ist oder die Last verteilt werden soll. Der Chat-Server braucht dann kein `STT_URL`.
 
+Beispiel – Agent mit eigener GPU, Whisper aus `deploy/stt` auf demselben Rechner (im selben Docker-Netz):
+
+```env
+STT_URL=http://ucng-stt:8000/v1/audio/transcriptions
+STT_MODEL=deepdml/faster-whisper-large-v3-turbo-ct2
+STT_CONCURRENCY=4
+```
+
+Im Log steht dann „Eigene Spracherkennung: … – an den Chat-Server geht nur Text“.
+
 Beides lässt sich mischen: Agenten mit eigener Spracherkennung nutzen ihre, alle anderen (und der eingebaute Relay) die des Chat-Servers. Admin → *Sprach-Server* zeigt je Server die Funktionen („Eigene Spracherkennung“ bzw. „über Chat-Server“), Warteschlange, Dauer und den letzten Fehler. Je Kanal schaltest du Untertitel im Admin-Bereich ein; Untertitel werden bei Überlast ausgelassen, Transkript-Abschnitte warten.
+
+### Aufgabe des Agenten: `ROLE`
+
+| `ROLE` | Was der Agent übernimmt |
+|---|---|
+| leer (Standard) | **Sprache** neuer Sprachkanäle (ein Kanal bleibt auf seinem Agenten, bis er leer ist), den **Mitschnitt** für Untertitel und Live-Transkription, und **Bildschirm/Kameras** – die eigenen Kanäle und ausgelagerte anderer Kanäle |
+| `media` | **nur Bildschirm und Kameras**, die der Chat-Server auslagert – nie die Sprache eines Kanals. Reine Medien-Server werden beim Auslagern zuerst gewählt |
+
+Ausgelagert wird, wenn der Server der Sprache mit der Freigabe bzw. den Kameras über `VOICE_OFFLOAD_SCREEN` (Standard 50 %) bzw. `VOICE_OFFLOAD_VIDEO` (75 %) seiner Bandbreite käme – eingestellt beim **Chat-Server**. Ein Medien-Agent ersetzt also keinen Sprach-Server: Daneben muss immer der eingebaute Relay laufen oder ein Agent mit leerem `ROLE`. Spracherkennung (`STT_URL`) ist bei `ROLE=media` wirkungslos.
 
 ### Reiner Medien-Server
 
@@ -202,7 +227,7 @@ PUBLIC_URL=wss://media1.example.org
 MAX_MBIT=800
 ```
 
-Sonst wie oben. In der Übersicht (Admin → Übersicht → *Sprach-Server*) steht er als „nur Bildschirm und Kameras“, mit der Zahl laufender Freigaben und Kameras. Die Schwellen stellst du beim Chat-Server ein: `VOICE_OFFLOAD_SCREEN=0` lagert Bildschirme immer aus, `100` nie.
+Sonst wie oben. In Admin → *Sprach-Server* steht er mit der Funktion „Bildschirm & Kameras“ (ohne „Sprache“), mit Medienverbindungen und den Kanälen, für die er Bildschirm oder Kameras übernimmt. Die Schwellen stellst du beim Chat-Server ein: `VOICE_OFFLOAD_SCREEN=0` lagert Bildschirme immer aus, `100` nie.
 
 ---
 
@@ -339,7 +364,7 @@ Von außen muss nur 443/tcp offen sein (und 80/tcp für die Zertifikatserneuerun
 
    `ok` heißt: angemeldet. `503 noch nicht beim Chat-Server angemeldet` heißt: Die Meldung an den Chat-Server klappt nicht – siehe Fehlersuche.
 
-2. **Admin-Bereich** → *Übersicht* → *Sprach-Server*: Der Agent steht mit seinem Namen und seiner Auslastung in der Liste.
+2. **Admin-Bereich** → *Sprach-Server*: Der Agent steht mit Namen, Version, Funktionen (Sprache, Bildschirm & Kameras, Mitschnitt, Spracherkennung), Auslastung und seinen Kanälen in der Liste. Die Seite aktualisiert sich alle 5 Sekunden; ein Agent ohne Meldung wird rot und im Menü gezählt.
 
 3. **Ausprobieren:** einen Sprachkanal mit zwei Browsern betreten. Läuft der eingebaute Relay noch, landet ein neuer Kanal auf dem weniger ausgelasteten Relay. Um den Agenten gezielt zu testen, vorübergehend `VOICE_BUILTIN=0` beim Chat setzen.
 
@@ -361,6 +386,9 @@ Von außen muss nur 443/tcp offen sein (und 80/tcp für die Zertifikatserneuerun
 | Browser-Konsole: `Refused to connect … Content Security Policy` | Der Chat-Server kennt den Agenten noch nicht (erst nach der ersten Meldung). Seite neu laden. |
 | „Der Sprach-Server ist gerade ausgelastet“ | Alle Relays haben `MAX_PARTICIPANTS` oder `MAX_MBIT` erreicht. Grenzen erhöhen oder einen weiteren Agenten starten. |
 | Stummschalten/Entfernen wirkt nicht | Der Chat-Server erreicht `CONTROL_URL` nicht. Log des **Chat-Servers**: `Sprache: Agent … nicht erreichbar`. Adresse und Proxy-Regel für `/control` prüfen. |
+| Keine Untertitel / kein Transkript in Kanälen dieses Agenten | Admin → *Sprach-Server*: Steht „Spracherkennung“ rot, hat weder der Agent noch der Chat-Server `STT_URL`. Fehlt „Mitschnitt“, ist der Agent zu alt – aktualisieren. Beim Kanal muss „Untertitel und Live-Transkription“ an sein (temporäre Kanäle: nur für die Transkription nicht nötig). |
+| Agent-Log: `Spracherkennung: … antwortet HTTP 404` | `STT_MODEL` ist in der Spracherkennung nicht installiert (deploy/stt lädt das Modell aus seiner `.env`). Werte angleichen. |
+| Agent-Log: `Spracherkennung: … nicht erreichbar` | `STT_URL` vom Agenten aus nicht erreichbar (anderes Docker-Netz, Firewall). |
 | `429 Zu viele Sprachverbindungen von dieser Adresse` | Mehr als `MAX_PER_IP` (Standard 40; je Person bis zu drei: Sprache, Bildschirm, Kameras) Verbindungen von einer IP. Stehen Agent und Browser hinter einem Proxy, `TRUST_PROXY=1` setzen; sonst sehen alle Verbindungen wie die des Proxys aus. |
 
 ---
@@ -387,7 +415,7 @@ Dazwischen melden sich die Agenten mit `401`, laufende Gespräche bleiben aber b
 **Überwachung:**
 
 - `GET /healthz` am Agenten (für Uptime-Monitore).
-- `GET /api/admin/voice` am Chat-Server (mit Admin-Token) liefert alle Relays mit `participants`, `mbit`, `estimateMbit` und `healthy` als JSON.
+- `GET /api/admin/voice` am Chat-Server (mit Admin- oder Moderatoren-Token) liefert alle Relays als JSON: `healthy`, `functions` (`voice`, `media`, `tap`, `stt` bzw. `stt-chat`), `stats` (`participants`, `mbit`, `estimateMbit`, …), `stt` (eigene Spracherkennung: Warteschlange, erledigt, Fehler, mittlere Dauer) und `rooms` (Kanäle mit `voice`/`screen`/`video`); dazu `chatSTT` für die Spracherkennung des Chat-Servers.
 
 **Grenzen:** Ein Chat-Server nimmt bis zu 64 Agenten an. Ein Sprachkanal liegt immer ganz auf einem Relay; seine Größe begrenzt also die Kapazität des einen Agenten. Viele Kanäle verteilen sich dagegen auf beliebig viele Agenten.
 
@@ -396,7 +424,7 @@ Dazwischen melden sich die Agenten mit `401`, laufende Gespräche bleiben aber b
 ## 11. Sicherheit auf einen Blick
 
 - Agenten entscheiden nichts selbst. Ohne gültige, frische Zutrittskarte des Chat-Servers kommt niemand in einen Sprachkanal; jede Karte gilt 60 Sekunden und nur einmal.
-- Sprache ist auf dem Weg per TLS verschlüsselt, aber **nicht Ende-zu-Ende**: Wer den Agenten betreibt, könnte die Opus-Rahmen mitschneiden. Betreibe Agenten nur auf Servern, denen du wie dem Chat-Server vertraust.
+- Sprache ist auf dem Weg per TLS verschlüsselt, aber nur in Kanälen mit *Ende-zu-Ende-verschlüsselt* auch vor dem Agenten geschützt. Sonst könnte, wer den Agenten betreibt, die Opus-Rahmen mitschneiden – für Untertitel und Live-Transkription tut der Agent genau das (nur in Kanälen, die es erlauben, und nur zur eigenen Spracherkennung). Betreibe Agenten nur auf Servern, denen du wie dem Chat-Server vertraust.
 - Der Agenten-Schlüssel erlaubt das Melden von Teilnehmern und das Ausführen von Steuerbefehlen. Behandle ihn wie ein Passwort: nicht ins Repository, `.env` mit Rechten `600`.
 - `/control` nicht öffentlich erreichbar machen (Proxy-Regel aus Abschnitt 7).
 - Der Container läuft ohne Root, schreibgeschützt und ohne Linux-Capabilities.

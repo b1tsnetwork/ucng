@@ -21,7 +21,7 @@ Der Chat-Server läuft dabei wie in `deploy/chat/compose.yml` (Docker-Netz `ucng
 
 ```sh
 cd deploy/music
-cp .env.example .env            # UCNG_BOT_TOKEN und MUSIC_PATH eintragen
+cp .env.example .env            # UCNG_BOT_TOKEN und MUSIC_PATH eintragen (alle Optionen stehen darin)
 docker compose up -d
 docker logs -f ucng-bot-music
 ```
@@ -83,6 +83,8 @@ Jede Person kann die Musik zusätzlich für sich selbst lauter/leiser stellen od
 | `CACHE_DIR` | `/music/youtube` (Image), sonst leer | Zwischenspeicher für YouTube (siehe unten); leer = aus |
 | `CACHE_MAX_GB` | `0` | Größengrenze des Zwischenspeichers; `0` = ohne Grenze |
 | `TMP_DIR` | `/tmp` (Image) | für Downloads von YouTube (ein Stück liegt dort, solange es läuft) |
+
+Nur in `deploy/music` (compose): `MUSIC_PATH` (Ordner auf dem Rechner, wird nach `/music` eingebunden), `TMP_SIZE` (Platz für Downloads im Arbeitsspeicher, Standard `1g`), `UCNG_VERSION` und `TZ`. Alle Werte mit Erklärung: [`deploy/music/.env.example`](../../deploy/music/.env.example).
 
 ## Zwischenspeicher für YouTube
 

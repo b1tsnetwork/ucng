@@ -249,9 +249,16 @@ func (s *Server) handleVoiceMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room := NormRoom(r.PathValue("room"))
+	// Direkt nach dem Beitreten kann die Meldung des Relays noch unterwegs sein (Agenten melden
+	// gebündelt): kurz warten statt den Browser mit 409 in eine Wiederholung zu schicken.
 	inVoice := false
-	for _, rp := range v.findUser(me.ID) {
-		inVoice = inVoice || rp.room == room
+	for try := 0; try < 20 && !inVoice && r.Context().Err() == nil; try++ {
+		for _, rp := range v.findUser(me.ID) {
+			inVoice = inVoice || rp.room == room
+		}
+		if !inVoice {
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
 	if !inVoice {
 		writeErr(w, http.StatusConflict, ErrMediaNoVoice.Error())

@@ -426,7 +426,6 @@
     mediaSession(S);
   }
   function onLeft(s, reconnecting) {
-    seg = null;
     if (reconnecting) return;
     if (rec && rec.sess === s) stopRec();
     if (rec) stopRec();

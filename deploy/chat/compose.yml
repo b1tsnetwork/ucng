@@ -21,45 +21,51 @@ services:
     ports:
       - "127.0.0.1:${UCNG_PORT:-8080}:8080"
     environment:
-      # Öffentliche Adresse mit https:// – nötig für Links in E-Mails, Föderation und Beacon.
+      # Alle Werte mit Erklärung: .env.example (README → Konfiguration).
+      # Fest im Image: ADDR=:8080, DATA_DIR=/data, BACKUP_DIR=/data/backups.
       PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL in .env setzen}
-      # Fest gesetzt, sonst wird bei jedem Start ein neues erzeugt (steht dann im Log).
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD in .env setzen}
-      # simple = Namen ohne Konto, hosted = Konten, 2FA, verschlüsselte DMs, Föderation
       MODE: ${MODE:-simple}
-      # files (Standard) oder sqlite – beides im Volume /data
+      TZ: ${TZ:-Europe/Berlin}
+      # Speicher und Backups
       STORAGE: ${STORAGE:-files}
+      DB_DSN: ${DB_DSN:-}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
       # Hinter dem Reverse-Proxy: echte Client-IP aus X-Forwarded-For – nur von vertrauenswürdigen
-      # Proxys (Standard: Loopback und private Netze, z. B. das Docker-Netz). Bei einem CDN davor
-      # dessen Adressbereiche in TRUSTED_PROXIES ergänzen.
+      # Proxys (Standard: Loopback und private Netze, z. B. das Docker-Netz).
       TRUST_PROXY: "1"
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
-      # Gleichzeitige Live-Verbindungen (jeder offene Tab ist eine)
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      # Grenzen und Spam-Bremsen
+      RATE_LIMIT: ${RATE_LIMIT:-10}
+      BOT_RATE: ${BOT_RATE:-30}
+      CLAIM_RATE: ${CLAIM_RATE:-5}
+      MAX_USERS: ${MAX_USERS:-10000}
+      NAME_TTL_DAYS: ${NAME_TTL_DAYS:-30}
+      MAX_ROOMS: ${MAX_ROOMS:-0}
       MAX_STREAMS: ${MAX_STREAMS:-10000}
       MAX_STREAMS_PER_IP: ${MAX_STREAMS_PER_IP:-50}
-      # Zusätzlich erlaubte Seiten für das Widget (kommagetrennt), sonst Einstellung im Admin
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      BACKUP_KEEP: ${BACKUP_KEEP:-7}
-      RATE_LIMIT: ${RATE_LIMIT:-10}
-      # Nur setzen, wenn du eine eigene, veränderte Fassung betreibst (AGPL):
-      # Adresse deines Quellcodes. Offizielle Images bringen sie schon mit.
+      # Nur bei einer eigenen, veränderten Fassung (AGPL); offizielle Images bringen sie mit
       SOURCE_URL: ${SOURCE_URL:-}
-      # Sprachkanäle: eingebauter Relay (Grenzen) und Schlüssel für weitere Sprach-Server
-      # (deploy/voice). Der Reverse-Proxy muss WebSockets durchreichen (/api/voice/ws).
+      # Sprachkanäle (der Reverse-Proxy muss WebSockets unter /api/voice/ws durchreichen)
       VOICE: ${VOICE:-1}
       VOICE_BUILTIN: ${VOICE_BUILTIN:-1}
       VOICE_MAX_PARTICIPANTS: ${VOICE_MAX_PARTICIPANTS:-200}
       VOICE_MAX_MBIT: ${VOICE_MAX_MBIT:-50}
+      VOICE_MAX_PER_IP: ${VOICE_MAX_PER_IP:-40}
       VOICE_AGENT_TOKEN: ${VOICE_AGENT_TOKEN:-}
-      # Untertitel über die eigene Spracherkennung (deploy/stt) – leer = keine Untertitel.
+      VOICE_OFFLOAD_SCREEN: ${VOICE_OFFLOAD_SCREEN:-50}
+      VOICE_OFFLOAD_VIDEO: ${VOICE_OFFLOAD_VIDEO:-75}
+      # Untertitel und Live-Transkription über die eigene Spracherkennung (deploy/stt).
       # Der Ton geht nur an diese Adresse, nie an fremde Dienste.
       STT_URL: ${STT_URL:-}
       STT_MODEL: ${STT_MODEL:-whisper-1}
-      STT_LANGUAGE: ${STT_LANGUAGE:-}
       STT_TOKEN: ${STT_TOKEN:-}
-      # Live-Transkripte nach so vielen Tagen löschen (0 = behalten, bis der Admin sie löscht)
+      STT_LANGUAGE: ${STT_LANGUAGE:-}
+      STT_CONCURRENCY: ${STT_CONCURRENCY:-4}
       TRANSCRIPT_KEEP_DAYS: ${TRANSCRIPT_KEEP_DAYS:-0}
-      TZ: ${TZ:-Europe/Berlin}
+      # Nur zum Testen
+      FED_INSECURE: ${FED_INSECURE:-}
     volumes:
       # Kanäle, Nachrichten, Einstellungen, Bilder und Backups (/data/backups)
       - ucng-data:/data

@@ -5,7 +5,7 @@
 #   1. Beim Chat-Server VOICE_AGENT_TOKEN setzen (deploy/chat/.env) und neu starten
 #   2. .env.example nach .env kopieren und ausfüllen (derselbe Schlüssel als AGENT_TOKEN)
 #   3. docker compose up -d
-#   4. Im Admin-Bereich unter Übersicht → Sprach-Server erscheint der Agent
+#   4. Im Admin-Bereich unter Sprach-Server erscheint er mit seinen Funktionen
 #
 # Der Port ist nur lokal erreichbar (127.0.0.1) – davor gehört ein Reverse-Proxy mit HTTPS,
 # der WebSockets an http://127.0.0.1:${VOICE_PORT:-8091}/ws weiterreicht (Upgrade-Kopfzeilen).
@@ -27,20 +27,22 @@ services:
     ports:
       - "127.0.0.1:${VOICE_PORT:-8091}:8090"
     environment:
+      # Alle Werte mit Erklärung: .env.example (docs/voice-deployment.md). Fest im Image: ADDR=:8090.
       CHAT_URL: ${CHAT_URL:-http://ucng:8080}
       AGENT_TOKEN: ${AGENT_TOKEN:?AGENT_TOKEN in .env setzen (= VOICE_AGENT_TOKEN des Chat-Servers)}
       # Adresse für Browser, mit wss:// (der Agent hängt /ws an)
       PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL in .env setzen, z. B. wss://voice1.example.org}
       CONTROL_URL: ${CONTROL_URL:-http://ucng-voice:8090/control}
       AGENT_ID: ${AGENT_ID:-ucng-voice}
+      # leer = Sprache und Medien · media = nur ausgelagerte Bildschirme und Kameras
+      ROLE: ${ROLE:-}
       MAX_PARTICIPANTS: ${MAX_PARTICIPANTS:-200}
       MAX_MBIT: ${MAX_MBIT:-50}
       MAX_PER_IP: ${MAX_PER_IP:-40}
-      ROLE: ${ROLE:-}            # "media" = nur Bildschirm und Kameras (ausgelagert)
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       TRUST_PROXY: "1"
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
-      # Optional: eigene Spracherkennung dieses Sprach-Servers (z. B. Whisper auf einer GPU daneben).
-      # Gesetzt: verschriftlicht selbst, an den Chat-Server geht nur Text. Leer: der Chat-Server macht es.
+      # Optional: eigene Spracherkennung (gesetzt: verschriftlicht selbst, an den Chat geht nur Text)
       STT_URL: ${STT_URL:-}
       STT_MODEL: ${STT_MODEL:-whisper-1}
       STT_TOKEN: ${STT_TOKEN:-}

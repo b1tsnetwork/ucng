@@ -553,6 +553,10 @@
     return t(known[code] || "voice.bye_kicked");
   }
 
+  function safe(fn) {
+    try { fn(); } catch (e) { console.error("UCNG Sprache:", e); }
+  }
+
   // teardown räumt eine Verbindung ab (ohne Meldung).
   function teardown(keepCapture) {
     if (!S) return;
@@ -562,9 +566,11 @@
     if (keepCapture) { // Abriss: Aufnahme von Bildschirm/Kamera behalten
       if (window.UCNGScreen && UCNGScreen.suspend) UCNGScreen.suspend(); else if (window.UCNGScreen) UCNGScreen.detach();
       if (window.UCNGVideo && UCNGVideo.suspend) UCNGVideo.suspend(); else if (window.UCNGVideo) UCNGVideo.detach();
-    } else detachModules();
-    if (window.UCNGE2EE) UCNGE2EE.stop();
-    if (X()) X().onLeft(s, !!keepCapture);
+    } else safe(detachModules);
+    // Zusätze dürfen das Abräumen nie aufhalten – sonst bliebe die Verbindung offen und die
+    // Sprachleiste zeigte weiter „verbunden“.
+    if (window.UCNGE2EE) safe(() => UCNGE2EE.stop());
+    if (X()) safe(() => X().onLeft(s, !!keepCapture));
     for (const m of Object.values(s.media || {})) {
       clearTimeout(m.timer); clearInterval(m.pinger);
       if (m.ws) { m.ws.onclose = null; m.ws.onmessage = null; try { m.ws.close(1000); } catch { /* egal */ } }
@@ -581,7 +587,7 @@
   async function leave(silent) {
     wantRoom = "";
     rewatchAfter = "";
-    if (!S) return;
+    if (!S) { renderAll(); return; }
     teardown();
     if (!silent) deps.toast(t("voice.left"));
     renderAll();
