@@ -57,6 +57,8 @@ services:
       STT_MODEL: ${STT_MODEL:-whisper-1}
       STT_LANGUAGE: ${STT_LANGUAGE:-}
       STT_TOKEN: ${STT_TOKEN:-}
+      # Live-Transkripte nach so vielen Tagen löschen (0 = behalten, bis der Admin sie löscht)
+      TRANSCRIPT_KEEP_DAYS: ${TRANSCRIPT_KEEP_DAYS:-0}
       TZ: ${TZ:-Europe/Berlin}
     volumes:
       # Kanäle, Nachrichten, Einstellungen, Bilder und Backups (/data/backups)

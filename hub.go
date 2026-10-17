@@ -116,23 +116,24 @@ type QueueItem struct {
 //	user_updated  Nachrichten einer Person geändert, z. B. Team-Abzeichen (Verlauf neu laden)
 //	sanction      Sperre der Person Event.User geändert (nur diese Person reagiert)
 type Event struct {
-	Type        string         `json:"type"`
-	Message     *Message       `json:"message,omitempty"`
-	Messages    []Message      `json:"messages,omitempty"`
-	Online      int            `json:"online"`
-	Room        string         `json:"room,omitempty"`
-	Description *string        `json:"description,omitempty"`
-	RoomInfo    *RoomInfo      `json:"roomInfo,omitempty"`
-	Settings    *Settings      `json:"settings,omitempty"`
-	User        string         `json:"user,omitempty"`
-	Name        string         `json:"name,omitempty"`
-	More        bool           `json:"more,omitempty"`   // bei "history": es gibt ältere Nachrichten
-	Pinned      []Message      `json:"pinned,omitempty"` // bei "history": angepinnte Nachrichten
-	ID          int64          `json:"id,omitempty"`
-	Users       []PresenceUser `json:"users,omitempty"`
-	Guests      int            `json:"guests,omitempty"`
-	Voice       []VoicePeer    `json:"voice,omitempty"`    // bei "voice": Teilnehmer des Sprachkanals Room
-	Breakout    *BreakoutInfo  `json:"breakout,omitempty"` // bei "breakout": Runde gestartet oder beendet
+	Type        string           `json:"type"`
+	Message     *Message         `json:"message,omitempty"`
+	Messages    []Message        `json:"messages,omitempty"`
+	Online      int              `json:"online"`
+	Room        string           `json:"room,omitempty"`
+	Description *string          `json:"description,omitempty"`
+	RoomInfo    *RoomInfo        `json:"roomInfo,omitempty"`
+	Settings    *Settings        `json:"settings,omitempty"`
+	User        string           `json:"user,omitempty"`
+	Name        string           `json:"name,omitempty"`
+	More        bool             `json:"more,omitempty"`   // bei "history": es gibt ältere Nachrichten
+	Pinned      []Message        `json:"pinned,omitempty"` // bei "history": angepinnte Nachrichten
+	ID          int64            `json:"id,omitempty"`
+	Users       []PresenceUser   `json:"users,omitempty"`
+	Guests      int              `json:"guests,omitempty"`
+	Voice       []VoicePeer      `json:"voice,omitempty"`      // bei "voice": Teilnehmer des Sprachkanals Room
+	Breakout    *BreakoutInfo    `json:"breakout,omitempty"`   // bei "breakout": Runde gestartet oder beendet
+	Transcript  *TranscriptEvent `json:"transcript,omitempty"` // bei "transcript": Live-Transkription
 }
 
 // Viewer ist eine angemeldete Person, die einen Kanal geöffnet hat (für die Online-Liste).

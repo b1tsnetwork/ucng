@@ -75,11 +75,12 @@ type Config struct {
 	VoiceOffloadVideo    int     // Kameras ebenso (Prozent)
 	VoiceMaxPerIP        int     // eingebauter Relay: Verbindungen je IP-Adresse (je Person bis zu drei)
 	// Untertitel (stt.go): eigene Spracherkennung, OpenAI-kompatibel (z. B. selbst betriebenes Whisper)
-	STTURL         string
-	STTToken       string
-	STTModel       string
-	STTLanguage    string
-	STTConcurrency int
+	STTURL             string
+	STTToken           string
+	STTModel           string
+	STTLanguage        string
+	STTConcurrency     int
+	TranscriptKeepDays int // Transkripte nach so vielen Tagen löschen (0 = behalten)
 }
 
 func env(key, def string) string {
@@ -144,6 +145,7 @@ func loadConfig() Config {
 	flag.StringVar(&c.STTModel, "stt-model", env("STT_MODEL", "whisper-1"), "Untertitel: Modell-Name für die Spracherkennung")
 	flag.StringVar(&c.STTLanguage, "stt-language", env("STT_LANGUAGE", ""), "Untertitel: Sprache fest vorgeben (z. B. de); leer = Sprache der Person")
 	flag.IntVar(&c.STTConcurrency, "stt-concurrency", envInt("STT_CONCURRENCY", 4), "Untertitel: gleichzeitige Anfragen an die Spracherkennung")
+	flag.IntVar(&c.TranscriptKeepDays, "transcript-keep-days", envInt("TRANSCRIPT_KEEP_DAYS", 0), "Live-Transkripte nach so vielen Tagen löschen (0 = behalten, bis der Admin sie löscht)")
 	flag.StringVar(&c.VoiceAgentToken, "voice-agent-token", env("VOICE_AGENT_TOKEN", ""), "Schlüssel für Sprach-Agenten (cmd/ucng-voice); leer = keine Agenten")
 	flag.Parse()
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
@@ -438,6 +440,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/admin/rooms/{room}", adm(s.handleAdminUpdateRoom))
 	mux.HandleFunc("DELETE /api/admin/rooms/{room}", adm(s.handleAdminDeleteRoom))
 	mux.HandleFunc("GET /api/admin/rooms/{room}/messages", mod(s.handleAdminHistory))
+	mux.HandleFunc("GET /api/admin/transcripts", adm(s.handleAdminTranscripts))
+	mux.HandleFunc("GET /api/admin/transcripts/{id}", adm(s.handleAdminTranscriptGet))
+	mux.HandleFunc("DELETE /api/admin/transcripts/{id}", adm(s.handleAdminTranscriptDelete))
 	mux.HandleFunc("GET /api/admin/rooms", mod(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, s.hub.Rooms()) }))
 	mux.HandleFunc("DELETE /api/admin/rooms/{room}/messages/{id}", mod(s.handleAdminDeleteMessage))
 	mux.HandleFunc("POST /api/admin/rooms/{room}/messages/{id}/restore", mod(s.handleAdminRestoreMessage))

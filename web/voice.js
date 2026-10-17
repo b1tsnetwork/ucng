@@ -110,7 +110,8 @@
     S = { room, status: "connecting", peers: new Map(), decoders: new Map(), seq: 0, ts: 0, ping: 0, level: 0 };
     renderAll();
     try {
-      j = await deps.api(`/api/voice/${encodeURIComponent(room)}/join`, { method: "POST", body: "{}" });
+      const lang = ((deps.locale && deps.locale()) || "").split("-")[0]; // Hinweis für die Spracherkennung
+      j = await deps.api(`/api/voice/${encodeURIComponent(room)}/join?lang=${encodeURIComponent(lang)}`, { method: "POST", body: "{}" });
     } catch (e) {
       deps.toast(e.message);
       S = null; wantRoom = "";
@@ -461,6 +462,15 @@
       case "e2k": if (E2()) E2().onKey(m); break;
       case "react": if (X()) X().onReact(m); break;
       case "cap": if (X()) X().onCaption(m); break;
+      case "tap": { // Live-Transkription an/aus (vom Relay, für alle im Sprachkanal)
+        const on = m.mode === 2;
+        const note = (k) => (window.UCNGTranscript ? UCNGTranscript.notify(t(k)) : deps.toast(t(k)));
+        if (on) note("voice.tr_started_voice");
+        if (!on && S.cfg.transcript) note("voice.tr_ended_toast");
+        S.cfg.transcript = on ? (S.cfg.transcript || { active: true, started: Date.now() }) : null;
+        renderAll();
+        break;
+      }
       case "forcemute": // „alle stummschalten“ – selbst wieder einschaltbar
         if (!selfMute) { selfMute = true; sendState(); deps.toast(t("voice.forcemuted")); }
         break;
@@ -628,7 +638,7 @@
   }
 
   function sendState() {
-    if (S && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: "state", mute: selfMute || deaf, hand: !!S.hand }));
+    if (S && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: "state", mute: selfMute || deaf, hand: !!S.hand, nc: !!prefs.noCapSend }));
   }
 
   // ---------- Mikrofon ----------
@@ -707,7 +717,6 @@
     const on = transmitting(s);
     if (on !== s.sending) { s.sending = on; renderSelf(); }
     if (levelCb) levelCb(db);
-    if (X() && d.frame) X().onCapture(s, d.frame, on); // Untertitel: eigene Sprache in Abschnitten
     if (!d.frame || !on || !s.enc || s.enc.state !== "configured") return;
     const ch = d.frame.length;
     const data = new Float32Array(FRAME * ch);
@@ -1410,7 +1419,7 @@
     toggleMute, toggleDeaf, openSettings, toggleHand,
     // für voice-extras.js
     session: () => S,
-    mod, sendReact, setAudioOnly, prefs: () => prefs, savePrefs, deps: () => deps, render: () => renderAll(),
+    mod, sendReact, sendState, setAudioOnly, prefs: () => prefs, savePrefs, deps: () => deps, render: () => renderAll(),
     reaction(uid) { const r = reactions.get(uid); return r && performance.now() < r.until ? r : null; },
     addReaction(uid, e) { const now = performance.now(); reactions.set(uid, { e, at: now, until: now + 2500 }); setTimeout(() => { if (reactions.get(uid) && performance.now() >= reactions.get(uid).until) { reactions.delete(uid); renderAll(); } }, 2600); renderAll(); },
     setSaver, saverDrop, sendLimits,

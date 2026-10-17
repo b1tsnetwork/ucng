@@ -120,6 +120,7 @@ type agent struct {
 	ipr     *clientip.Resolver
 	ipMu    sync.Mutex
 	perIP   map[string]int
+	segSem  chan struct{} // gleichzeitige Sprach-Abschnitte zum Chat-Server
 }
 
 func main() {
@@ -136,7 +137,7 @@ func main() {
 		log.Fatal(err)
 	}
 	a := &agent{cfg: cfg, ws: ws, kick: make(chan struct{}, 1), client: &http.Client{Timeout: 10 * time.Second},
-		ipr: ipr, perIP: map[string]int{}}
+		ipr: ipr, perIP: map[string]int{}, segSem: make(chan struct{}, 8)}
 	if cfg.Origins != "" {
 		var list []string
 		for _, o := range strings.Split(cfg.Origins, ",") {
@@ -157,6 +158,7 @@ func main() {
 		MaxMbit:         cfg.MaxMbit,
 		OriginOK:        a.originOK,
 		OnChange:        func(string, []voicerelay.PeerInfo) { a.soon() },
+		OnSegment:       a.sendSegment,
 	})
 
 	mux := http.NewServeMux()
@@ -250,7 +252,7 @@ func (a *agent) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 	var ok bool
 	switch in.Action {
-	case "speak", "mute", "hand", "kick", "close", "screen", "video", "mod", "move", "mediakick", "remedia", "forcemute", "askunmute", "camsoff", "rec", "cap", "musicvol":
+	case "speak", "mute", "hand", "kick", "close", "screen", "video", "mod", "move", "mediakick", "remedia", "forcemute", "askunmute", "camsoff", "rec", "cap", "musicvol", "tap":
 		ok = a.relay.Control(in.Channel, in.User, in.Action, in.Value, in.Reason)
 	default:
 		http.Error(w, "unbekannte Aktion", http.StatusBadRequest)
@@ -258,6 +260,34 @@ func (a *agent) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":%t}`, ok)
+}
+
+// sendSegment reicht einen Sprach-Abschnitt (Untertitel, Live-Transkription) an den Chat-Server
+// weiter – der schickt ihn an die eigene Spracherkennung. Höchstens 8 gleichzeitig.
+func (a *agent) sendSegment(s voicerelay.Segment) {
+	select {
+	case a.segSem <- struct{}{}:
+	default:
+		log.Printf("Sprach-Abschnitt verworfen (zu viele gleichzeitig) – Kanal %s", s.Channel)
+		return
+	}
+	defer func() { <-a.segSem }()
+	q := url.Values{"channel": {s.Channel}, "user": {s.User}, "name": {s.Name}, "lang": {s.Lang},
+		"mode": {strconv.Itoa(s.Mode)}, "start": {strconv.FormatInt(s.Start.UnixMilli(), 10)}, "dur": {strconv.FormatInt(s.Dur.Milliseconds(), 10)}}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.ChatURL+"/api/voice/agents/segment?"+q.Encode(), bytes.NewReader(s.Ogg))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+a.cfg.Token)
+	req.Header.Set("Content-Type", "audio/ogg")
+	res, err := a.client.Do(req)
+	if err != nil {
+		log.Printf("Sprach-Abschnitt nicht zugestellt: %v", err)
+		return
+	}
+	res.Body.Close()
 }
 
 // reportLoop meldet Auslastung und Teilnehmer alle 3 Sekunden – bei Änderungen sofort

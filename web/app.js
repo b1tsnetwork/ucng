@@ -850,6 +850,7 @@
           roomInfo = ev.roomInfo || null;
           showHistory(ev.messages || [], ev.more);
           setRoomInfo(ev.roomInfo || { description: ev.description });
+          if (window.UCNGTranscript) UCNGTranscript.setRoom(room, ev.roomInfo);
           renderPins();
           updateComposer();
           if (thread) reloadThread();
@@ -857,6 +858,7 @@
         case "pins": pinned = ev.messages || []; renderPins(); renderAll(); break;
         case "voice": if (window.UCNGVoice) UCNGVoice.onEvent(ev); break;
         case "breakout": if (window.UCNGExtras && ev.breakout) UCNGExtras.onBreakout(ev.breakout); break;
+        case "transcript": if (window.UCNGTranscript) UCNGTranscript.onEvent(ev); break;
         case "profiles": loadProfiles().then(() => { renderAll(); renderPresence(); if (thread) renderThread(); }); break;
         case "dm": if (ev.user === me.id) loadDMs().then(refreshUnread); break;
         case "layout": loadGroups().then(loadRooms); break;

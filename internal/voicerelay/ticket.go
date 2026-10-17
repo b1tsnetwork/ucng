@@ -38,6 +38,8 @@ type Ticket struct {
 	Music       int    `json:"mu,omitempty"`  // Musik eines Bots: Lautstärke in Prozent (1–100); eigener Datenstrom
 	ModUser     bool   `json:"mo,omitempty"`  // darf im Kanal moderieren (nur Anzeige)
 	Kind        string `json:"k,omitempty"`   // "" = Sprache; KindScreen/KindVideo = eigene Medienverbindung
+	Tap         int    `json:"tp,omitempty"`  // Mitschnitt für die Spracherkennung (TapOff/TapCaptions/TapTranscript)
+	Lang        string `json:"lg,omitempty"`  // Sprache der Person (für die Spracherkennung)
 	Exp         int64  `json:"e"`             // Unix-Sekunden
 	Nonce       string `json:"x"`
 }

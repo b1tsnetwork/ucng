@@ -221,52 +221,10 @@
 
   // ---------- Untertitel (eigenes Whisper) ----------
 
+  // Die Abschnitte schneidet der Relay (Sprecher aus der Verbindung), der Chat-Server lässt sie
+  // verschriftlichen und schickt die Untertitel („cap“). Hier: anzeigen und mitschreiben.
   const transcript = []; // { at, name, text }
-  let seg = null; // { frames: [], quiet }
   let capShown = [];
-
-  // aus voice.js: 20-ms-Rahmen des eigenen Mikrofons; on = wird gerade gesendet
-  function onCapture(s, frame, on) {
-    const prefs = V().prefs();
-    if (!s.cfg || !s.cfg.captions || prefs.noCapSend || !s.speak || s.muted) { seg = null; return; }
-    if (on) {
-      if (!seg) seg = { frames: [], quiet: 0, room: s.room };
-      seg.frames.push(frame[0]);
-      seg.quiet = 0;
-      if (seg.frames.length >= 600) flushSeg(s); // 12 s
-    } else if (seg) {
-      seg.frames.push(frame[0]);
-      if (++seg.quiet >= 35) flushSeg(s); // 0,7 s Pause: Abschnitt fertig
-    }
-  }
-
-  function flushSeg(s) {
-    const g = seg;
-    seg = null;
-    if (!g || g.frames.length - g.quiet < 30) return; // unter 0,6 s Sprache: auslassen
-    const frames = g.frames.slice(0, g.frames.length - Math.max(0, g.quiet - 10));
-    // 48 kHz → 16 kHz (Mittelwert aus je drei Werten), 16 bit
-    const n = frames.length * 320;
-    const pcm = new Int16Array(n);
-    let k = 0;
-    for (const f of frames) {
-      for (let i = 0; i + 2 < f.length; i += 3) {
-        const v = Math.max(-1, Math.min(1, (f[i] + f[i + 1] + f[i + 2]) / 3));
-        pcm[k++] = v < 0 ? v * 0x8000 : v * 0x7fff;
-      }
-    }
-    const wav = new ArrayBuffer(44 + k * 2);
-    const dv = new DataView(wav);
-    const str = (o, x) => { for (let i = 0; i < x.length; i++) dv.setUint8(o + i, x.charCodeAt(i)); };
-    str(0, "RIFF"); dv.setUint32(4, 36 + k * 2, true); str(8, "WAVE"); str(12, "fmt ");
-    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, 16000, true);
-    dv.setUint32(28, 32000, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); str(36, "data"); dv.setUint32(40, k * 2, true);
-    new Int16Array(wav, 44, k).set(pcm.subarray(0, k));
-    const lang = (D().locale ? D().locale() : "de").split("-")[0];
-    fetch(`/api/voice/${encodeURIComponent(g.room)}/stt?lang=${encodeURIComponent(lang)}`, {
-      method: "POST", body: wav, headers: { "Content-Type": "audio/wav", Authorization: "Bearer " + D().token() },
-    }).catch(() => {});
-  }
 
   function onCaption(m) {
     const name = V().peerName(m.u) || "?";
@@ -321,6 +279,19 @@
       for (const text of parts) await D().api(`${D().roomPath(S.room)}/messages`, { method: "POST", body: JSON.stringify({ text: text.trim() }) });
       D().toast(t("voice.transcript_posted"));
     } catch (e) { D().toast(e.message); }
+  }
+
+  // Live-Transkription aus der Sprachleiste (auch, wenn gerade ein anderer Kanal offen ist)
+  async function startTranscript(room) {
+    try {
+      const info = await D().api(`/api/voice/${encodeURIComponent(room)}/transcript`, { method: "POST", body: JSON.stringify({ on: true }) });
+      const S = V().session();
+      if (S && S.room === room) { S.cfg.transcript = info; V().render(); }
+    } catch (e) { D().toast(e.message); }
+  }
+  async function stopTranscript(room) {
+    try { await D().api(`/api/voice/${encodeURIComponent(room)}/transcript`, { method: "POST", body: JSON.stringify({ on: false }) }); }
+    catch (e) { D().toast(e.message); }
   }
 
   // ---------- Statistik ----------
@@ -479,7 +450,13 @@
       const others = [...S.peers.values()].filter((p) => p.rec).map((p) => p.n);
       if (others.length) out.push(h("p", "voice-bar-note rec", t("voice.rec_running", { name: others.join(", ") })));
     }
-    if (S.cfg && S.cfg.captions && S.status === "connected") {
+    if (S.cfg && S.cfg.transcript && S.status === "connected") { // Live-Transkription: nicht zu übersehen
+      const b = h("button", "voice-bar-note tr-live", t("voice.tr_bar_note"));
+      b.type = "button";
+      b.title = t("voice.tr_show");
+      b.addEventListener("click", () => { if (window.UCNGTranscript) { if (UCNGTranscript.room !== S.room) D().switchRoom(S.room); UCNGTranscript.toggle(true); } });
+      out.push(b);
+    } else if (S.cfg && S.cfg.captions && S.status === "connected") {
       out.push(h("p", "voice-bar-note", V().prefs().noCapSend ? t("voice.captions_on_nosend") : t("voice.captions_on")));
     }
     const b = breakoutOf(S.room);
@@ -504,9 +481,21 @@
     if (S.cfg && S.cfg.videoOn && window.UCNGVideo) {
       items.push(["", UCNGVideo.view === "gallery" ? t("voice.view_speaker") : t("voice.view_gallery"), () => UCNGVideo.setView(UCNGVideo.view === "gallery" ? "speaker" : "gallery")]);
     }
-    if (S.cfg && S.cfg.captions) {
+    if (S.cfg && (S.cfg.captions || S.cfg.transcript)) {
       items.push(["", prefs.captions ? t("voice.captions_hide") : t("voice.captions_show"), () => { prefs.captions = !prefs.captions; V().savePrefs(); renderCaptions(); }]);
-      items.push(["", prefs.noCapSend ? t("voice.captions_send_on") : t("voice.captions_send_off"), () => { prefs.noCapSend = !prefs.noCapSend; V().savePrefs(); V().render(); }]);
+    }
+    if (S.cfg && S.cfg.captions) {
+      items.push(["", prefs.noCapSend ? t("voice.captions_send_on") : t("voice.captions_send_off"), () => { prefs.noCapSend = !prefs.noCapSend; V().savePrefs(); V().sendState(); V().render(); }]);
+    }
+    if (window.UCNGTranscript && (S.cfg.transcript || S.cfg.transcribeOK)) {
+      const tr = window.UCNGTranscript;
+      items.push(["", t("voice.tr_show"), () => { if (tr.room !== S.room) D().switchRoom(S.room); tr.toggle(true); }]);
+      if (host && S.cfg.transcribeOK) {
+        items.push(["", S.cfg.transcript ? t("voice.tr_stop") : t("voice.tr_start"), () => {
+          if (tr.room !== S.room) D().switchRoom(S.room);
+          if (S.cfg.transcript) stopTranscript(S.room); else startTranscript(S.room);
+        }]);
+      }
     }
     if (transcript.length) {
       items.push(["", t("voice.transcript_download"), downloadTranscript]);
@@ -526,7 +515,7 @@
   }
 
   window.UCNGExtras = {
-    onReact, onPeer, onCaption, onCapture, onBreakout, onJoined, onLeft,
+    onReact, onPeer, onCaption, onBreakout, onJoined, onLeft,
     barNotes, menuItems, renderMobile, routeAudio, pip,
     get recording() { return !!rec; },
   };

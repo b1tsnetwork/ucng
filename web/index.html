@@ -102,6 +102,10 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 13v-3a6.5 6.5 0 0 1 13 0v3" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="2.5" y="11.5" width="4" height="5.5" rx="1.6" fill="currentColor"/><rect x="13.5" y="11.5" width="4" height="5.5" rx="1.6" fill="currentColor"/></svg>
           <span data-i18n="voice.join">Beitreten</span>
         </button>
+        <button class="icon-btn tr-btn" id="transcriptBtn" type="button" hidden aria-label="Transkript" title="Live-Transkription und Transkripte" data-i18n-aria-label="voice.tr_button" data-i18n-title="voice.tr_button_hint">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h7l3.5 3.5v11.5H5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 2.5V6h3.5M7.5 10h5M7.5 13h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span class="tr-dot" aria-hidden="true"></span>
+        </button>
         <button class="icon-btn" id="searchBtn" type="button" aria-label="Suchen" title="Im Kanal suchen (Strg+K)" data-i18n-aria-label="app.suchen" data-i18n-title="app.im_kanal_suchen_strg_k">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m13.2 13.2 3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </button>
@@ -120,6 +124,23 @@
         </div>
         <p class="search-info" id="searchInfo"></p>
         <div class="search-results" id="searchResults"></div>
+      </section>
+
+      <div class="tr-bar" id="transcriptBar" hidden role="status"></div>
+      <section class="tr-panel" id="transcriptPanel" hidden aria-label="Transkript" data-i18n-aria-label="voice.tr_button">
+        <header class="tr-head">
+          <b id="trTitle"></b>
+          <span class="tr-actions" id="trActions"></span>
+          <button class="icon-btn" id="trClose" type="button" aria-label="Schließen" data-i18n-aria-label="voice.tr_close">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </header>
+        <p class="tr-note" id="trNote" hidden></p>
+        <div class="tr-lines" id="trLines" aria-live="polite" hidden></div>
+        <details class="tr-past" id="trPast" hidden>
+          <summary data-i18n="voice.tr_past">Frühere Transkripte dieses Kanals</summary>
+          <ul id="trPastList"></ul>
+        </details>
       </section>
 
       <div class="pin-bar" id="pinBar" hidden>
@@ -607,6 +628,7 @@
   <script src="/voice-media.js"></script>
   <script src="/voice-e2ee.js"></script>
   <script src="/voice-extras.js"></script>
+  <script src="/voice-transcript.js"></script>
   <script src="/voice-screen.js"></script>
   <script src="/voice-video.js"></script>
   <script src="/voice.js"></script>

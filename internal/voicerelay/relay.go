@@ -95,7 +95,10 @@ type Config struct {
 	OriginOK        func(origin string) bool // nil = jede Herkunft
 	// OnChange meldet die Teilnehmer eines Kanals nach jeder Änderung (außerhalb der Sperre).
 	OnChange func(channel string, peers []PeerInfo)
-	Now      func() time.Time
+	// OnSegment bekommt Sprach-Abschnitte für die Spracherkennung (tap.go), wenn der Mitschnitt
+	// eines Kanals an ist. Wird in einer eigenen Goroutine aufgerufen.
+	OnSegment func(Segment)
+	Now       func() time.Time
 }
 
 // PeerInfo: ein Teilnehmer, wie ihn der Chat-Server anzeigt.
@@ -175,6 +178,7 @@ type channel struct {
 	active      map[uint16]*peer // gerade weitergeleitete Sprecher
 	frames      []frameRef       // im laufenden Takt eingegangen
 	ticking     bool
+	tap         int // Mitschnitt für die Spracherkennung (TapOff, TapCaptions, TapTranscript)
 }
 
 type frameRef struct {
@@ -249,6 +253,9 @@ type peer struct {
 	ctlRefill time.Time
 	tBytes    float64 // Ton der Bildschirmfreigabe
 	tRefill   time.Time
+	tap       *tapBuf // laufender Sprach-Abschnitt (Mitschnitt)
+	noCap     bool    // möchte nicht verschriftlicht werden (gilt nur für Untertitel)
+	lang      string  // Sprache laut Zutrittskarte
 }
 
 // New startet einen Relay.
@@ -264,6 +271,7 @@ func New(cfg Config) *Relay {
 	}
 	r := &Relay{cfg: cfg, channels: map[string]*channel{}, nonces: map[string]time.Time{}, stop: make(chan struct{})}
 	go r.meter()
+	go r.tapLoop()
 	return r
 }
 
@@ -315,7 +323,7 @@ func (r *Relay) Stats() Stats {
 	defer r.mu.Unlock()
 	st := Stats{Participants: r.total, Channels: map[string]int{}, Mbit: mathFloat64frombits(r.mbit.Load()),
 		MaxMbit: r.cfg.MaxMbit, Max: r.cfg.MaxParticipants, EstimateMbit: r.estimateLocked(), MediaPeers: r.media,
-		Features: []string{"media"}}
+		Features: []string{"media", "tap"}}
 	for n, ch := range r.channels {
 		if ch.kind == "" {
 			st.Channels[n] = len(ch.peers)
@@ -431,6 +439,7 @@ type ctlMsg struct {
 	Cm     *string  `json:"cm,omitempty"`    // state: Hinweis „Kamera an“
 	Q      *int     `json:"q,omitempty"`     // state: Verbindungsqualität 1–3
 	PK     *string  `json:"pk,omitempty"`    // state: öffentlicher Schlüssel (Ende-zu-Ende)
+	NC     *bool    `json:"nc,omitempty"`    // state: „meine Sprache nicht verschriftlichen“ (nur Untertitel)
 	E      string   `json:"e,omitempty"`     // react: Emoji
 	X      string   `json:"x,omitempty"`     // e2k: verpackter Schlüssel
 	To     uint16   `json:"to,omitempty"`    // e2k: Empfänger
@@ -514,6 +523,9 @@ func (r *Relay) join(t Ticket, conn *wsock.Conn) (*peer, error) {
 	}
 	if t.Music == 0 || len(ch.peers) == 0 { // Musik eines Bots ändert die Einstellungen des Kanals nicht
 		ch.maxSpeakers, ch.maxPeers, ch.bitrate = clamp(t.MaxSpeakers, 1, 16), clamp(t.MaxPeers, 1, 5000), clamp(t.Bitrate, 6000, 256000)
+		if t.Kind == "" {
+			r.setTapLocked(ch, t.Tap) // die Zutrittskarte kennt den aktuellen Stand
+		}
 		ch.maxScreens, ch.screenKbps = clamp(t.MaxScreens, 0, 16), clamp(t.ScreenKbps, 100, 20000)
 		ch.featuredN, ch.videoKbps, ch.thumbKbps = clamp(t.Featured, 1, 9), clamp(t.VideoKbps, 100, 20000), clamp(t.ThumbKbps, 50, 2000)
 	}
@@ -538,7 +550,7 @@ func (r *Relay) join(t Ticket, conn *wsock.Conn) (*peer, error) {
 			break
 		}
 	}
-	p := &peer{idx: ch.next, ch: ch, user: t.User, name: t.Name, speak: t.Speak, muted: t.Muted, hand: t.Hand,
+	p := &peer{idx: ch.next, ch: ch, user: t.User, name: t.Name, speak: t.Speak, muted: t.Muted, hand: t.Hand, lang: t.Lang,
 		bitrate: ch.bitrate, conn: conn, videoOK: t.Video, camNeedKey: map[uint16]*[2]bool{}, camSkip: map[uint16]*[2]uint8{}, mod: t.ModUser, pins: map[uint16]bool{},
 		out: make(chan []byte, outQueue), vout: make(chan []byte, videoQueue), tokens: 10, refill: now,
 		screenOK: t.Screen && ch.maxScreens > 0, watchers: map[uint16]*peer{}, watching: map[uint16]bool{}, needKey: map[uint16]bool{}, skipTid: map[uint16]uint8{}}
@@ -718,6 +730,12 @@ func (r *Relay) reader(p *peer) {
 			if m.PK != nil && len(*m.PK) <= 200 && validKey(*m.PK) {
 				p.pubKey = *m.PK
 			}
+			if m.NC != nil {
+				p.noCap = *m.NC
+				if p.noCap && p.ch.tap == TapCaptions {
+					p.tap = nil // laufenden Abschnitt verwerfen
+				}
+			}
 			upd, _ := json.Marshal(map[string]any{"t": "peer", "peer": p.info()})
 			r.broadcastLocked(p.ch, textMsg(upd), nil)
 			peers := r.peersLocked(p.ch)
@@ -779,6 +797,7 @@ func (r *Relay) removeLocked(p *peer) {
 	if p.gone {
 		return
 	}
+	r.tapFlushLocked(p) // letzter Satz vor dem Verlassen
 	p.gone = true
 	ch := p.ch
 	for i := range p.watching { // als Zuschauer abmelden
@@ -887,6 +906,9 @@ func (r *Relay) audio(p *peer, seq uint16, level uint8, data []byte) {
 	}
 	p.tokens--
 	p.bytesTok -= float64(len(data))
+	if p.ch.tap != TapOff { // auch ohne Sprecherplatz: es zählt, was gesagt wurde
+		r.tapFrameLocked(p, level, data, now)
+	}
 
 	ch := p.ch
 	for i, a := range ch.active {
@@ -1008,6 +1030,16 @@ func bundle(frames []frameRef, without *peer) []byte {
 // Die Befehle gelten auch für die Medienverbindungen des Kanals auf diesem Relay; "mediakick"
 // beendet nur diese (die Person hat den Sprachkanal verlassen).
 func (r *Relay) Control(channel, user, action string, value bool, reason string) bool {
+	if action == "tap" { // Mitschnitt für die Spracherkennung: reason = Modus (0, 1, 2)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		ch := r.channels[channel]
+		if ch == nil || len(reason) != 1 {
+			return false
+		}
+		r.setTapLocked(ch, int(reason[0])-'0')
+		return true
+	}
 	if action == "remedia" { // eine Medienart ist auf einen anderen Relay umgezogen (reason = Art): alle verbinden neu
 		r.mu.Lock()
 		defer r.mu.Unlock()

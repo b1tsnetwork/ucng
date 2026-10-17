@@ -403,6 +403,7 @@ type voiceMgr struct {
 	agents    map[string]*voiceAgent
 	breakouts map[string]*BreakoutInfo // Hauptkanal → laufende Breakout-Runde
 	stt       *sttClient               // Untertitel (nil = aus)
+	tr        *transcriptStore         // Live-Transkripte
 }
 
 type voiceRoom struct {
@@ -445,7 +446,7 @@ func newVoiceMgr(s *Server) *voiceMgr {
 		mediaRL:  newRateLimiter(90, time.Minute),
 		client:   &http.Client{Timeout: 5 * time.Second},
 		rooms:    map[string]*voiceRoom{}, agents: map[string]*voiceAgent{}, stop: make(chan struct{}),
-		breakouts: map[string]*BreakoutInfo{}, stt: newSTT(s.cfg),
+		breakouts: map[string]*BreakoutInfo{}, stt: newSTT(s.cfg), tr: newTranscriptStore(s.cfg.DataDir),
 	}
 	v.csp.Store("")
 	if !s.cfg.VoiceNoBuiltin {
@@ -454,7 +455,13 @@ func newVoiceMgr(s *Server) *voiceMgr {
 			MaxParticipants: s.cfg.VoiceMaxParticipants,
 			MaxMbit:         s.cfg.VoiceMaxMbit,
 			OnChange:        func(ch string, peers []voicerelay.PeerInfo) { v.setPeers(builtinRelay, ch, peers) },
+			OnSegment:       v.onSegment,
 		})
+	}
+	if v.stt != nil {
+		for i := 0; i < cap(v.stt.sem); i++ {
+			go v.sttWorker()
+		}
 	}
 	s.hub.mu.Lock()
 	s.hub.onUserChange = v.userChanged
@@ -561,6 +568,7 @@ func (v *voiceMgr) janitor() {
 		v.ticketRL.cleanup()
 		v.mediaRL.cleanup()
 		v.breakoutTick(time.Now())
+		v.transcriptTick(time.Now())
 		if v.stt != nil {
 			v.stt.rl.cleanup()
 		}
@@ -824,6 +832,9 @@ func (v *voiceMgr) findUser(userID string) []roomPeer {
 
 func (v *voiceMgr) roomChanged(oldName, newName string) {
 	if oldName != newName { // umbenannt oder gelöscht: Sprachkanal schließen
+		if v.tr.activeFor(oldName) != nil {
+			v.tr.stop(oldName) // kein Hinweis: der Kanal ist weg
+		}
 		reason := "deleted"
 		if newName != "" {
 			reason = "renamed"
@@ -838,6 +849,7 @@ func (v *voiceMgr) roomChanged(oldName, newName string) {
 	for _, p := range v.Peers(oldName) {
 		v.reconcile(oldName, p)
 	}
+	v.pushTap(oldName) // z. B. „Untertitel“ oder Ende-zu-Ende umgestellt
 }
 
 // --- Relays ---
@@ -854,7 +866,7 @@ func (v *voiceMgr) control(room, user, action string, value bool, reason string)
 	}
 	v.mu.Unlock()
 	switch action {
-	case "speak", "hand", "move", "remedia": // nur die Sprache
+	case "speak", "hand", "move", "remedia", "tap": // nur die Sprache
 		media = nil
 	}
 	v.sendControl(relay, room, user, action, value, reason)
@@ -1057,11 +1069,22 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pr, sp, vp := d.Cfg.preset(), d.Cfg.screenPreset(), d.Cfg.videoPreset()
+	// Untertitel/Live-Transkription: der Relay schneidet mit, wenn er es kann
+	tap, taps := voicerelay.TapOff, v.relayTaps(choice.id)
+	if taps {
+		tap = v.tapMode(room, &d.Cfg)
+	}
+	lang := r.URL.Query().Get("lang") // Sprache der Oberfläche – Hinweis für die Spracherkennung
+	if len(lang) > 8 || strings.ContainsAny(lang, " /&?") {
+		lang = ""
+	}
+	acc := v.s.hub.voiceAccessFull(room, who.access())
 	ticket := voicerelay.SignTicket(v.priv, voicerelay.Ticket{
 		Channel: room, User: me.ID, Name: me.Name, Speak: d.Speak, Muted: d.Muted,
 		Bitrate: pr.Bitrate, Stereo: pr.Stereo, MaxSpeakers: d.Cfg.MaxSpeakers, MaxPeers: d.Cfg.MaxPeers,
 		Screen: d.Screen, ScreenKbps: sp.Kbps, MaxScreens: d.Cfg.MaxScreens,
 		Video: d.Video, VideoKbps: vp.Kbps, ThumbKbps: thumbPreset.Kbps, Featured: d.Cfg.Featured, ModUser: d.Mod,
+		Tap: tap, Lang: lang,
 	}, time.Now())
 	u := choice.url
 	if u == "" {
@@ -1074,11 +1097,14 @@ func (s *Server) handleVoiceJoin(w http.ResponseWriter, r *http.Request) {
 		"screen": d.Screen, "screenOn": d.Cfg.Screen != ScreenOff, "screenKbps": sp.Kbps, "screenFps": sp.FPS, "screenHeight": sp.Height,
 		"video": d.Video, "videoOn": d.Cfg.Video != ScreenOff, "videoPreset": vp, "thumbPreset": thumbPreset,
 		"featured": d.Cfg.Featured, "owner": d.Owner,
-		"host":      d.Owner || v.roomMod(&d.Cfg, who), // darf Co-Hosts ernennen
-		"e2ee":      d.Cfg.E2EE,
-		"captions":  d.Cfg.Captions && !d.Cfg.E2EE && v.stt != nil,
-		"breakout":  v.breakoutFor(room),
-		"mediaConn": v.mediaCapable(), // Bildschirm und Kameras über eigene Verbindungen (/media)
+		"host":     d.Owner || v.roomMod(&d.Cfg, who), // darf Co-Hosts ernennen
+		"e2ee":     d.Cfg.E2EE,
+		"captions": d.Cfg.Captions && !d.Cfg.E2EE && v.stt != nil && taps,
+		// Live-Transkription: läuft gerade (alle sehen den Hinweis) bzw. darf ich sie starten
+		"transcript":   v.tr.activeFor(room),
+		"transcribeOK": taps && v.transcriptAllowed(acc) && v.mayHost(room, me),
+		"breakout":     v.breakoutFor(room),
+		"mediaConn":    v.mediaCapable(), // Bildschirm und Kameras über eigene Verbindungen (/media)
 	})
 	_ = who
 }
@@ -1398,8 +1424,11 @@ func (s *Server) voiceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/voice/{room}/media", s.handleVoiceMedia)
 	mux.HandleFunc("POST /api/voice/{room}/breakout", s.handleVoiceBreakout)
 	mux.HandleFunc("DELETE /api/voice/{room}/breakout", s.handleVoiceBreakout)
-	mux.HandleFunc("POST /api/voice/{room}/stt", s.handleVoiceSTT)
+	mux.HandleFunc("POST /api/voice/{room}/transcript", s.handleVoiceTranscript)
+	mux.HandleFunc("GET /api/rooms/{room}/transcripts", s.handleRoomTranscripts)
+	mux.HandleFunc("GET /api/transcripts/{id}", s.handleTranscriptGet)
 	mux.HandleFunc("POST /api/voice/agents/report", s.handleVoiceAgentReport)
+	mux.HandleFunc("POST /api/voice/agents/segment", s.handleVoiceAgentSegment)
 	mux.HandleFunc("GET /api/admin/voice", s.requireMod(s.handleAdminVoice))
 }
 

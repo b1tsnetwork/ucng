@@ -638,19 +638,30 @@ Gemeldete Personen sind kaum zu übersehen: Sie rücken in der Seitenleiste nach
 
 Moderierende nehmen über *Mehr → Aufnahme starten* auf – **im eigenen Browser**, als WebM-Datei (Bild: Bildschirm mit sprechender Kamera, sonst die Kameras, sonst die Namen; Ton: alle samt eigenem Mikrofon). Alle im Kanal sehen dabei deutlich „● … nimmt auf“, auch am Namen. Die Datei landet nur auf dem Gerät der aufnehmenden Person; der Server speichert nichts. Vorher das Einverständnis aller einholen.
 
-### Untertitel und Mitschrift
+### Untertitel und Live-Transkription
 
-Mit einer **eigenen** Spracherkennung (selbst betriebenes Whisper o. Ä., OpenAI-kompatible Schnittstelle) gibt es Live-Untertitel – je Kanal einschaltbar (*Untertitel*). Es gibt keinen Weg über fremde Dienste: Ohne `STT_URL` sind Untertitel aus.
+Mit einer **eigenen** Spracherkennung (selbst betriebenes Whisper o. Ä., OpenAI-kompatible Schnittstelle) gibt es Live-Untertitel und eine Live-Transkription. Es gibt keinen Weg über fremde Dienste: Ohne `STT_URL` ist beides aus.
 
 | Umgebungsvariable | Standard | Bedeutung |
 |---|---|---|
-| `STT_URL` | – | z. B. `http://whisper:8000/v1/audio/transcriptions` (faster-whisper-server, whisper.cpp server, LocalAI …) |
+| `STT_URL` | – | z. B. `http://ucng-stt:8000/v1/audio/transcriptions` (speaches/faster-whisper, LocalAI …) |
 | `STT_TOKEN` | – | Bearer-Schlüssel, falls die Spracherkennung einen will |
-| `STT_MODEL` | `whisper-1` | Modell-Name, z. B. `Systran/faster-whisper-large-v3` |
-| `STT_LANGUAGE` | – | Sprache fest vorgeben; sonst die Sprache der Person |
-| `STT_CONCURRENCY` | `4` | gleichzeitige Anfragen (mehr werden ausgelassen statt gestaut) |
+| `STT_MODEL` | `whisper-1` | Modell-Name, z. B. `Systran/faster-whisper-small` |
+| `STT_LANGUAGE` | – | Sprache fest vorgeben; sonst die Sprache der Oberfläche der sprechenden Person |
+| `STT_CONCURRENCY` | `4` | gleichzeitige Anfragen an die Spracherkennung – für alle Kanäle zusammen |
+| `TRANSCRIPT_KEEP_DAYS` | `0` | Transkripte nach so vielen Tagen löschen; `0` = behalten, bis der Admin sie löscht |
 
-So funktioniert es: Solange eine Person spricht, sammelt ihr Browser die Sprache; nach einer kurzen Pause (oder spätestens nach 12 s) geht der Abschnitt als WAV (16 kHz, mono) an den Chat-Server, der ihn an `STT_URL` weiterreicht und den Text als Untertitel an alle im Kanal schickt. Jede Person kann Untertitel ausblenden und *Meine Sprache nicht verschriftlichen* wählen. *Mehr → Mitschrift herunterladen* speichert alles als Textdatei; Moderierende können die Mitschrift auch in den Kanal posten. In Ende-zu-Ende-verschlüsselten Kanälen gibt es keine Untertitel.
+**So funktioniert es:** Der **Sprach-Server** (eingebaut oder Agent) schneidet die Sprache jeder Person an Sprechpausen (0,75 s, höchstens 10 s) in Abschnitte. Er dekodiert dafür nichts – die Opus-Rahmen werden nur als Ogg-Datei verpackt (Standardbibliothek). Der Chat-Server schickt jeden Abschnitt an `STT_URL` und den Text als Untertitel an alle im Sprachkanal. **Wer spricht, steht sicher fest:** Es ist die Person der Sprachverbindung – keine Angabe des Browsers. Auch Personen ohne Sprecherplatz (mehr Sprechende als *Sprecher gleichzeitig*) werden verschriftlicht.
+
+- **Untertitel** (Häkchen *Untertitel und Live-Transkription* beim Kanal): laufen immer, wenn der Kanal es erlaubt; nichts wird gespeichert. Jede Person kann sie ausblenden und *Meine Sprache nicht verschriftlichen* wählen.
+- **Live-Transkription**: Moderierende (bzw. der Besitzer eines **temporären Kanals** – dort geht sie auch ohne das Häkchen) starten sie über *Mehr → Live-Transkription starten* oder das 📝 oben im Kanal. Dann wird **alles** im Sprachkanal Gesagte mit Name und Uhrzeit mitgeschrieben (auch von Personen, die *nicht verschriftlichen* gewählt haben). Alle sehen das deutlich: rote Leiste unter dem Kanalkopf, Hinweis in der Sprachleiste, eine Nachricht im Chat beim Start und beim Ende.
+- **Für alle im Kanal sichtbar:** Wer den Kanal lesen darf, sieht das Transkript live (📝 → Fenster mit den Beiträgen) – auch ohne dem Sprachkanal beizutreten – und lädt es danach als TXT oder JSON herunter (📝 → *Frühere Transkripte*).
+- **Ende:** von Hand, automatisch zwei Minuten nachdem der Sprachkanal leer ist, nach spätestens 12 Stunden oder wenn der Kanal gelöscht wird.
+- **Admin → Transkripte:** alle Transkripte mit Kanal, Dauer, Beiträgen und Person, die es gestartet hat; herunterladen und **löschen** (ein laufendes wird dabei beendet). Gespeichert wird unter `DATA_DIR/transcripts` (und ist damit auch in den Backups).
+- **Mehrere Kanäle gleichzeitig:** Jeder Kanal hat sein eigenes Transkript; alle Abschnitte gehen durch eine gemeinsame Warteschlange an die Spracherkennung (`STT_CONCURRENCY` parallel). Untertitel werden bei Überlast ausgelassen, Transkript-Abschnitte warten.
+- In Ende-zu-Ende-verschlüsselten Kanälen gibt es weder Untertitel noch Transkription (der Server hat die Sprache nicht). Sprach-Server (Agenten) müssen aktuell sein (`ucng-voice` mit „tap“); sie reichen die Abschnitte über `POST /api/voice/agents/segment` an den Chat-Server.
+
+API: `POST /api/voice/{room}/transcript` mit `{"on":true}` bzw. `{"on":false}` (optional `"lang":"de"`), `GET /api/rooms/{room}/transcripts` (laufendes samt Beiträgen und frühere), `GET /api/transcripts/{id}?format=txt|json`; Admin: `GET /api/admin/transcripts`, `GET|DELETE /api/admin/transcripts/{id}`.
 
 **Mit Docker** (fertig in [`deploy/stt`](deploy/stt/compose.yml) – speaches mit faster-whisper, nur im Docker-Netz des Chats, kein Port nach außen):
 
@@ -663,9 +674,11 @@ cd ../chat && docker compose up -d
 docker logs ucng | grep Untertitel     # „Untertitel: Spracherkennung http://ucng-stt:8000/… (Modell …)“
 ```
 
-Danach im Admin beim Kanal unter *Sprachkanal* das Häkchen *Untertitel* setzen. `STT_MODEL` muss genau das installierte Modell sein (sonst steht „antwortet HTTP 404“ im Log). Für Deutsch auf der CPU ist `Systran/faster-whisper-small` ein guter Start; genauer, aber langsamer ist `…-medium`; mit NVIDIA-GPU `STT_IMAGE_TAG=latest-cuda` und `deepdml/faster-whisper-large-v3-turbo-ct2`. Läuft die Spracherkennung auf einem anderen Rechner, `STT_URL` auf dessen Adresse setzen (am besten intern oder per HTTPS, mit `STT_TOKEN`).
+Danach im Admin beim Kanal unter *Sprachkanal* das Häkchen *Untertitel und Live-Transkription* setzen. `STT_MODEL` muss genau das installierte Modell sein (sonst steht „antwortet HTTP 404“ im Log). Für Deutsch auf der CPU ist `Systran/faster-whisper-small` ein guter Start; genauer, aber langsamer ist `…-medium`; mit NVIDIA-GPU `STT_IMAGE_TAG=latest-cuda` und `deepdml/faster-whisper-large-v3-turbo-ct2`. Läuft die Spracherkennung auf einem anderen Rechner, `STT_URL` auf dessen Adresse setzen (am besten intern oder per HTTPS, mit `STT_TOKEN`).
 
-Geeignet ist jeder Server mit der OpenAI-Schnittstelle `POST /v1/audio/transcriptions` (Felder `file`, `model`, `language`, Antwort `{"text": …}`), z. B. faster-whisper-server/speaches, whisper.cpp (`server`) oder LocalAI – Image, Modell und Port laut deren Anleitung. Läuft er im selben Docker-Netz wie der Chat, reicht etwa `STT_URL=http://whisper:8000/v1/audio/transcriptions`. Für Echtzeit-Untertitel empfiehlt sich ein kleines bis mittleres Modell oder eine GPU.
+Geeignet ist jeder Server mit der OpenAI-Schnittstelle `POST /v1/audio/transcriptions` (Felder `file`, `model`, `language`, Antwort `{"text": …}`), der **Ogg-Opus** annimmt – speaches/faster-whisper und LocalAI tun das (sie dekodieren mit ffmpeg); whisper.cpp `server` nur mit `--convert`. Für Echtzeit-Untertitel in mehreren Kanälen empfiehlt sich ein kleines bis mittleres Modell oder eine GPU.
+
+> **Hinweis:** Wer transkribiert, verarbeitet Sprache personenbezogen. Vorher alle Beteiligten informieren bzw. ihr Einverständnis einholen – die Hinweise in UCNG ersetzen das nicht.
 
 ### Ende-zu-Ende-Verschlüsselung
 

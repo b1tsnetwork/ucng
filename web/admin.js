@@ -154,9 +154,9 @@
   const TITLES = {
     uebersicht: _t("admin.uebersicht"), moderation: _t("admin.moderation"), automod: _t("admin.automod"), nutzer: _t("admin.personen"), protokoll: _t("admin.protokoll"),
     kanaele: _t("admin.kanaele"), allgemein: _t("admin.allgemein"), medien: _t("admin.emotes_gifs"), befehle: _t("admin.befehle"), widgets: _t("admin.widgets"), bots: _t("admin.bots"),
-    konten: _t("admin.team_zugaenge"), hosting: _t("admin.hosting"), beacon: _t("admin.beacon"), vorlagen: _t("admin.vorlagen"), sprachen: _t("admin.sprachen"), backups: _t("admin.backups"), meldungen: _t("admin.meldungen"), ankuendigungen: _t("admin.ankuendigungen"),
+    konten: _t("admin.team_zugaenge"), hosting: _t("admin.hosting"), beacon: _t("admin.beacon"), vorlagen: _t("admin.vorlagen"), sprachen: _t("admin.sprachen"), backups: _t("admin.backups"), transkripte: _t("admin.transkripte"), meldungen: _t("admin.meldungen"), ankuendigungen: _t("admin.ankuendigungen"),
   };
-  const ADMIN_VIEWS = new Set(["kanaele", "allgemein", "medien", "befehle", "widgets", "bots", "konten", "hosting", "beacon", "vorlagen", "sprachen", "backups", "ankuendigungen"]);
+  const ADMIN_VIEWS = new Set(["kanaele", "allgemein", "medien", "befehle", "widgets", "bots", "konten", "hosting", "beacon", "vorlagen", "sprachen", "backups", "ankuendigungen", "transkripte"]);
 
   function route() {
     let view = TITLES[location.hash.slice(1)] ? location.hash.slice(1) : (location.hash === "#einbetten" ? "widgets" : "uebersicht");
@@ -183,6 +183,7 @@
     if (view === "beacon") loadBeacon();
     if (view === "vorlagen") loadTemplates();
     if (view === "backups") loadBackups();
+    if (view === "transkripte") loadTranscripts();
     if (view === "sprachen") loadLanguages();
     if (view === "medien") loadMediaAdmin();
     if (view === "befehle") loadCommandsAdmin();
@@ -2785,6 +2786,67 @@
   // ---------- Backups ----------
 
   const sizeFmt = (b) => (b < 1024 * 1024 ? `${numFmt.format(Math.max(1, Math.round(b / 1024)))} KB` : `${new Intl.NumberFormat(GoChatI18n.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(b / 1024 / 1024)} MB`);
+
+  // ---------- Transkripte (Live-Transkription) ----------
+
+  let trItems = [];
+  async function loadTranscripts() {
+    let r;
+    try { r = await api("GET", "/api/admin/transcripts"); } catch (err) { toast(err.message, true); return; }
+    trItems = r.items || [];
+    $("trIntro").textContent = !r.stt ? _t("admin.tr_intro_nostt")
+      : _t("admin.tr_intro", { n: trItems.length }) + " " + (r.keepDays > 0 ? _t("admin.tr_keep_days", { days: r.keepDays }) : _t("admin.tr_keep_forever"))
+        + (r.stored ? "" : " " + _t("admin.tr_not_stored"));
+    renderTranscripts();
+  }
+  function renderTranscripts() {
+    const q = $("trFilter").value.trim().toLowerCase();
+    const list = trItems.filter((x) => !q || x.room.includes(q) || (x.byName || "").toLowerCase().includes(q));
+    $("trList").replaceChildren(...(list.length ? list.map((x) => {
+      const li = el("li", "user-row");
+      const main = el("div", "user-main");
+      main.append(el("strong", null, "#" + x.room + " · " + untilFmt.format(new Date(x.started))));
+      if (x.active) main.append(el("span", "chip ban", _t("admin.tr_live")));
+      const mins = x.ended ? Math.max(1, Math.round((x.ended - x.started) / 60000)) : Math.round((Date.now() - x.started) / 60000);
+      main.append(el("div", "user-meta", _t("admin.tr_meta", { min: mins, n: x.lines || 0, name: x.byName || "?" })));
+      const act = el("div", "room-actions");
+      for (const fmt of ["txt", "json"]) {
+        const b = el("button", "btn-quiet small", fmt.toUpperCase());
+        b.type = "button";
+        b.title = _t("admin.herunterladen");
+        b.addEventListener("click", () => downloadTranscript(x, fmt, b));
+        act.append(b);
+      }
+      const del = el("button", "btn-quiet small danger", _t("admin.loeschen"));
+      del.type = "button";
+      del.addEventListener("click", () => confirmAction(_t("admin.tr_delete_title", { room: x.room }),
+        x.active ? _t("admin.tr_delete_active") : _t("admin.tr_delete_text"), _t("admin.loeschen"), async () => {
+          try { await api("DELETE", "/api/admin/transcripts/" + encodeURIComponent(x.id)); toast(_t("admin.tr_deleted")); loadTranscripts(); }
+          catch (err) { toast(err.message, true); }
+        }));
+      act.append(del);
+      const icon = el("span", "file-icon");
+      icon.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h7l3.5 3.5v11.5H5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 2.5V6h3.5M7.5 10h5M7.5 13h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+      li.append(icon, main, act);
+      return li;
+    }) : [el("li", "empty-row small", _t("admin.tr_none"))]));
+  }
+  $("trFilter").addEventListener("input", renderTranscripts);
+  async function downloadTranscript(x, fmt, btn) {
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/admin/transcripts/" + encodeURIComponent(x.id) + "?format=" + fmt, { headers: { Authorization: "Bearer " + token } });
+      if (!res.ok) throw new Error(_t("admin.download_fehlgeschlagen"));
+      const blob = await res.blob();
+      const m = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = m ? m[1] : "transkript." + fmt;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } catch (err) { toast(err.message, true); }
+    btn.disabled = false;
+  }
 
   async function loadBackups() {
     let r;

@@ -7,38 +7,32 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
 
-// Untertitel: Der Browser schickt kurze Sprach-Abschnitte (WAV, 16 kHz, mono – nur, solange die
-// Person spricht) an den Chat-Server. Der reicht sie an die eigene Spracherkennung weiter
-// (STT_URL, OpenAI-kompatibel: POST multipart „file“, „model“ → {"text": …}, z. B. ein selbst
-// betriebenes Whisper wie faster-whisper-server oder whisper.cpp server) und verteilt den Text als
-// Untertitel an alle im Sprachkanal. Ton geht nie an Dritte; ohne STT_URL gibt es keine
-// Untertitel. In Ende-zu-Ende-verschlüsselten Kanälen sind sie aus.
-
-var (
-	ErrSTTOff    = errors.New("Untertitel sind hier nicht eingeschaltet")
-	ErrSTTBusy   = errors.New("Die Spracherkennung ist gerade ausgelastet")
-	ErrSTTFormat = errors.New("Bitte WAV schicken (16 kHz, mono)")
-)
-
-const maxSTTBody = 1 << 20 // ≈ 30 s bei 16 kHz/16 bit
+// Untertitel und Live-Transkription: Der Relay schneidet die Sprache an Sprechpausen in
+// Abschnitte (Ogg-Opus, internal/voicerelay/tap.go); der Chat-Server reicht sie an die eigene
+// Spracherkennung weiter (STT_URL, OpenAI-kompatibel: POST multipart „file“, „model“ →
+// {"text": …}, z. B. ein selbst betriebenes Whisper wie speaches/faster-whisper) und verteilt
+// den Text als Untertitel an alle im Sprachkanal – bei laufender Live-Transkription auch ins
+// Transkript (transcripts.go). Ton geht nie an Dritte; ohne STT_URL gibt es beides nicht. In
+// Ende-zu-Ende-verschlüsselten Kanälen ist beides aus.
 
 type sttClient struct {
 	url, token, model, lang string
 	client                  *http.Client
 	sem                     chan struct{}
 	rl                      *rateLimiter
+	queue                   chan sttJob  // Abschnitte vom Relay (transcripts.go)
 	lastWarn                atomic.Int64 // Unix-Sekunden der letzten Warnung im Log
 }
 
@@ -65,15 +59,19 @@ func newSTT(cfg Config) *sttClient {
 	}
 	log.Printf("Untertitel: Spracherkennung %s (Modell %s)", cfg.STTURL, model)
 	return &sttClient{url: cfg.STTURL, token: cfg.STTToken, model: model, lang: cfg.STTLanguage,
-		client: &http.Client{Timeout: 45 * time.Second}, sem: make(chan struct{}, n), rl: newRateLimiter(40, time.Minute)}
+		client: &http.Client{Timeout: 45 * time.Second}, sem: make(chan struct{}, n), rl: newRateLimiter(40, time.Minute),
+		queue: make(chan sttJob, 1024)}
 }
 
-// transcribe schickt einen Abschnitt an die Spracherkennung.
-func (c *sttClient) transcribe(ctx context.Context, wav []byte, lang string) (string, error) {
+// transcribeFile schickt einen Abschnitt (Ogg-Opus vom Relay) an die Spracherkennung.
+func (c *sttClient) transcribeFile(ctx context.Context, audio []byte, filename, ctype, lang string) (string, error) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	fw, _ := mw.CreateFormFile("file", "audio.wav")
-	fw.Write(wav)
+	hdr := textproto.MIMEHeader{}
+	hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	hdr.Set("Content-Type", ctype)
+	fw, _ := mw.CreatePart(hdr)
+	fw.Write(audio)
 	mw.WriteField("model", c.model)
 	mw.WriteField("response_format", "json")
 	mw.WriteField("temperature", "0")
@@ -134,65 +132,4 @@ func cleanCaption(s string) string {
 		s = string([]rune(s)[:500])
 	}
 	return s
-}
-
-func isWAV(b []byte) bool {
-	return len(b) > 44 && string(b[0:4]) == "RIFF" && string(b[8:12]) == "WAVE"
-}
-
-// POST /api/voice/{room}/stt?lang=de – WAV-Abschnitt der eigenen Stimme → Untertitel für alle
-func (s *Server) handleVoiceSTT(w http.ResponseWriter, r *http.Request) {
-	v := s.voice
-	if v == nil || v.stt == nil {
-		writeErr(w, http.StatusNotFound, ErrSTTOff.Error())
-		return
-	}
-	me, ok := s.users.Lookup(bearer(r))
-	if !ok {
-		writeErr(w, http.StatusUnauthorized, ErrNoSession.Error())
-		return
-	}
-	room := NormRoom(r.PathValue("room"))
-	acc := s.hub.voiceAccessFull(room, s.voiceWhoOf(me, "").access())
-	if acc.Cfg == nil || !acc.Cfg.Captions || acc.Cfg.E2EE {
-		writeErr(w, http.StatusNotFound, ErrSTTOff.Error())
-		return
-	}
-	speaking := false
-	for _, p := range v.Peers(room) { // nur, wer im Kanal ist und sprechen darf
-		speaking = speaking || p.User == me.ID && p.Speak && !p.Muted
-	}
-	if !speaking {
-		writeErr(w, http.StatusConflict, ErrMediaNoVoice.Error())
-		return
-	}
-	if !v.stt.rl.Allow(me.ID) {
-		writeErr(w, http.StatusTooManyRequests, "Zu viele Abschnitte – bitte kurz warten.")
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSTTBody))
-	if err != nil || !isWAV(body) {
-		writeErr(w, http.StatusBadRequest, ErrSTTFormat.Error())
-		return
-	}
-	select { // nicht stauen: lieber einen Abschnitt auslassen
-	case v.stt.sem <- struct{}{}:
-	default:
-		writeErr(w, http.StatusServiceUnavailable, ErrSTTBusy.Error())
-		return
-	}
-	defer func() { <-v.stt.sem }()
-	lang := r.URL.Query().Get("lang")
-	if len(lang) > 8 || strings.ContainsAny(lang, " /&") {
-		lang = ""
-	}
-	text, err := v.stt.transcribe(r.Context(), body, lang)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	if text != "" {
-		v.control(room, me.ID, "cap", true, text)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"text": text})
 }

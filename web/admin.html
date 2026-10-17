@@ -131,6 +131,10 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h8M7 3v2M9.5 5c-.6 3.2-2.8 6-6 7.5M5.5 8.2c1 1.6 2.4 2.8 4 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 17l3-7.5 3 7.5M11.6 14.4h3.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span data-i18n="admin.sprachen">Sprachen</span>
         </a>
+        <a href="#transkripte" data-view="transkripte" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h7l3.5 3.5v11.5H5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 2.5V6h3.5M7.5 10h5M7.5 13h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span data-i18n="admin.transkripte">Transkripte</span>
+        </a>
         <a href="#backups" data-view="backups" class="admin-only">
           <svg viewBox="0 0 20 20" aria-hidden="true"><ellipse cx="10" cy="5" rx="6" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4 5v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
           <span data-i18n="admin.backups">Backups</span>
@@ -1128,6 +1132,20 @@
       </section>
 
       <!-- Backups -->
+      <section class="view" id="view-transkripte" hidden>
+        <div class="view-bar">
+          <p class="view-intro" id="trIntro"></p>
+          <label class="search-field">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m13.2 13.2 3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span class="sr-only" data-i18n="admin.tr_filter">Kanal oder Person filtern</span>
+            <input id="trFilter" type="search" placeholder="Kanal oder Person filtern" data-i18n-placeholder="admin.tr_filter" autocomplete="off">
+          </label>
+        </div>
+        <div class="panel flush">
+          <ul class="user-list" id="trList"></ul>
+        </div>
+      </section>
+
       <section class="view" id="view-backups" hidden>
         <div class="view-bar">
           <p class="view-intro" id="backupIntro"></p>
@@ -1346,8 +1364,8 @@
           </label>
           <label class="switch-row">
             <span class="switch-text">
-              <strong data-i18n="admin.voice_captions">Untertitel</strong>
-              <small id="roomCaptionsHint" data-i18n="admin.voice_captions_hint">Über die eigene Spracherkennung (STT_URL, z. B. selbst betriebenes Whisper). Der Ton verlässt deinen Server nicht.</small>
+              <strong data-i18n="admin.voice_captions">Untertitel und Live-Transkription</strong>
+              <small id="roomCaptionsHint" data-i18n="admin.voice_captions_hint">Über die eigene Spracherkennung (STT_URL, z. B. selbst betriebenes Whisper). Live-Untertitel für alle; Moderierende können zusätzlich eine Live-Transkription starten (wird gespeichert, unter Transkripte). Der Ton verlässt deinen Server nicht.</small>
             </span>
             <input type="checkbox" class="switch" id="roomCaptions">
           </label>

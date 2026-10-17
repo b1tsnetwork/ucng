@@ -35,17 +35,18 @@ RUN set -eux; \
     curl -fsSL -o /opt/yt-dlp/yt-dlp "$yu/yt-dlp"; chmod 644 /opt/yt-dlp/yt-dlp; \
     printf '#!/bin/sh\nexec python3 "${YTDLP_BIN:-/opt/yt-dlp/yt-dlp}" "$@"\n' > /usr/local/bin/yt-dlp; \
     chmod 755 /usr/local/bin/yt-dlp; \
-    groupadd -r -g 10001 music; useradd -r -u 10001 -g music -M -d /tmp -s /usr/sbin/nologin music; mkdir -p /music; \
+    groupadd -r -g 10001 music; useradd -r -u 10001 -g music -M -d /tmp -s /usr/sbin/nologin music; \
+    mkdir -p /music/youtube; chown 10001:10001 /music /music/youtube; \
     deno --version; yt-dlp --version; ffmpeg -hide_banner -encoders | grep -q libopus
 COPY --from=build /bot-music /usr/local/bin/bot-music
 COPY --from=build /src/LICENSE /usr/share/licenses/ucng-bot-music/
 COPY examples/bot-music/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
-RUN chown -R 10001:10001 /music
 USER 10001:10001
 WORKDIR /tmp
 # Caches (yt-dlp, deno) im beschreibbaren /tmp – das Image läuft auch mit read_only
-ENV UCNG_URL=http://ucng:8080 MUSIC_DIR=/music TMP_DIR=/tmp YTDLP_UPDATE=1 \
+# YouTube-Stücke landen dauerhaft in /music/youtube (geht nur, wenn /music beschreibbar ist).
+ENV UCNG_URL=http://ucng:8080 MUSIC_DIR=/music CACHE_DIR=/music/youtube TMP_DIR=/tmp YTDLP_UPDATE=1 \
     HOME=/tmp XDG_CACHE_HOME=/tmp/.cache DENO_DIR=/tmp/.cache/deno
 VOLUME /music
 ENTRYPOINT ["tini", "--", "entrypoint.sh"]

@@ -330,6 +330,7 @@ func (s *Server) playMusic(b Bot, room string, cfg VoiceConfig, src packetSource
 	ticket := voicerelay.SignTicket(v.priv, voicerelay.Ticket{
 		Channel: room, User: "bot:" + b.ID, Name: b.Name, Speak: true, Music: mp.Volume,
 		Bitrate: min(max(bitrate*5/4, 24000), 256000), MaxSpeakers: cfg.MaxSpeakers, MaxPeers: cfg.MaxPeers, Stereo: pr.Stereo,
+		Tap: v.tapMode(room, &cfg),
 	}, time.Now())
 	var conn *wsock.Client
 	if choice.id == builtinRelay {
