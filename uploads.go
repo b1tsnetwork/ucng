@@ -209,6 +209,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		fail(w, ErrNoRoom)
 		return
 	}
+	if _, mirror := s.hub.Remote(room); mirror { // Bilder gehen (noch) nicht an andere Instanzen
+		fail(w, ErrMirrorFeature)
+		return
+	}
 	if !s.hub.CanWrite(room, a) {
 		fail(w, s.writeDenied(room))
 		return

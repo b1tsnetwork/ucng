@@ -37,7 +37,7 @@ RUN set -eux; \
     chmod 755 /usr/local/bin/yt-dlp; \
     groupadd -r -g 10001 music; useradd -r -u 10001 -g music -M -d /tmp -s /usr/sbin/nologin music; \
     mkdir -p /music/youtube; chown 10001:10001 /music /music/youtube; \
-    deno --version; yt-dlp --version; ffmpeg -hide_banner -encoders | grep -q libopus
+    deno --version; yt-dlp --version; ffprobe -version >/dev/null; ffmpeg -hide_banner -encoders | grep -q libopus
 COPY --from=build /bot-music /usr/local/bin/bot-music
 COPY --from=build /src/LICENSE /usr/share/licenses/ucng-bot-music/
 COPY examples/bot-music/entrypoint.sh /usr/local/bin/entrypoint.sh

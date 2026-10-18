@@ -121,7 +121,11 @@
     return data;
   }
 
-  const isOwn = (m) => (m.userId ? m.userId === me.id : !!me.name && m.name === me.name);
+  // Kanal-Föderation: eigene Nachrichten in abonnierten Kanälen heißen fed:<diese Instanz>/<id>
+  const selfDomain = () => (settings.chanFed && settings.chanFed.domain) || "";
+  const isOwn = (m) => (m.userId ? m.userId === me.id || (!!me.id && !!selfDomain() && m.userId === "fed:" + selfDomain() + "/" + me.id) : !!me.name && m.name === me.name);
+  const isFedUser = (id) => typeof id === "string" && id.startsWith("fed:");
+  const mirrorOf = (r = room) => { const x = rooms.find((y) => y.name === r); return (x && x.remote) || (r === room && roomInfo && roomInfo.remote) || null; };
   const author = (m) => m.userId || "name:" + m.name;
   const roomPath = (r = room) => `/api/rooms/${encodeURIComponent(r)}`;
 
@@ -313,7 +317,7 @@
     if (m.deleted) return bar;
     const canWrite = !!me.name && !me.sanction;
     if (canWrite) {
-      if (!dmFed()) {
+      if (!dmFed() && !mirrorOf()) {
         const react = iconBtn("act", _t("app.reagieren"), ICON.smile);
         react.addEventListener("click", (e) => { e.stopPropagation(); openReactPicker(react, m); });
         bar.append(react);
@@ -416,6 +420,7 @@
     const body = h("div", "body");
     const meta = h("div", "meta");
     meta.append(h("b", null, m.name));
+    if (m.fed && m.fed.from && m.fed.from !== selfDomain()) meta.append(Object.assign(h("span", "fed-from", "@" + m.fed.from), { title: _t("app.cf_from", { domain: m.fed.from }) }));
     if (own) meta.append(h("span", "you-tag", "du"));
     if (m.bot) meta.append(h("span", "badge bot-badge", _t("app.bot")));
     if (m.team) meta.append(h("span", "badge team-badge", _t("app.team")));
@@ -811,8 +816,11 @@
     if (info.links === "known") notes.push(_t("app.links_erst_nach_24_h"));
     if (info.links === "team") notes.push(_t("app.links_nur_vom_team"));
     if (info.temp) notes.push(_t("app.temp_rule", { min: info.temp.idleMinutes }));
+    if (info.remote) notes.unshift("🌐 " + info.remote.address + (info.remote.ended ? " · " + _t("app.cf_ended_short") : info.remote.mode === "write" ? "" : " · " + _t("app.cf_mode_read")));
+    if (info.share && !isDM(room)) notes.push(info.share === "write" ? _t("app.cf_shared_write") : _t("app.cf_shared_read"));
     $("roomRules").textContent = notes.join(" · ");
     $("roomRules").hidden = !notes.length;
+    $("chanUnsubBtn").hidden = !(info.remote && info.remote.subscribed && me.name);
   }
 
   const loginRequired = () => hostedMode() && settings.hosted && settings.hosted.guests === "none" && !me.member;
@@ -1120,10 +1128,92 @@
       rooms = await res.json();
     } catch { return; }
     const cur = rooms.find((x) => x.name === room);
-    if (cur && roomInfo) roomInfo.canWrite = cur.canWrite;
+    if (cur && roomInfo) {
+      roomInfo.canWrite = cur.canWrite;
+      if (cur.remote) roomInfo.remote = cur.remote;
+      $("chanUnsubBtn").hidden = !(cur.remote && cur.remote.subscribed && me.name);
+    }
     renderRoomList();
     refreshUnread();
+    updateChanSubBtn();
   }
+
+  // ---------- Kanäle anderer Instanzen abonnieren (Kanal-Föderation) ----------
+
+  function updateChanSubBtn() {
+    const cf = settings.chanFed;
+    $("chanSubBtn").hidden = !(cf && cf.userSubs && me.name && (!hostedMode() || me.member));
+  }
+  function chanSubRow(c) {
+    const li = h("li");
+    const info = h("div", "cs-info");
+    const bits = [c.title && c.title !== c.domain ? c.title : "", c.mode === "write" ? _t("app.cf_mode_write") : _t("app.cf_mode_read")];
+    info.append(h("strong", null, c.address), h("small", null, bits.filter(Boolean).join(" · ")));
+    if (c.description) info.append(h("small", "cs-desc", c.description));
+    li.append(info);
+    if (c.room && rooms.some((x) => x.name === c.room && x.remote && (x.remote.subscribed || x.remote.public))) {
+      const go = h("a", "btn-quiet", _t("app.cf_open"));
+      go.href = "#" + encodeURIComponent(c.room);
+      go.addEventListener("click", () => $("chanSubDialog").close());
+      li.append(go);
+    } else {
+      const b = h("button", "btn-quiet", _t("app.cf_subscribe"));
+      b.type = "button";
+      b.addEventListener("click", () => chanSubscribe(c.address, b));
+      li.append(b);
+    }
+    return li;
+  }
+  async function chanSubscribe(address, btn) {
+    $("chanSubError").textContent = "";
+    if (btn) btn.disabled = true;
+    $("chanSubGo").disabled = true;
+    try {
+      const r = await api("/api/channels/remote", { method: "POST", body: JSON.stringify({ address }) });
+      $("chanSubDialog").close();
+      await loadRooms();
+      toast(_t("app.cf_subscribed", { address }));
+      switchRoom(r.room);
+    } catch (e) { $("chanSubError").textContent = e.message; if (btn) btn.disabled = false; }
+    finally { $("chanSubGo").disabled = false; }
+  }
+  async function chanSubFind(dir) {
+    const list = $("chanSubList");
+    $("chanSubError").textContent = "";
+    const d = $("chanSubDomain").value.trim();
+    if (!dir && !d) { $("chanSubDomain").focus(); return; }
+    list.replaceChildren(h("li", "cs-empty", _t("app.cf_loading")));
+    try {
+      const r = dir ? await api("/api/channels/remote/directory?q=" + encodeURIComponent(d))
+        : await api("/api/channels/remote/browse?domain=" + encodeURIComponent(d));
+      list.replaceChildren(...(r.channels.length ? r.channels.map(chanSubRow) : [h("li", "cs-empty", dir ? _t("app.cf_dir_empty") : _t("app.cf_none_there"))]));
+    } catch (e) { list.replaceChildren(); $("chanSubError").textContent = e.message; }
+  }
+  $("chanSubBtn").addEventListener("click", () => {
+    $("chanSubAddr").value = ""; $("chanSubError").textContent = ""; $("chanSubList").replaceChildren();
+    $("chanSubDialog").showModal();
+    $("chanSubAddr").focus();
+  });
+  $("chanSubBrowse").addEventListener("click", () => chanSubFind(false));
+  $("chanSubDir").addEventListener("click", () => chanSubFind(true));
+  $("chanSubDomain").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); chanSubFind(false); } });
+  $("chanSubForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const a = $("chanSubAddr").value.trim();
+    if (!a) { $("chanSubAddr").focus(); return; }
+    chanSubscribe(a, null);
+  });
+  $("chanUnsubBtn").addEventListener("click", async () => {
+    const rm = mirrorOf();
+    if (!rm || !confirm(_t("app.cf_unsub_confirm", { address: rm.address }))) return;
+    const r = room;
+    try {
+      await api("/api/channels/remote/" + encodeURIComponent(r), { method: "DELETE" });
+      toast(_t("app.cf_unsubscribed", { address: rm.address }));
+      await loadRooms();
+      if (!rooms.some((x) => x.name === r)) switchRoom(firstRoom());
+    } catch (e) { toast(e.message); }
+  });
 
   // ---------- Kanalliste: Gruppen, Angepinnt, Sortierung, aktive Threads ----------
 
@@ -1170,6 +1260,7 @@
     if (r.readRoles && r.readRoles.length) a.append(Object.assign(h("span", "room-flag", "🔒"), { title: _t("app.privater_kanal") }));
     else if (r.writeRoles && r.writeRoles.length) a.append(Object.assign(h("span", "room-flag", "📣"), { title: r.canWrite ? _t("app.hier_duerfen_nur_bestimmte_rollen") : _t("app.nur_lesen") }));
     if (r.password) a.append(Object.assign(h("span", "room-flag", r.locked ? "🔑" : "🔓"), { title: r.locked ? _t("app.locked_flag") : _t("app.unlocked_flag") }));
+    if (r.remote) a.append(Object.assign(h("span", "room-flag fed" + (r.remote.ended ? " ended" : ""), "🌐"), { title: r.remote.address + " · " + (r.remote.ended ? _t("app.cf_ended_short") : r.remote.mode === "write" ? _t("app.cf_mode_write") : _t("app.cf_mode_read")) }));
     if (r.temp) a.append(Object.assign(h("span", "room-flag temp", "⏳"), { title: r.temp.ownerName ? _t("app.temp_room_of", { name: r.temp.ownerName, min: r.temp.idleMinutes }) : _t("app.temp_room", { min: r.temp.idleMinutes }) }));
     const u = unreadOf(r.name);
     if (u) {
@@ -1467,6 +1558,7 @@
     const ron = $("readonlyNote");
     ron.textContent = !ro ? "" : dm && dm.blocked
       ? (dm.blockedByMe ? _t("app.du_hast_name_blockiert", { name: dm.name }) : _t("app.in_dieser_unterhaltung_kannst_du_nicht"))
+      : mirrorOf() ? (mirrorOf().ended ? _t("app.cf_ro_ended", { domain: mirrorOf().domain }) : _t("app.cf_ro_read", { domain: mirrorOf().domain }))
       : _t("app.in_diesem_kanal_duerfen_nur_bestimmte");
     if (ro && dm && dm.blockedByMe) {
       const b = h("button", "text-btn", _t("app.blockierung_aufheben"));
@@ -1481,6 +1573,8 @@
     if (hostedMode() && !me.name && room) input.placeholder = _t("app.zum_schreiben_bitte_anmelden");
     else if (room && input.placeholder === _t("app.zum_schreiben_bitte_anmelden")) input.placeholder = _t("app.nachricht_an", { roomLabel: roomLabel(room) });
     updateUploadBtn();
+    if (media) $("gifBtn").hidden = !media.gifs || !!mirrorOf(); // GIFs gehen nicht an andere Instanzen
+    updateChanSubBtn();
     if (s && s.until) {
       clearTimeout(updateComposer.timer);
       updateComposer.timer = setTimeout(() => restoreSession().then(() => { updateComposer(); renderAll(); }),
@@ -1870,8 +1964,8 @@
     const own = isOwn(m);
     if (me.perms.pin && !m.deleted) items.push([ICON.pin, isPinned(m.id) ? _t("app.loesen") : _t("app.anpinnen"), () => setPin(m, !isPinned(m.id))]);
     if (!own && !m.deleted) items.push([ICON.flag, _t("app.melden"), () => openReport(m)]);
-    if (!own && !m.bot && m.userId && dmsEnabled && !isDM(room) && !isBlocked(m.userId)) items.push([ICON.mail, _t("app.direktnachricht_an", { name: m.name }), () => startDM(m.userId)]);
-    if (!own && !m.bot && m.userId && me.name && !isDM(room)) {
+    if (!own && !m.bot && m.userId && !isFedUser(m.userId) && dmsEnabled && !isDM(room) && !isBlocked(m.userId)) items.push([ICON.mail, _t("app.direktnachricht_an", { name: m.name }), () => startDM(m.userId)]);
+    if (!own && !m.bot && m.userId && !isFedUser(m.userId) && me.name && !isDM(room)) {
       items.push(isBlocked(m.userId)
         ? [ICON.block, _t("app.blockierung_von_aufheben", { name: m.name }), () => setBlocked(m.userId, m.name, false)]
         : [ICON.block, _t("app.name_blockieren", { name: m.name }), () => openBlock(m.userId, m.name)]);
@@ -1982,6 +2076,7 @@
     if (isDM(room) && !shown.some((d) => d.room === room)) shown.unshift({ room, name: _t("app.direktnachricht") });
     $("dmNav").hidden = !shown.length && !(hostedMode() && me.member && dmsEnabled);
     $("dmAddBtn").hidden = !(hostedMode() && me.member && dmsEnabled);
+    updateChanSubBtn();
     $("dmList").replaceChildren(...shown.map((d) => {
       const li = h("li");
       const a = h("a");
@@ -2193,7 +2288,7 @@
 
   function updateUploadBtn() {
     const allowed = !!me.canUpload && (media.uploads || "off") !== "off";
-    const show = allowed && !!me.name && !me.sanction && writable();
+    const show = allowed && !!me.name && !me.sanction && writable() && !mirrorOf();
     $("uploadBtn").hidden = !show;
     $("threadUploadBtn").hidden = !show;
   }
@@ -2278,7 +2373,7 @@
       if (Array.isArray(d.reactions) && d.reactions.length) settings.reactions = d.reactions;
     } catch { /* ohne Emotes weiter */ }
     $("emoteBtn").hidden = !emotes.size;
-    $("gifBtn").hidden = !media.gifs;
+    $("gifBtn").hidden = !media.gifs || !!mirrorOf();
     updateUploadBtn();
     if (!$("mediaPanel").hidden) renderMediaTab();
   }

@@ -1,6 +1,10 @@
 #!/bin/sh
 # Startet den Musik-Bot. Mit YTDLP_UPDATE=1 vorher die neueste yt-dlp-Fassung nach /tmp holen
 # (YouTube ändert sich oft) – klappt auch bei schreibgeschütztem Container; ein Fehler ist egal.
+# Mit YOUTUBE=0 (nur Musik aus dem Ordner) wird yt-dlp gar nicht gebraucht.
+if [ "${YOUTUBE:-1}" = 0 ]; then
+  exec bot-music "$@"
+fi
 if [ "${YTDLP_UPDATE:-0}" = 1 ]; then
   mkdir -p /tmp/yt-dlp && cp /opt/yt-dlp/yt-dlp /tmp/yt-dlp/yt-dlp
   if YTDLP_BIN=/tmp/yt-dlp/yt-dlp yt-dlp -U >/dev/null 2>&1; then

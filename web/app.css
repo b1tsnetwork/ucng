@@ -1483,3 +1483,18 @@ button.voice-bar-note { border: 0; background: none; padding: 0; text-align: lef
 .tr-past-item button { height: 26px; padding: 0 8px; font-size: 12px; }
 .voice-bar-note.tr-live { color: #ff6b75; font-weight: 600; }
 @media (max-width: 760px) { .tr-panel { width: calc(100% - 16px); max-height: 50vh; } .tr-line { grid-template-columns: 52px minmax(0, 1fr); } }
+
+/* ---------- Kanal-Föderation ---------- */
+.meta .fed-from { color: var(--muted); font-size: 12px; font-weight: 500; margin-left: -2px; }
+.room-flag.fed { font-size: 11px; opacity: .8; }
+.room-flag.fed.ended { filter: grayscale(1); opacity: .5; }
+.chan-sub { width: min(560px, calc(100vw - 32px)); }
+.chan-sub-find { display: flex; gap: 8px; margin: 12px 0 0; flex-wrap: wrap; }
+.chan-sub-find input { flex: 1 1 180px; min-width: 0; }
+.chan-sub-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; max-height: min(320px, 45vh); overflow: auto; }
+.chan-sub-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.chan-sub-list .cs-info { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.chan-sub-list strong { overflow-wrap: anywhere; font-size: 14px; }
+.chan-sub-list small { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.chan-sub-list .cs-empty { border: 0; color: var(--muted); font-size: 13.5px; }
+.chan-sub-list a.btn-quiet { text-decoration: none; color: inherit; }

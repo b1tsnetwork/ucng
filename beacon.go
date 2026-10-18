@@ -95,6 +95,14 @@ func (b *BeaconStore) Get() BeaconSettings {
 
 func (b *BeaconStore) Subs() []BeaconSub { return b.Get().Subs }
 
+// Poke meldet die Instanz bald neu (z. B. weil sich freigegebene Kanäle geändert haben).
+func (b *BeaconStore) Poke() {
+	select {
+	case b.wake <- struct{}{}:
+	default:
+	}
+}
+
 func (b *BeaconStore) touch() {
 	if b.changed != nil {
 		b.changed()
@@ -204,7 +212,7 @@ func (s *Server) beaconPayload(listed bool) map[string]any {
 	}
 	return map[string]any{"url": s.baseURL(), "name": st.Title, "description": cfg.Description, "users": s.users.Count(),
 		"language": cfg.Language, "country": cfg.Country, "mode": mode, "federation": s.fedEnabled(), "registration": reg,
-		"guests": guests, "version": version, "listed": listed, "source": s.cfg.SourceURL}
+		"guests": guests, "version": version, "listed": listed, "source": s.cfg.SourceURL, "channels": s.beaconChannels()}
 }
 
 // beaconRegister meldet die Instanz (listed=false: aus dem Verzeichnis entfernen).

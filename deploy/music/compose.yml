@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # UCNG Musik-Bot – MP3s aus einem Ordner oder YouTube-Videos/-Playlists in Sprachkanäle
+#   (YOUTUBE=0 in der .env: nur der Ordner, z. B. für lizenzfreie Musik)
 #   1. Admin → Bots: Bot mit den Rechten „Schreiben“ und „Musik“ anlegen, Token kopieren
 #   2. Admin → Kanal → Sprachkanal: „Musik von Bots“ einschalten
 #   3. .env.example nach .env kopieren und ausfüllen
@@ -29,7 +30,11 @@ services:
       VOLUME: ${VOLUME:-20}
       BITRATE: ${BITRATE:-128}
       MAX_QUEUE: ${MAX_QUEUE:-500}
+      YOUTUBE: ${YOUTUBE:-0}           # 0 = kein YouTube, nur Musik aus dem Ordner (lizenzfrei)
       YTDLP_UPDATE: ${YTDLP_UPDATE:-1} # beim Start neueste yt-dlp-Fassung holen
+      YTDLP_COOKIES: ${YTDLP_COOKIES:-} # z. B. /cookies.txt (siehe unten bei volumes)
+      YTDLP_ARGS: ${YTDLP_ARGS:-}
+      START_TIMEOUT: ${START_TIMEOUT:-90}
       # Zwischenspeicher: YouTube-Stücke dauerhaft ablegen (Ogg-Opus, „Titel [ID].opus“) –
       # beim nächsten Mal ohne Anfrage bei YouTube. Leer = aus. Liegt er im Musik-Ordner,
       # spielt „!folder youtube“ alles Gespeicherte.
@@ -41,6 +46,9 @@ services:
       # der Bot schreibt nur dort. Ohne Zwischenspeicher: „:ro“ anhängen und CACHE_DIR= leer.
       # Der Container läuft als Nutzer 10001: auf Linux einmal  mkdir -p music/youtube && chown 10001 music/youtube
       - ${MUSIC_PATH:-./music}:/music
+      # Optional: Cookies für YouTube (bei „Sign in to confirm you’re not a bot“), nur lesend –
+      # dazu YTDLP_COOKIES=/cookies.txt in der .env
+      # - ./cookies.txt:/cookies.txt:ro
     tmpfs:
       # Downloads, yt-dlp-Update und Caches; mehr Platz für lange YouTube-Videos
       - /tmp:size=${TMP_SIZE:-1g},uid=10001,gid=10001,mode=0700

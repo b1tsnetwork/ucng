@@ -156,7 +156,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --read-only --tmpfs /tmp:uid=10001,gid=10001 --entrypoint sh ucng-bot-music:ci -c \
-            'bot-music -version && ffmpeg -hide_banner -encoders | grep -q libopus && yt-dlp --version && deno --version | head -1'
+            'bot-music -version && ffprobe -version >/dev/null && ffmpeg -hide_banner -encoders | grep -q libopus && yt-dlp --version && deno --version | head -1'
           # Ohne Token beendet sich der Bot mit einer klaren Meldung (Einstieg samt yt-dlp-Update)
           out="$(docker run --rm --read-only --tmpfs /tmp:uid=10001,gid=10001 -e YTDLP_UPDATE=0 ucng-bot-music:ci 2>&1 || true)"
           echo "$out"

@@ -80,6 +80,9 @@ func (r *room) canWrite(a *Access) bool {
 	if r.kind == RoomDM {
 		return !r.dmBlocked()
 	}
+	if r.remote != nil && !r.remote.writable() {
+		return false // abonnierter Kanal: nur lesen (oder Freigabe beendet)
+	}
 	if len(r.writeRoles) == 0 {
 		return true
 	}
@@ -111,12 +114,15 @@ func (h *Hub) RoomsFor(a *Access) []RoomInfo {
 	defer h.mu.Unlock()
 	out := []RoomInfo{}
 	for _, r := range h.rooms {
-		if r.kind == "" && r.canSee(a) {
+		if r.kind == "" && r.canSee(a) && r.listedFor(a) {
 			ri := r.info()
 			ri.CanWrite = r.canWrite(a)
 			ri.Locked = !r.passOK(a)
 			ri.Group = h.groupOf(r)
 			ri.Threads = r.activeThreadsLocked(now)
+			if ri.Remote != nil && a != nil && r.remote != nil && contains(r.remote.Subs, a.ID) {
+				ri.Remote.Subscribed = true
+			}
 			out = append(out, ri)
 		}
 	}

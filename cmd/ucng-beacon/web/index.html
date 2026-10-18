@@ -20,6 +20,7 @@
       </a>
       <nav class="tabs" aria-label="Bereiche" data-i18n-aria-label="beacon.bereiche">
         <a href="#instanzen" data-tab="instanzen" data-i18n="beacon.instanzen">Instanzen</a>
+        <a href="#kanaele" data-tab="kanaele" data-i18n="beacon.kanaele">Kanäle</a>
         <a href="#gifs" data-tab="gifs" data-i18n="beacon.gifs">GIFs</a>
         <a href="#sprachpakete" data-tab="sprachpakete" data-i18n="beacon.lp_tab">Sprachen</a>
         <a href="#verwaltung" data-tab="verwaltung" data-i18n="beacon.verwaltung">Verwaltung</a>
@@ -74,6 +75,26 @@
           <li><span data-i18n-html="beacon.im_admin_bereich_unter_beacon_diese">Im Admin-Bereich unter <b>Beacon</b> diese Adresse eintragen:</span> <code class="copyable" id="beaconUrl"></code></li>
           <li data-i18n="beacon.sprache_land_und_beschreibung_waehlen_im">Sprache, Land und Beschreibung wählen, „Im Verzeichnis anzeigen“ einschalten – fertig. Die Angaben werden alle 6 Stunden aktualisiert.</li>
         </ol>
+      </details>
+    </section>
+
+    <!-- Kanäle (Kanal-Föderation) -->
+    <section class="tab" id="tab-kanaele" hidden>
+      <form class="filters" id="chanFilters" role="search">
+        <label class="sr-only" for="chanQ" data-i18n="beacon.suchen">Suchen</label>
+        <input id="chanQ" type="search" placeholder="Kanal, Thema oder Instanz …" autocomplete="off" data-i18n-placeholder="beacon.kanal_thema_oder_instanz">
+        <label class="sr-only" for="chanMode" data-i18n="beacon.freigabe">Freigabe</label>
+        <select id="chanMode">
+          <option value="" data-i18n="beacon.alle_kanaele">Alle Kanäle</option>
+          <option value="write" data-i18n="beacon.mitschreiben">Mitschreiben</option>
+          <option value="read" data-i18n="beacon.nur_lesen">Nur lesen</option>
+        </select>
+      </form>
+      <p class="count" id="chanCount" aria-live="polite"></p>
+      <ul class="instances" id="chanList"></ul>
+      <details class="howto">
+        <summary data-i18n="beacon.kanal_abonnieren">Kanal abonnieren</summary>
+        <p data-i18n-html="beacon.kanal_abonnieren_hilfe">Kopiere die Adresse (<code>#kanal@instanz</code>) und trage sie in deiner UCNG-Instanz ein: als Admin unter <b>Föderierte Kanäle</b> (für alle) oder im Chat über <b>Kanal abonnieren</b> (für dich, wenn deine Instanz das erlaubt).</p>
       </details>
     </section>
 

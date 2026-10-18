@@ -77,6 +77,8 @@ func e2eSender(s string) string {
 type FedMeta struct {
 	Ref   int64  `json:"ref,omitempty"`   // ID der Nachricht auf der anderen Instanz (eingehend)
 	State string `json:"state,omitempty"` // ausgehend: pending, sent, failed
+	// Kanal-Föderation: Instanz der Person, die geschrieben hat (leer = diese Instanz)
+	From string `json:"from,omitempty"`
 }
 
 // DMPeer liefert das Gegenüber in einer Direktnachricht.

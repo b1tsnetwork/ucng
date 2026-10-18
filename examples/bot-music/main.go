@@ -6,10 +6,12 @@
 //
 //	!play <YouTube-Link | Suchbegriff>   Video, Playlist oder Suche in die Warteschlange
 //	!folder [Unterordner]                alle Dateien aus dem Musik-Ordner (zufällig gemischt)
+//	!songs [Begriff]                     Unterordner bzw. passende Dateien anzeigen
 //	!skip  !stop  !queue  !np  !vol 25  !shuffle  !loop  !clear  !cache  !music
 //
 // Mit CACHE_DIR legt der Bot YouTube-Stücke dauerhaft ab (cache.go) – beim nächsten Mal ohne
-// Anfrage bei YouTube.
+// Anfrage bei YouTube. Mit YOUTUBE=0 gibt es gar kein YouTube: !play <Begriff> sucht dann im
+// Musik-Ordner (z. B. für lizenzfreie Musik).
 //
 // Der Bot selbst braucht nur die Go-Standardbibliothek; zum Umwandeln ruft er ffmpeg auf, für
 // YouTube yt-dlp (beides im Docker-Image, siehe Dockerfile). Die Musik geht im Streaming-Modus an
@@ -53,7 +55,10 @@ var (
 	kbps     = atoiEnv("BITRATE", 128)     // Opus-Bitrate
 	maxQueue = atoiEnv("MAX_QUEUE", 500)
 	tmpDir   = env("TMP_DIR", os.TempDir())
-	client   = &http.Client{} // ohne Zeitlimit: ein Stück dauert so lange, wie es dauert
+	// YOUTUBE=0: keine Links und keine YouTube-Suche – nur Musik aus dem Musik-Ordner (z. B.
+	// lizenzfreie Stücke). !play <Begriff> sucht dann in den Dateinamen.
+	youtubeOn = env("YOUTUBE", "1") != "0"
+	client    = &http.Client{} // ohne Zeitlimit: ein Stück dauert so lange, wie es dauert
 )
 
 func env(k, d string) string {
@@ -71,11 +76,13 @@ func atoiEnv(k string, d int) int {
 
 // item: ein Stück in der Warteschlange.
 type item struct {
-	Title string
-	File  string // lokale Datei
-	URL   string // YouTube (oder andere von yt-dlp unterstützte Seite)
-	Key   string // Schlüssel im Zwischenspeicher (z. B. youtube-<Video-ID>)
-	By    string
+	Title  string
+	File   string // lokale Datei
+	URL    string // YouTube (oder andere von yt-dlp unterstützte Seite)
+	Key    string // Schlüssel im Zwischenspeicher (z. B. youtube-<Video-ID>)
+	Live   bool   // Livestream (läuft, bis !skip oder !stop)
+	By     string
+	Credit string // „ – Künstler · Lizenz“ aus den Tags der Datei (beim Abspielen gelesen)
 }
 
 // player: Warteschlange und Wiedergabe eines Sprachkanals.
@@ -144,14 +151,39 @@ func (p *player) run() {
 		p.cur, p.cancel = &it, cancel
 		vol, chat := p.vol, p.chat
 		p.mu.Unlock()
-		say(chat, fmt.Sprintf("▶️ **%s**%s", it.Title, byLine(it)))
-		err := play(ctx, p.room, it, vol)
+		if it.File != "" {
+			it.Credit = credit(ctx, it.File, it.Title) // Künstler und Lizenz aus den Tags (Namensnennung bei CC BY)
+			p.mu.Lock()
+			if p.cur != nil {
+				p.cur.Credit = it.Credit
+			}
+			p.mu.Unlock()
+		}
+		announce := func() { say(chat, fmt.Sprintf("▶️ **%s**%s%s%s", it.Title, it.Credit, liveTag(it), byLine(it))) }
+		if it.URL != "" && it.Key != "" {
+			if path, _ := cacheGet(it.Key); path != "" {
+				it.URL = "" // aus dem Zwischenspeicher: sofort da
+			}
+		}
+		if it.URL != "" {
+			say(chat, fmt.Sprintf("⏳ Lade **%s** …", it.Title)) // ▶️ folgt, sobald Ton fließt
+		} else {
+			announce()
+		}
+		err := play(ctx, p.room, it, vol, announce)
 		cancel()
 		if err != nil && !errors.Is(err, context.Canceled) {
-			say(chat, "⚠️ "+it.Title+": "+err.Error())
+			say(chat, "⚠️ "+it.Title+": "+err.Error()+ytHint(err))
 			time.Sleep(time.Second)
 		}
 	}
+}
+
+func liveTag(it item) string {
+	if it.Live {
+		return " 🔴 live"
+	}
+	return ""
 }
 
 func byLine(it item) string {
@@ -193,8 +225,9 @@ func stopRemote(room string) {
 
 // --- Abspielen ---
 
-// play wandelt ein Stück mit ffmpeg in Ogg-Opus um und streamt es zum Chat-Server.
-func play(ctx context.Context, room string, it item, vol int) error {
+// play wandelt ein Stück mit ffmpeg in Ogg-Opus um und streamt es zum Chat-Server. started:
+// sobald die Wiedergabe wirklich beginnt.
+func play(ctx context.Context, room string, it item, vol int, started func()) error {
 	if path, _ := cacheGet(it.Key); path != "" { // schon da: ohne YouTube und ohne ffmpeg
 		f, err := os.Open(path)
 		if err == nil {
@@ -203,23 +236,10 @@ func play(ctx context.Context, room string, it item, vol int) error {
 			return stream(ctx, room, it, vol, f, nil)
 		}
 	}
-	src := it.File
-	if it.URL != "" { // erst herunterladen (robuster als ein langer Live-Download)
-		dir, f, err := download(ctx, it.URL)
-		if err != nil {
-			return err
-		}
-		// Die Quelle darf erst weg, wenn Wiedergabe und Zwischenspeicher fertig sind.
-		var once sync.WaitGroup
-		once.Add(2)
-		go func() { once.Wait(); os.RemoveAll(dir) }()
-		defer once.Done()
-		cacheStore(it.Key, it.Title, it.URL, f, once.Done)
-		src = f
+	if it.URL != "" {
+		return playURL(ctx, room, it, vol, started)
 	}
-	ff := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-		"-i", src, "-vn", "-map", "0:a:0", "-c:a", "libopus", "-b:a", strconv.Itoa(kbps)+"k",
-		"-ac", "2", "-ar", "48000", "-frame_duration", "20", "-application", "audio", "-f", "ogg", "pipe:1")
+	ff := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs(it.File)...)
 	out, err := ff.StdoutPipe()
 	if err != nil {
 		return err
@@ -267,35 +287,18 @@ func stream(ctx context.Context, room string, it item, vol int, body io.Reader, 
 		Reason string `json:"reason"`
 	}
 	json.NewDecoder(res.Body).Decode(&r)
-	if r.Reason == "stopped" { // vom Chat aus angehalten (oder ein anderes Stück gestartet)
+	switch r.Reason {
+	case "stopped": // vom Chat aus angehalten (oder ein anderes Stück gestartet)
 		return context.Canceled
+	case "gone":
+		if ctx.Err() != nil {
+			return context.Canceled
+		}
+		return errors.New("Verbindung zum Sprachkanal verloren (Sprach-Server neu gestartet?)")
+	case "error":
+		return errors.New("Wiedergabe abgebrochen (fehlerhafter Datenstrom)")
 	}
 	return nil
-}
-
-// download holt die Tonspur mit yt-dlp in eine temporäre Datei (Ordner danach selbst löschen).
-func download(ctx context.Context, link string) (string, string, error) {
-	dir, err := os.MkdirTemp(tmpDir, "ucng-music-")
-	if err != nil {
-		return "", "", err
-	}
-	cmd := exec.CommandContext(ctx, "yt-dlp", "--quiet", "--no-warnings", "--no-playlist", "--no-part",
-		"-f", "bestaudio/best", "-o", filepath.Join(dir, "track.%(ext)s"), link)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		os.RemoveAll(dir)
-		if ctx.Err() != nil {
-			return "", "", context.Canceled
-		}
-		return "", "", fmt.Errorf("yt-dlp: %s", firstLine(stderr.String(), err))
-	}
-	files, _ := filepath.Glob(filepath.Join(dir, "track.*"))
-	if len(files) == 0 {
-		os.RemoveAll(dir)
-		return "", "", errors.New("yt-dlp hat nichts geliefert")
-	}
-	return dir, files[0], nil
 }
 
 func firstLine(s string, err error) string {
@@ -328,24 +331,35 @@ func resolve(ctx context.Context, q, by string) ([]item, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "yt-dlp", "--quiet", "--no-warnings", "--flat-playlist", "-J", target)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	args := append([]string{"--quiet", "--no-warnings", "--flat-playlist", "-J"}, ytdlpArgs...)
+	cmd := exec.CommandContext(ctx, "yt-dlp", append(args, "--", target)...)
+	stderr := &tailBuffer{}
+	cmd.Stderr = stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("yt-dlp: %s", firstLine(stderr.String(), err))
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, errors.New("YouTube antwortet nicht (60 s)")
+		}
+		why := stderr.reason()
+		if why == "" {
+			why = err.Error()
+		}
+		return nil, errors.New("YouTube: " + why)
 	}
 	var info struct {
 		ID           string `json:"id"`
 		ExtractorKey string `json:"extractor_key"`
 		Title        string `json:"title"`
+		LiveStatus   string `json:"live_status"` // is_live, was_live, not_live, is_upcoming …
+		IsLive       bool   `json:"is_live"`
 		WebpageURL   string `json:"webpage_url"`
 		OriginalURL  string `json:"original_url"`
 		Entries      []struct {
-			Title string `json:"title"`
-			URL   string `json:"url"`
-			ID    string `json:"id"`
-			IEKey string `json:"ie_key"`
+			Title      string `json:"title"`
+			URL        string `json:"url"`
+			ID         string `json:"id"`
+			IEKey      string `json:"ie_key"`
+			LiveStatus string `json:"live_status"`
 		} `json:"entries"`
 	}
 	if err := json.Unmarshal(out, &info); err != nil {
@@ -357,7 +371,15 @@ func resolve(ctx context.Context, q, by string) ([]item, error) {
 		if u == "" {
 			u = q
 		}
-		return []item{{Title: orDefault(info.Title, u), URL: u, Key: keyOf(info.ExtractorKey, info.ID), By: by}}, nil
+		if info.LiveStatus == "is_upcoming" {
+			return nil, errors.New("der Livestream hat noch nicht begonnen")
+		}
+		live := info.IsLive || info.LiveStatus == "is_live"
+		key := keyOf(info.ExtractorKey, info.ID)
+		if live {
+			key = "" // Livestreams nicht zwischenspeichern
+		}
+		return []item{{Title: orDefault(info.Title, u), URL: u, Key: key, Live: live, By: by}}, nil
 	}
 	for _, e := range info.Entries {
 		u := e.URL
@@ -369,7 +391,11 @@ func resolve(ctx context.Context, q, by string) ([]item, error) {
 			if c, ce := cacheGet(k); c != "" { // Titel aus dem Zwischenspeicher
 				e.Title = orDefault(e.Title, ce.Title)
 			}
-			items = append(items, item{Title: orDefault(e.Title, u), URL: u, Key: k, By: by})
+			live := e.LiveStatus == "is_live"
+			if live {
+				k = ""
+			}
+			items = append(items, item{Title: orDefault(e.Title, u), URL: u, Key: k, Live: live, By: by})
 		}
 	}
 	if search && len(items) > 0 {
@@ -398,7 +424,8 @@ func folder(sub, by string) ([]item, error) {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() && path != dir && strings.HasPrefix(d.Name(), ".") { // z. B. .tmp des Zwischenspeichers
+		if d.IsDir() && path != dir && (strings.HasPrefix(d.Name(), ".") || // z. B. .tmp des Zwischenspeichers
+			!youtubeOn && isCacheDir(path)) { // YouTube aus: alte Downloads nicht spielen
 			return filepath.SkipDir
 		}
 		if !d.IsDir() && audioExt[strings.ToLower(filepath.Ext(path))] {
@@ -443,7 +470,8 @@ func command(chat string, m *message) {
 	}
 	cmd, arg := strings.ToLower(fields[0]), strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(text, prefix), fields[0]))
 	known := map[string]bool{"play": true, "p": true, "folder": true, "ordner": true, "skip": true, "next": true, "stop": true, "queue": true, "q": true,
-		"np": true, "vol": true, "volume": true, "shuffle": true, "loop": true, "clear": true, "music": true, "musik": true, "cache": true}
+		"np": true, "vol": true, "volume": true, "shuffle": true, "loop": true, "clear": true, "music": true, "musik": true, "cache": true,
+		"songs": true, "list": true, "lieder": true}
 	if !known[cmd] {
 		return
 	}
@@ -458,7 +486,12 @@ func command(chat string, m *message) {
 	p := playerFor(room, chat)
 	switch cmd {
 	case "music", "musik":
-		say(chat, "🎵 "+prefix+"play <YouTube-Link/Playlist/Suche> · "+prefix+"folder [Unterordner] · "+prefix+"skip · "+prefix+"stop · "+prefix+"queue · "+prefix+"np · "+prefix+"vol 1–100 · "+prefix+"shuffle · "+prefix+"loop · "+prefix+"clear · "+prefix+"cache")
+		rest := prefix + "folder [Unterordner] · " + prefix + "songs [Begriff] · " + prefix + "skip · " + prefix + "stop · " + prefix + "queue · " + prefix + "np · " + prefix + "vol 1–100 · " + prefix + "shuffle · " + prefix + "loop · " + prefix + "clear"
+		if youtubeOn {
+			say(chat, "🎵 "+prefix+"play <YouTube-Link/Playlist/Suche> · "+rest+" · "+prefix+"cache")
+		} else {
+			say(chat, "🎵 "+prefix+"play [Begriff] (sucht im Musik-Ordner) · "+rest+" – YouTube und Links sind abgeschaltet.")
+		}
 	case "play", "p":
 		if arg == "" {
 			items, err := folder("", m.Name)
@@ -469,18 +502,43 @@ func command(chat string, m *message) {
 			say(chat, fmt.Sprintf("🎵 %d Stücke aus dem Ordner in der Warteschlange.", p.add(items...)))
 			return
 		}
+		if !youtubeOn {
+			if strings.Contains(arg, "://") {
+				say(chat, "🚫 Links sind abgeschaltet – hier läuft nur Musik aus dem Musik-Ordner. Suchen: "+prefix+"play <Begriff>, anzeigen: "+prefix+"songs")
+				return
+			}
+			items := findLocal(arg, m.Name)
+			switch {
+			case len(items) == 0:
+				say(chat, "🎵 Im Musik-Ordner passt nichts zu „"+arg+"“ ("+prefix+"songs zeigt, was da ist).")
+				return
+			case len(items) == 1:
+				say(chat, "➕ "+items[0].Title)
+			default:
+				say(chat, fmt.Sprintf("➕ %d Stücke zu „%s“", min(len(items), maxQueue), arg))
+			}
+			p.add(items...)
+			return
+		}
 		go func() {
 			items, err := resolve(context.Background(), arg, m.Name)
 			if err != nil || len(items) == 0 {
-				say(chat, "⚠️ Nichts gefunden: "+errText(err))
+				say(chat, "⚠️ Nichts gefunden: "+errText(err)+ytHint(err))
 				return
 			}
-			n := p.add(items...)
-			if n == 1 {
-				say(chat, "➕ "+items[0].Title)
-			} else {
+			p.mu.Lock()
+			free := maxQueue - len(p.queue)
+			p.mu.Unlock()
+			switch n := min(len(items), free); { // erst melden, dann anstellen (Reihenfolge im Chat)
+			case n <= 0:
+				say(chat, "⚠️ Die Warteschlange ist voll.")
+				return
+			case n == 1:
+				say(chat, "➕ "+items[0].Title+liveTag(items[0]))
+			default:
 				say(chat, fmt.Sprintf("➕ %d Stücke", n))
 			}
+			p.add(items...)
 		}()
 	case "folder", "ordner":
 		items, err := folder(arg, m.Name)
@@ -489,7 +547,13 @@ func command(chat string, m *message) {
 			return
 		}
 		say(chat, fmt.Sprintf("🎵 %d Stücke in der Warteschlange.", p.add(items...)))
+	case "songs", "list", "lieder":
+		say(chat, songList(arg))
 	case "cache":
+		if !youtubeOn {
+			say(chat, "💾 YouTube ist abgeschaltet – kein Zwischenspeicher.")
+			return
+		}
 		f := strings.Fields(arg)
 		if len(f) == 2 && (f[0] == "forget" || f[0] == "vergessen") {
 			if !m.Team {
@@ -532,7 +596,7 @@ func command(chat string, m *message) {
 		if cur == nil {
 			say(chat, "Gerade läuft nichts.")
 		} else {
-			say(chat, "🎶 "+cur.Title+byLine(*cur))
+			say(chat, "🎶 "+cur.Title+cur.Credit+byLine(*cur))
 		}
 	case "queue", "q":
 		p.mu.Lock()
@@ -653,8 +717,16 @@ func main() {
 	if token == "" {
 		log.Fatal("Bitte UCNG_BOT_TOKEN setzen (Admin-Bereich → Bots; Rechte: Schreiben und Musik).")
 	}
-	cacheLoad()
-	for _, tool := range []string{"ffmpeg", "yt-dlp"} {
+	tools := []string{"ffmpeg"}
+	if youtubeOn {
+		cacheLoad()
+		setupCookies()
+		tools = append(tools, "yt-dlp")
+	} else {
+		cacheDir = "" // nichts von YouTube – auch nichts aus dem alten Zwischenspeicher
+		log.Printf("YouTube abgeschaltet (YOUTUBE=0): nur Musik aus %s", musicDir)
+	}
+	for _, tool := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
 			log.Printf("Hinweis: %s nicht gefunden – %s", tool, map[string]string{"ffmpeg": "ohne ffmpeg geht gar nichts", "yt-dlp": "YouTube geht dann nicht"}[tool])
 		}

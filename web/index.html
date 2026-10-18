@@ -34,6 +34,9 @@
 
       <nav class="rooms-nav" aria-label="Kanäle" data-i18n-aria-label="app.kanaele_2">
         <h2 class="nav-title"><span data-i18n="app.kanaele_2">Kanäle</span>
+          <button type="button" class="nav-add nav-fed" id="chanSubBtn" hidden aria-label="Kanal einer anderen Instanz abonnieren" title="Kanal einer anderen Instanz abonnieren" data-i18n-aria-label="app.cf_subscribe_hint" data-i18n-title="app.cf_subscribe_hint">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="10" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2.8 10h12.4M9 3.8c1.7 1.8 2.5 3.9 2.5 6.2s-.8 4.4-2.5 6.2c-1.7-1.8-2.5-3.9-2.5-6.2S7.3 5.6 9 3.8z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M16 2.5v5M13.5 5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
           <button type="button" class="nav-add nav-sort" id="sortBtn" aria-label="Sortierung" data-i18n-aria-label="app.sortierung_2">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4v12m0 0-3-3m3 3 3-3M14 16V4m0 0-3 3m3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
@@ -91,6 +94,9 @@
         </div>
         <button class="icon-btn" id="dmMenuBtn" type="button" hidden aria-haspopup="menu" aria-label="Unterhaltung: Optionen" title="Blockieren, Unterhaltung löschen" data-i18n-aria-label="app.unterhaltung_optionen" data-i18n-title="app.blockieren_unterhaltung_loeschen">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1.6" fill="currentColor"/><circle cx="10" cy="10" r="1.6" fill="currentColor"/><circle cx="15" cy="10" r="1.6" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" id="chanUnsubBtn" type="button" hidden aria-label="Abo beenden" title="Abo dieses Kanals beenden" data-i18n-aria-label="app.cf_unsubscribe" data-i18n-title="app.cf_unsubscribe_hint">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="10" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2.8 10h12.4M9 3.8c1.7 1.8 2.5 3.9 2.5 6.2s-.8 4.4-2.5 6.2c-1.7-1.8-2.5-3.9-2.5-6.2S7.3 5.6 9 3.8z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M13.5 15.5l5 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </button>
         <button class="icon-btn" id="roomSettingsBtn" type="button" hidden aria-label="Kanal einstellen" title="Deinen temporären Kanal einstellen" data-i18n-aria-label="app.room_settings" data-i18n-title="app.room_settings_hint">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5v2M10 15.5v2M17.5 10h-2M4.5 10h-2M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4M15.3 15.3l-1.4-1.4M6.1 6.1 4.7 4.7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -587,6 +593,27 @@
       <div class="actions">
         <button type="button" class="btn-quiet" data-close data-i18n="app.abbrechen">Abbrechen</button>
         <button type="submit" class="btn-primary" data-i18n="app.unlock">Entsperren</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Kanal einer anderen Instanz abonnieren -->
+  <dialog id="chanSubDialog" class="chan-sub">
+    <form id="chanSubForm">
+      <h2 data-i18n="app.cf_title">Kanal abonnieren</h2>
+      <p data-i18n-html="app.cf_text">Kanäle anderer UCNG-Instanzen, die dafür freigegeben sind. Das Abo gilt nur für dich; schreiben kannst du, wenn der Kanal das erlaubt – mit den Regeln der anderen Instanz.</p>
+      <label class="sr-only" for="chanSubAddr" data-i18n="app.cf_address">Adresse</label>
+      <input id="chanSubAddr" autocomplete="off" spellcheck="false" placeholder="#kanal@chat.example.org" data-i18n-placeholder="app.cf_address_ph">
+      <div class="chan-sub-find">
+        <input id="chanSubDomain" autocomplete="off" spellcheck="false" placeholder="chat.example.org" aria-label="Instanz durchsuchen" data-i18n-aria-label="app.cf_browse_label">
+        <button type="button" class="btn-quiet" id="chanSubBrowse" data-i18n="app.cf_browse">Durchsuchen</button>
+        <button type="button" class="btn-quiet" id="chanSubDir" data-i18n="app.cf_directory">Verzeichnis</button>
+      </div>
+      <ul class="chan-sub-list" id="chanSubList"></ul>
+      <p class="form-error" id="chanSubError" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn-quiet" data-close data-i18n="app.abbrechen">Abbrechen</button>
+        <button type="submit" class="btn-primary" id="chanSubGo" data-i18n="app.cf_subscribe">Abonnieren</button>
       </div>
     </form>
   </dialog>

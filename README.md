@@ -5,6 +5,7 @@
 Echtzeit-Chat in Go – mit vollständiger Weboberfläche und einem einbettbaren Widget (JS + CSS) für beliebige andere Webseiten. Instanzen verbinden sich über Föderation und Beacons zu einem Netz („Unified Chat Network“); jede Instanz ist dabei das Tor („Gateway“) für ihre Mitglieder. Früher hieß das Projekt *GoChat* – siehe [Name und frühere Bezeichnungen](#name-und-frühere-bezeichnungen).
 
 - **Zwei Betriebsarten in einem Programm** (`MODE=simple|hosted`): *simple* für Intranet und private Nutzung (Namen ohne Konto), *hosted* für öffentlich gehostete Chats mit **Nutzerkonten, Zwei-Faktor-Anmeldung, Ende-zu-Ende-verschlüsselten Direktnachrichten und Föderation** (`name@andere-instanz`) – siehe [Modus „hosted“](#modus-hosted)
+- **Föderierte Kanäle:** Kanäle für andere UCNG-Instanzen freigeben (nur lesen oder mitschreiben) und Kanäle anderer Instanzen abonnieren – vom Admin für alle oder von jeder Person für sich, in beiden Betriebsarten; Verzeichnis über den Beacon (siehe [Föderierte Kanäle](#föderierte-kanäle-kanalinstanz))
 - **Speicher wählbar:** Dateien (Standard), **SQLite** oder **MySQL/MariaDB** – beide Treiber in reinem Go, ohne cgo
 - **Keine externen Abhängigkeiten** im Standard-Build – nur die Go-Standardbibliothek (Sprachstand Go 1.24, gebaut wird mit einer unterstützten Go-Version, siehe `toolchain` in `go.mod`); Datenbank-Treiber nur per Build-Option
 - **Eine einzige Binärdatei** – HTML, CSS und JS sind per `go:embed` eingebaut
@@ -237,7 +238,7 @@ Direktnachrichten zwischen zwei Konten sind automatisch verschlüsselt:
 
 ### Föderation (name@instanz)
 
-Mitglieder können Mitgliedern auf **anderen UCNG-Instanzen** verschlüsselte Direktnachrichten schreiben: in der Seitenleiste bei „Direktnachrichten“ auf **+** und `name@chat.example.org` eingeben. Kanäle bleiben je Instanz.
+Mitglieder können Mitgliedern auf **anderen UCNG-Instanzen** verschlüsselte Direktnachrichten schreiben: in der Seitenleiste bei „Direktnachrichten“ auf **+** und `name@chat.example.org` eingeben. Kanäle lassen sich zusätzlich für andere Instanzen freigeben und abonnieren – in beiden Betriebsarten, siehe [Föderierte Kanäle](#föderierte-kanäle-kanalinstanz).
 
 - Einschalten unter Admin → **Hosting** (braucht `PUBLIC_URL` mit `https://`). Optional nur bestimmte Instanzen erlauben (`chat.example.org`, `*.example.net`) oder einzelne sperren.
 - Jede Instanz hat einen **Ed25519-Serverschlüssel** (`/.well-known/ucng`). Nachrichten gehen als **signierter** POST an `/api/fed/inbox` der anderen Instanz (Absender-Domain, Zeit, Ziel und Hash des Inhalts sind signiert; Wiederholungen und veraltete Anfragen werden abgelehnt).
@@ -248,7 +249,7 @@ Mitglieder können Mitgliedern auf **anderen UCNG-Instanzen** verschlüsselte Di
 
 ### Was die Konten-Daten enthalten
 
-`users.json` (bzw. die Datenbank) enthält je Konto: Name, E-Mail, Hash des Anmeldeschlüssels, Salz, TOTP-Geheimnis, Hashes der Wiederherstellungscodes, öffentlichen Schlüssel, verschlüsselten privaten Schlüssel und Hashes der Sitzungs-Tokens. `federation.json` enthält den privaten Serverschlüssel der Instanz und die gemerkten Schlüssel anderer Instanzen. **Backups enthalten beides – behandle sie entsprechend vertraulich.**
+`users.json` (bzw. die Datenbank) enthält je Konto: Name, E-Mail, Hash des Anmeldeschlüssels, Salz, TOTP-Geheimnis, Hashes der Wiederherstellungscodes, öffentlichen Schlüssel, verschlüsselten privaten Schlüssel und Hashes der Sitzungs-Tokens. `federation.json` enthält den privaten Serverschlüssel der Instanz, die gemerkten Schlüssel anderer Instanzen und die Warteschlange (auch Lieferungen föderierter Kanäle); `channelfed.json` die Einstellungen der Kanal-Föderation und welche Instanzen welche freigegebenen Kanäle abonniert haben. **Backups enthalten beides – behandle sie entsprechend vertraulich.**
 
 ## Admin-Bereich
 
@@ -260,7 +261,7 @@ Unter `/admin` meldest du dich an – als **Haupt-Admin** (Anmeldename leer lass
 |---------|:---------:|:-----:|
 | Übersicht (Statistik), Moderation, Automod, Wortfilter, Meldungen, Personen sperren, Protokoll | ✓ | ✓ |
 | Endgültig löschen, Team-Abzeichen, Rollen, geschützte Namen ändern | | ✓ |
-| Kanäle, Allgemein, Emotes & GIFs, Befehle, Ankündigungen, Widgets, Bots, Team-Zugänge, Hosting, Beacon, Vorlagen, Backups | | ✓ |
+| Kanäle, Allgemein, Emotes & GIFs, Befehle, Ankündigungen, Widgets, Bots, Team-Zugänge, Hosting, Föderierte Kanäle, Beacon, Vorlagen, Backups | | ✓ |
 
 Zugänge für das Team legst du unter **Team-Zugänge** an (Passwort mindestens 10 Zeichen; „Sicheres Passwort erzeugen“ hilft). Ein Konto lässt sich deaktivieren – offene Sitzungen enden dann sofort, ebenso nach Passwort- oder Rollenwechsel. Passwörter werden mit PBKDF2-HMAC-SHA256 (210.000 Runden, eigenes Salz) gespeichert. Der Haupt-Admin wird nur über `ADMIN_PASSWORD` verwaltet und kann nicht gelöscht werden.
 
@@ -281,15 +282,48 @@ Zugänge für das Team legst du unter **Team-Zugänge** an (Passwort mindestens 
 - **Bots:** siehe [Bots](#bots).
 - **Team-Zugänge** und **Backups:** siehe oben.
 - **Hosting:** Betriebsart und Speicher auf einen Blick; im Modus „hosted“ Gäste-Regel, Registrierung, E-Mail-Versand (SMTP mit Test-E-Mail), Einladungslinks, Föderation (erlaubte/gesperrte Instanzen, bekannte Instanzen mit Schlüssel-Fingerabdruck) – siehe [Modus „hosted“](#modus-hosted).
+- **Föderierte Kanäle:** Kanal-Föderation ein-/ausschalten, persönliche Abos erlauben, erlaubte/gesperrte Instanzen; freigegebene Kanäle mit den abonnierenden Instanzen (letzte Lieferung, Fehler, Abo beenden); abonnierte Kanäle (für alle oder nur für Abonnierende, abbestellen); Kanäle einer Instanz oder aus dem Beacon-Verzeichnis abonnieren – siehe [Föderierte Kanäle](#föderierte-kanäle-kanalinstanz). Freigegeben wird ein Kanal im Kanal-Dialog unter „Für andere Instanzen“.
 - **Beacon:** im Instanz-Verzeichnis eintragen und GIF-Sammlungen abonnieren – siehe [Beacon](#beacon-instanz-verzeichnis-und-gif-hub).
 - **Vorlagen:** Grundkonfiguration exportieren und importieren – siehe [Vorlagen](#vorlagen-grundkonfiguration-exportieren-und-importieren).
 - **Sprachen:** Standardsprache, Browsersprache, Sprachen ein-/ausblenden, Texte bearbeiten, eigene Sprachen – siehe [Sprachen und Übersetzungen](#sprachen-und-übersetzungen).
+
+## Föderierte Kanäle (#kanal@instanz)
+
+Ein Kanal lässt sich für **andere UCNG-Instanzen freigeben** – andere Instanzen **abonnieren** ihn dann unter der Adresse `#kanal@chat.example.org`. Das funktioniert in **beiden Betriebsarten** (simple und hosted) und braucht nur `PUBLIC_URL`.
+
+**Einschalten:** Admin → **Föderierte Kanäle** → „Kanal-Föderation einschalten“ – auf beiden Seiten. Optional „Personen dürfen selbst abonnieren“ sowie Listen erlaubter bzw. gesperrter Instanzen (`chat.example.org`, `*.example.net`; unabhängig von der Föderation der Direktnachrichten).
+
+**Freigeben (Ursprung):** Admin → Kanäle → Kanal bearbeiten → **Für andere Instanzen**:
+
+| Freigabe | Bedeutung |
+|---|---|
+| Nicht freigegeben | Standard |
+| **nur lesen** | Andere Instanzen bekommen alle Nachrichten (neu, bearbeitet, gelöscht) – z. B. für Ankündigungen |
+| **mitschreiben** | Personen anderer Instanzen schreiben mit. Ihre Nachrichten landen hier im Kanal (mit „@ihre-instanz“ am Namen) und gelten nach den **Regeln dieses Kanals**: Langsam-Modus, Link-Regel, Automod, Wortfilter, Sperren. Bearbeiten und Löschen der eigenen Nachrichten geht wie gewohnt |
+
+Freigeben lassen sich nur **öffentliche** Kanäle – keine mit Leserollen oder Passwort, keine temporären, keine Direktnachrichten. Dürfen in einem Kanal nur bestimmte Rollen schreiben, ist er für andere Instanzen automatisch „nur lesen“. Wird ein Kanal später privat, die Freigabe entfernt oder der Kanal gelöscht, endet die Freigabe für alle Abonnenten (dort bleibt der bisherige Verlauf lesbar, mit dem Hinweis „Freigabe beendet“). Beim Umbenennen folgen die Abonnenten automatisch. Unter Föderierte Kanäle steht je Kanal, welche Instanzen ihn abonniert haben – mit letzter Lieferung, Fehlern und „Abo beenden“.
+
+**Abonnieren (Abonnent):**
+
+- **Für alle (Admin):** Föderierte Kanäle → „Kanal abonnieren“: Adresse eintragen (optional mit eigenem Namen hier) oder über „Kanäle dieser Instanz“ bzw. „Beacon-Verzeichnis“ suchen. Der Kanal erscheint in der Kanalliste wie ein eigener (mit 🌐), lässt sich in Gruppen einsortieren, mit Leserollen einschränken und moderieren. Später umschaltbar auf „nur für Abonnierende“.
+- **Für sich (Personen, wenn erlaubt):** im Chat neben „Kanäle“ auf 🌐+ – Adresse eintragen, eine Instanz durchsuchen oder im Verzeichnis suchen. Ein persönliches Abo steht nur bei dieser Person in der Liste; im Kanal-Kopf beendet „Abo beenden“ es. Im Modus „hosted“ geht das nur mit Konto.
+- Je fremdem Kanal gibt es auf einer Instanz **einen** Spiegelkanal – egal wie viele Personen ihn abonnieren. Ohne Abos (und ohne Admin-Abo) verschwindet er wieder; dann meldet sich die Instanz beim Ursprung ab.
+- Beim Abonnieren kommen die letzten 50 Nachrichten mit, danach jede neue, bearbeitete oder gelöschte Nachricht.
+
+**Im Spiegelkanal** schreibt man – bei „mitschreiben“ – direkt beim Ursprung: Die Nachricht erscheint sofort, Fehler (Langsam-Modus, Sperre beim Ursprung, Automod …) kommen als Meldung zurück. Antworten und Threads funktionieren, Reaktionen, Umfragen, Bilder-Upload und GIFs nicht. Bilder und GIFs aus dem Ursprung werden angezeigt (von dessen Adresse geladen). Die eigene Moderation wirkt zusätzlich: Moderatoren können Nachrichten hier ausblenden, Sperren dieser Instanz gelten auch beim Schreiben in Spiegelkanälen, und die eigene Automod blendet Treffer aus.
+
+**Technik:** Anmelden, Abmelden, Schreiben, Bearbeiten und Löschen schickt der Abonnent **signiert** an `POST /api/fed/channels/{kanal}/{subscribe|unsubscribe|post|edit|delete}` des Ursprungs; der Ursprung verteilt jede Änderung signiert an `POST /api/fed/channels/inbox` jedes Abonnenten – über die Warteschlange der Föderation (je Instanz in der richtigen Reihenfolge, mit Wiederholungen bis zu 24 Stunden). Schlüssel und Signaturen wie bei den Direktnachrichten (Ed25519, gemerkter Serverschlüssel/TOFU). `GET /api/fed/channels` listet die freigegebenen Kanäle (öffentlich). Personen anderer Instanzen haben beim Ursprung die Kennung `fed:<instanz>/<id>`. Eine Nachricht gilt im Spiegelkanal nur dann als „eigene“ (bearbeitbar, mit „du“), wenn die eigene Instanz sie selbst geschrieben hat – der Ursprung kann keine Nachrichten im Namen fremder Personen unterschieben, die wie eigene aussehen. Grenzen: höchstens 200 abonnierte Kanäle je Instanz und 500 abonnierende Instanzen je Kanal.
+
+**Verzeichnis:** Ist die Instanz bei einem Beacon eingetragen, meldet sie ihre freigegebenen Kanäle mit; der Beacon listet sie im Reiter **Kanäle** (`GET /api/v1/channels`), und Instanzen durchsuchen das Verzeichnis ihrer eingetragenen Beacons (Verzeichnis-Beacon und Beacons der GIF-Abos).
+
+**Reverse-Proxy:** `/.well-known/ucng` und `/api/fed/` müssen an UCNG durchgereicht werden.
 
 ## Beacon: Instanz-Verzeichnis und GIF-Hub
 
 `ucng-beacon` ist ein **eigenes kleines Programm** (gleiches Repository, keine Abhängigkeiten) mit Weboberfläche:
 
 - **Instanzen:** UCNG-Instanzen tragen sich selbst ein. Besucher finden sie mit Name, Adresse, Beschreibung, **Anzahl der Nutzer**, **bevorzugter Sprache** und **Land** (Flagge), Betriebsart, ob Registrierung offen ist und ob Föderation an ist – durchsuchbar, filterbar nach Sprache und Land, sortierbar (meiste Nutzer, zuletzt gemeldet, neueste, Name).
+- **Kanäle:** freigegebene Kanäle aller gelisteten Instanzen (siehe [Föderierte Kanäle](#föderierte-kanäle-kanalinstanz)) – durchsuchbar, filterbar nach „mitschreiben“/„nur lesen“, mit Adresse zum Kopieren.
 - **GIFs:** wie die GIF-Bibliothek im Chat – hochladen, per URL laden oder bei GIPHY/Tenor suchen und übernehmen (mit eigenem API-Schlüssel des Beacons). GIFs liegen in **Sammlungen** (ein GIF kann in mehreren stehen). Die öffentliche **GIF-Ansicht** zeigt alle Sammlungen; zu jeder gibt es eine **Abo-Adresse** (`https://beacon.example.org#c_12ab34cd`) zum Kopieren.
 - **Verwaltung** (Reiter „Verwaltung“, Passwort aus `ADMIN_PASSWORD`): Name und Beschreibung, **Quellenangabe an GIFs** (steht im Chat unter jedem GIF aus diesem Beacon, z. B. „GIFs vom Alpenraum“; leer = „via“ + Name des Beacons), GIF-Anbieter, Sammlungen, GIFs bearbeiten/löschen, gemeldete Instanzen ausblenden oder entfernen, **Sprachen** (derselbe Editor wie im Chat; Änderungen in `DATA_DIR/i18n.json`).
 - **Sprache:** oben rechts umschaltbar (Deutsch, Englisch und eigene Sprachen); Fehlermeldungen des Beacons kommen in der Sprache der Anfrage – auch die, die eine Instanz bei der Anmeldung zurückbekommt (in der Standardsprache der Instanz).
@@ -338,7 +372,8 @@ Die Liste ist nach Stufe geordnet (Offiziell, Empfohlen, Standard, Community), i
 |---------|------|--------------|
 | `GET` | `/api/v1/info` | Name, Beschreibung, Zahlen, Sprachen und Länder |
 | `GET` | `/api/v1/instances?q=&language=&country=&trust=official\|recommended\|standard\|community&sort=users\|active\|new\|name` | gelistete Instanzen (mit `trust`, `trustNote`, `port`) |
-| `POST` | `/api/v1/register` | Anmeldung (signiert, siehe oben); `{"listed":false}` trägt aus |
+| `POST` | `/api/v1/register` | Anmeldung (signiert, siehe oben); `{"listed":false}` trägt aus; `channels` = freigegebene Kanäle |
+| `GET` | `/api/v1/channels?q=&mode=read\|write&language=&trust=` | freigegebene Kanäle aller gelisteten Instanzen: `{"channels":[{"address","domain","name","description","mode","title","messages","lastAt","trust","language","url"}],"total":n}` |
 | `GET` | `/api/v1/collections` | Sammlungen mit Anzahl und Vorschaubild |
 | `GET` | `/api/v1/gifs?q=&collection=c_…,c_…&limit=&offset=` | GIFs, Antwort `{"gifs":[…],"total":n}` |
 | `GET` | `/api/v1/gifs/{id}` | ein GIF |
@@ -746,7 +781,7 @@ curl -X POST -H "Authorization: Bearer gcb_…" --data-binary @musik.opus \
 
 Das Stück wird in Echtzeit vom Chat-Server an den Relay des Kanals geschickt (auch an einen Agenten). Achte auf die Rechte an der Musik.
 
-**Fertiger Musik-Bot:** [`examples/bot-music`](examples/bot-music/README.md) spielt MP3s aus einem Ordner oder YouTube-Videos/-Playlists (`!play`, `!folder`, `!skip`, `!stop`, `!queue`, `!vol` …); YouTube-Stücke legt er dauerhaft ab und spielt sie danach ohne Anfrage bei YouTube – als offizielles Image `ghcr.io/<owner>/ucng-bot-music` mit compose-Datei in `deploy/music`. Beim Streaming den Bot direkt mit dem Chat-Server verbinden oder im Reverse-Proxy das Puffern des Request-Bodys abschalten (nginx: `proxy_request_buffering off;`).
+**Fertiger Musik-Bot:** [`examples/bot-music`](examples/bot-music/README.md) spielt MP3s aus einem Ordner oder YouTube-Videos/-Playlists (`!play`, `!folder`, `!skip`, `!stop`, `!queue`, `!vol` …); YouTube-Stücke legt er dauerhaft ab und spielt sie danach ohne Anfrage bei YouTube; mit `YOUTUBE=0` spielt er nur den Ordner (z. B. lizenzfreie Musik, `!play <Begriff>` sucht darin, Künstler und Lizenz aus den Tags werden angezeigt) – als offizielles Image `ghcr.io/<owner>/ucng-bot-music` mit compose-Datei in `deploy/music`. Beim Streaming den Bot direkt mit dem Chat-Server verbinden oder im Reverse-Proxy das Puffern des Request-Bodys abschalten (nginx: `proxy_request_buffering off;`).
 
 ### Mehr Sprach-Server (Agenten)
 
@@ -1139,7 +1174,7 @@ UCNG_WEBHOOK_SECRET=… PORT=9000 go run ./examples/bot-webhook
 # im Admin als Webhook-URL eintragen: http://<rechner>:9000/hook
 ```
 
-Dazu der **Musik-Bot** [`examples/bot-music`](examples/bot-music/README.md) mit offiziellem Docker-Image (ffmpeg, yt-dlp, deno): MP3s aus einem Ordner oder YouTube-Videos/-Playlists in einen Sprachkanal.
+Dazu der **Musik-Bot** [`examples/bot-music`](examples/bot-music/README.md) mit offiziellem Docker-Image (ffmpeg, yt-dlp, deno): MP3s aus einem Ordner oder YouTube-Videos/-Playlists in einen Sprachkanal (YouTube mit `YOUTUBE=0` abschaltbar).
 
 ```bash
 cd deploy/music && cp .env.example .env   # Token und Musik-Ordner eintragen
@@ -1229,6 +1264,12 @@ Im Modus „hosted“ zusätzlich (sonst `404`); `/api/settings` enthält dann `
 | `GET`   | `/api/fed/lookup?addr=…`            | Schlüssel eines Kontos auf einer anderen Instanz |
 | `GET`   | `/.well-known/ucng`, `/api/fed/users/{name}` | für andere Instanzen: Serverschlüssel, öffentlicher Schlüssel eines Kontos |
 | `POST`  | `/api/fed/inbox`                    | signierter Eingang von anderen Instanzen (`X-UCNG-Domain`, `X-UCNG-Date`, `X-UCNG-Signature`) |
+| `GET`   | `/api/fed/channels`                 | freigegebene Kanäle dieser Instanz (öffentlich, CORS offen): `{"domain","title","channels":[{"name","description","mode","messages","lastAt"}]}` |
+| `POST`  | `/api/fed/channels/{kanal}/{aktion}` | Kanal-Föderation, signiert von der abonnierenden Instanz: `subscribe` (→ Angaben und letzte 50 Nachrichten), `unsubscribe`, `post`, `edit`, `delete` |
+| `POST`  | `/api/fed/channels/inbox`           | Lieferungen eines Ursprungs (signiert): `message`, `update`, `removed`, `info`, `end`; `410` = hier nicht abonniert |
+| `POST`  | `/api/channels/remote`              | Kanal einer anderen Instanz für sich abonnieren: `{"address":"#kanal@instanz"}` → `{"room"}` (nur wenn erlaubt) |
+| `DELETE`| `/api/channels/remote/{room}`       | persönliches Abo beenden |
+| `GET`   | `/api/channels/remote/browse?domain=…`, `/api/channels/remote/directory?q=…` | freigegebene Kanäle einer Instanz bzw. aus dem Beacon-Verzeichnis (`room` = schon abonniert). `/api/rooms` liefert je Kanal `share` (eigene Freigabe) bzw. `remote` (`address`, `domain`, `channel`, `mode`, `public`, `subscribed`, `ended`); Nachrichten anderer Instanzen tragen `fed.from` |
 
 Admin-Endpunkte (alle außer Login mit `Authorization: Bearer <token>`; **M** = auch Moderatoren):
 
@@ -1273,6 +1314,12 @@ Admin-Endpunkte (alle außer Login mit `Authorization: Bearer <token>`; **M** = 
 | `POST`  | `/api/admin/users/{id}/account`              | **M** `{"action":"disable"|"enable"|"reset2fa"|"verify"|"logout"|"resetmail"}` |
 | `GET`   | `/api/admin/federation`                      | Domain, Schlüssel-Fingerabdruck, bekannte Instanzen, Warteschlange |
 | `DELETE`| `/api/admin/federation/peers/{domain}`       | gemerkten Serverschlüssel einer Instanz vergessen |
+| `GET`/`PUT` | `/api/admin/channelfed`                  | Kanal-Föderation: `{"enabled","userSubs","allow","deny"}`; `GET` zusätzlich freigegebene Kanäle mit Abonnenten, abonnierte Kanäle, Warteschlange |
+| `PUT`   | `/api/admin/rooms/{room}/share`              | Kanal freigeben: `{"mode":"read"|"write"|""}` |
+| `DELETE`| `/api/admin/channelfed/shared/{room}/{domain}` | Abo einer Instanz beenden |
+| `POST`  | `/api/admin/channelfed/subscribe`            | `{"address","name","public":true}` → `{"room"}` (Abbestellen: Kanal löschen) |
+| `PATCH` | `/api/admin/channelfed/mirrors/{room}`       | `{"public":false}` – nur für Abonnierende |
+| `GET`   | `/api/admin/channelfed/browse?domain=…`, `/api/admin/channelfed/directory?q=…` | wie oben, für den Admin |
 | `GET`/`POST` | `/api/admin/backups`                    | Backups auflisten / sofort anlegen |
 | `GET`   | `/api/admin/backups/{name}`                  | Backup herunterladen |
 | `GET`   | `/api/admin/i18n`                            | Sprachen mit Vollständigkeit, Standardsprache, Browsersprache an/aus |
@@ -1393,6 +1440,8 @@ mailer.go        E-Mail-Versand per SMTP (STARTTLS/TLS)
 qr.go            QR-Code-Erzeuger (SVG) für die 2FA-Einrichtung
 e2e.go           Ende-zu-Ende-verschlüsselte Direktnachrichten (Server-Seite)
 federation.go    Föderation: Serverschlüssel, signierter Eingang, Warteschlange, TOFU
+chanfed.go       Föderierte Kanäle: Protokoll, Freigabe, Abos, Verzeichnis (Server-Seite)
+chanfed_hub.go   Föderierte Kanäle im Hub: Freigabe, Spiegelkanäle
 *_test.go        Tests
 LICENSE          GNU AGPL v3 (unverändert)
 NOTICE           Projektinhaber, Lizenzhinweis, Fremdinhalte
@@ -1504,7 +1553,7 @@ Jeweils `.env.example` nach `.env` kopieren – dort stehen **alle** Einstellung
 - **Admin-Passwort setzen:** Ein langes `ADMIN_PASSWORD` verwenden und den Admin-Bereich nur über HTTPS aufrufen.
 - **Einbetten einschränken:** Unter Widgets „Nur auf eingetragenen Domains“ wählen und bei jedem Widget die Domains eintragen.
 - **Eigene Konten statt geteiltem Passwort:** Jede Person im Team bekommt ein eigenes Konto – so steht im Protokoll, wer was getan hat, und ein Konto lässt sich einzeln sperren.
-- **Modus „hosted“:** `PUBLIC_URL` mit `https://` setzen (Links in E-Mails, Föderation, 2FA-Bezeichnung) und `TRUST_PROXY=1` hinter dem Reverse-Proxy. Die Browser-Kryptografie (WebCrypto) funktioniert nur über HTTPS oder auf `localhost`. Der Reverse-Proxy muss `/.well-known/ucng` und `/api/fed/` an UCNG durchreichen, wenn die Föderation an ist.
+- **Modus „hosted“:** `PUBLIC_URL` mit `https://` setzen (Links in E-Mails, Föderation, 2FA-Bezeichnung) und `TRUST_PROXY=1` hinter dem Reverse-Proxy. Die Browser-Kryptografie (WebCrypto) funktioniert nur über HTTPS oder auf `localhost`. Der Reverse-Proxy muss `/.well-known/ucng` und `/api/fed/` an UCNG durchreichen, wenn die Föderation an ist (gilt in beiden Betriebsarten auch für föderierte Kanäle).
 - **Daten schützen:** Der Datenordner enthält Nachrichten, Originaltexte gelöschter Nachrichten, Live-Transkripte (`transcripts/`), Token- und Passwort-Hashes (Rechte `0600`). Die Backups ebenso – lege sie auf einen geschützten Datenträger. Die `.env`-Dateien enthalten Passwörter und Schlüssel: Rechte `600`, nie ins Repository.
 - **Sprachkanäle:** Der Reverse-Proxy muss WebSockets durchreichen (Chat: `/api/voice/ws`, Sprach-Server: `/ws`) – siehe [Lastverteilung → Reverse-Proxy](#lastverteilung-in-einem-kanal). Den Musik-Bot direkt im Docker-Netz anbinden oder `proxy_request_buffering off;` setzen.
 - **Spracherkennung** nur intern erreichbar machen (deploy/stt öffnet keinen Port) bzw. mit `STT_TOKEN` schützen.
@@ -1551,6 +1600,7 @@ Caddy setzt die Kopfzeilen selbst richtig (`reverse_proxy 127.0.0.1:8080`). HSTS
 
 - **Bilder:** Vor dem Decodieren werden Maße, Anzahl der Einzelbilder und der Gesamtaufwand aus den Kopfdaten gelesen (bei GIFs alle Bildbeschreibungen, ohne die Bilddaten zu entpacken). Eine kleine Datei, die beim Entpacken Gigabytes bräuchte, wird abgelehnt, bevor Speicher angelegt wird. Höchstens zwei Bilder werden gleichzeitig verarbeitet; wer länger als 20 Sekunden warten müsste, bekommt `503`.
 - **Live-Verbindungen:** begrenzt insgesamt und je IP (`MAX_STREAMS`, `MAX_STREAMS_PER_IP`); Bots je Bot. Änderungen der Online-Liste werden gebündelt verschickt. Anfragen müssen binnen 2 Minuten vollständig sein (langsame Uploads halten keine Verbindung ewig), Live-Streams sind davon ausgenommen.
+- **Föderierte Kanäle:** Jede Anfrage zwischen Instanzen ist signiert und wird gegen Wiederholung geprüft; nur abonnierende Instanzen dürfen schreiben, und dort gelten die Regeln des Ursprungs. Freigegeben werden nur öffentliche Kanäle. Abonnenten übernehmen Bilder nur über `https://`, geben Personen anderer Instanzen eigene Kennungen und erkennen untergeschobene „eigene“ Nachrichten. Mit Erlaubt-/Sperrlisten lässt sich der Austausch auf bekannte Instanzen beschränken.
 - **Hinweise an einzelne Personen** (neue Direktnachricht, Sperre) gehen nur an deren eigene Verbindungen – andere erfahren nicht, wer gerade eine Direktnachricht bekommt.
 - **Admin-Live-Stream:** Das Token steht nie in der Adresse (Proxy- und Server-Logs), sondern in der `Authorization`-Kopfzeile.
 - **Bilder aus privaten Kanälen und Direktnachrichten** sind nur über signierte, befristete Adressen abrufbar (1–2 Tage, bei jeder Ausgabe neu). Bilder aus öffentlichen Kanälen bleiben dauerhaft unter ihrer Adresse erreichbar. Vor diesem Update hochgeladene Bilder behalten ihre bisherige Adresse.

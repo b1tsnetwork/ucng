@@ -244,6 +244,7 @@ type Server struct {
 	music       *musicPlayers // Musik von Bots in Sprachkanälen
 	storageKind string        // files, sqlite, mysql (Anzeige im Admin-Bereich)
 	fedRL       *rateLimiter  // Föderation: Eingang je Domain, Abfragen je Person
+	chanRL      *rateLimiter  // Kanal-Föderation: Lieferungen je Instanz, Nachrichten je Person
 	fedOnce     sync.Once
 	fedHTTP     *http.Client
 	accounts    *Accounts
@@ -289,12 +290,15 @@ func NewServer(cfg Config, hub *Hub, users *Users) *Server {
 		unlockRL:    newRateLimiter(8, time.Minute),
 		music:       newMusicPlayers(),
 		fedRL:       newRateLimiter(120, time.Minute),
+		chanRL:      newRateLimiter(1200, time.Minute),
 		storageKind: cfg.Storage,
 		accounts:    hub.Accounts(),
 		done:        make(chan struct{}),
 	}
 	// Namen von Bots und Personen schließen sich gegenseitig aus.
 	hub.Bots().users = users
+	hub.onFedRoom = s.chanRoomChanged
+	hub.onMirrorGone = s.chanMirrorGone
 	users.SetReserved(func(name string, team bool) error {
 		if hub.Bots().HasNameKey(nameKey(name)) || nameKey(name) == nameKey(hub.Commands().BotName()) {
 			return ErrNameTaken
@@ -394,6 +398,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/fed/users/{name}", s.handleFedUser)
 	mux.HandleFunc("POST "+fedInboxPath, s.handleFedInbox)
 	mux.HandleFunc("GET /api/fed/lookup", ho(s.handleFedLookup))
+	// Kanal-Föderation (chanfed.go)
+	mux.HandleFunc("GET /api/fed/channels", s.handleChanList)
+	mux.HandleFunc("POST "+chanInboxPath, s.handleChanInbox)
+	mux.HandleFunc("POST /api/fed/channels/{channel}/{action}", s.handleChanAction)
+	mux.HandleFunc("POST /api/channels/remote", s.handleChanUserSubscribe)
+	mux.HandleFunc("DELETE /api/channels/remote/{room}", s.handleChanUserUnsubscribe)
+	mux.HandleFunc("GET /api/channels/remote/browse", s.handleChanBrowse)
+	mux.HandleFunc("GET /api/channels/remote/directory", s.handleChanDirectory)
 	mux.HandleFunc("GET /api/dms/{room}/key", ho(s.handleDMKey))
 	mux.HandleFunc("GET /api/session", s.handleSessionGet)
 	mux.HandleFunc("POST /api/session", s.handleSessionClaim)
@@ -512,6 +524,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/template/inspect", adm(s.handleTemplateInspect))
 	mux.HandleFunc("POST /api/admin/template/apply", adm(s.handleTemplateApply))
 	mux.HandleFunc("GET /api/admin/federation", adm(s.handleAdminFed))
+	mux.HandleFunc("GET /api/admin/channelfed", adm(s.handleAdminChanFed))
+	mux.HandleFunc("PUT /api/admin/channelfed", adm(s.handleAdminChanFedSet))
+	mux.HandleFunc("POST /api/admin/channelfed/subscribe", adm(s.handleAdminChanSubscribe))
+	mux.HandleFunc("PATCH /api/admin/channelfed/mirrors/{room}", adm(s.handleAdminMirrorUpdate))
+	mux.HandleFunc("DELETE /api/admin/channelfed/shared/{room}/{domain}", adm(s.handleAdminChanKick))
+	mux.HandleFunc("GET /api/admin/channelfed/browse", adm(s.handleAdminChanBrowse))
+	mux.HandleFunc("GET /api/admin/channelfed/directory", adm(s.handleAdminChanDir))
+	mux.HandleFunc("PUT /api/admin/rooms/{room}/share", adm(s.handleAdminRoomShare))
 	mux.HandleFunc("DELETE /api/admin/federation/peers/{domain}", adm(s.handleAdminFedForget))
 	mux.HandleFunc("GET /api/admin/backups", adm(s.handleBackups))
 	mux.HandleFunc("POST /api/admin/backups", adm(s.handleBackupCreate))
@@ -691,12 +711,13 @@ func statusFor(err error) int {
 		errors.Is(err, errBotNoWrite), errors.Is(err, errBotOwnSanct), errors.Is(err, errBotOutOfReach),
 		errors.Is(err, ErrBotLinks), errors.Is(err, ErrReadOnly), errors.Is(err, ErrNoPerm), errors.Is(err, ErrReportOwn),
 		errors.Is(err, ErrUploadsOff), errors.Is(err, ErrUploadKnown), errors.Is(err, ErrUploadRole), errors.Is(err, ErrAvatarsOff), errors.Is(err, ErrDMsOff),
-		errors.Is(err, ErrDMBlocked):
+		errors.Is(err, ErrDMBlocked), errors.Is(err, ErrMirrorReadOnly), errors.Is(err, ErrMirrorEnded), errors.Is(err, ErrMirrorFeature),
+		errors.Is(err, ErrShareRestricted), errors.Is(err, ErrShareMirror):
 		return http.StatusForbidden
 	case errors.Is(err, ErrNoRoom), errors.Is(err, ErrNoMessage), errors.Is(err, ErrNoBot),
 		errors.Is(err, ErrNoReplyMsg), errors.Is(err, ErrNoUser), errors.Is(err, ErrNoSanction),
 		errors.Is(err, ErrNoAccount), errors.Is(err, ErrNoWidget), errors.Is(err, ErrNoBackup),
-		errors.Is(err, ErrNoEmote), errors.Is(err, ErrNoGIF), errors.Is(err, ErrNoReport), errors.Is(err, ErrNoSchedule):
+		errors.Is(err, ErrNoEmote), errors.Is(err, ErrNoGIF), errors.Is(err, ErrNoReport), errors.Is(err, ErrNoSchedule), errors.Is(err, ErrNotMirror):
 		return http.StatusNotFound
 	case errors.Is(err, ErrNoSession):
 		return http.StatusUnauthorized
@@ -777,11 +798,10 @@ func main() {
 	saverDone := make(chan struct{})
 	go func() { sv.run(ctx); close(saverDone) }()
 	go srv.webhooks.run(ctx) // Nachrichten an Bots mit Webhook verteilen
-	if cfg.Mode == ModeHosted {
-		go srv.runFed(ctx) // Föderation: Warteschlange abarbeiten
-	}
-	go srv.runBeacon(ctx) // Verzeichnis: regelmäßig beim Beacon melden
-	go func() {           // temporäre Kanäle ohne Personen löschen
+	go srv.runFed(ctx)       // Föderation: Warteschlange abarbeiten (Direktnachrichten, Kanäle)
+	go srv.runChanFed(ctx)   // Kanal-Föderation: Nachrichten freigegebener Kanäle verteilen
+	go srv.runBeacon(ctx)    // Verzeichnis: regelmäßig beim Beacon melden
+	go func() {              // temporäre Kanäle ohne Personen löschen
 		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
 		for {
@@ -824,6 +844,7 @@ func main() {
 			srv.tempRL.cleanup()
 			srv.unlockRL.cleanup()
 			srv.fedRL.cleanup()
+			srv.chanRL.cleanup()
 			if time.Since(lastRetention) >= time.Hour {
 				lastRetention = time.Now()
 				srv.applyRetention()

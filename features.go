@@ -239,6 +239,7 @@ func (h *Hub) removeLocked(r *room, drop func(*Message) bool) []int64 {
 	r.history = keep
 	if len(removed) > 0 {
 		r.rebuildThreads()
+		r.refs = nil // Spiegelkanal: Zuordnung neu aufbauen
 	}
 	if len(removed) > 0 && len(r.pins) > 0 {
 		h.prunePinsLocked(r)

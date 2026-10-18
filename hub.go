@@ -194,6 +194,9 @@ type room struct {
 	emptySince  time.Time       // temporäre Kanäle: seit wann niemand mehr drin ist
 	passHash    string          // Passwort ("salt:hash", leer = keins), siehe roompass.go
 	unlocked    map[string]bool // Nutzer-IDs, die das Passwort eingegeben haben
+	share       string          // Kanal-Föderation: für andere Instanzen freigegeben (ShareRead, ShareWrite), siehe chanfed.go
+	remote      *RemoteChan     // abonnierter Kanal einer anderen Instanz (Spiegel), siehe chanfed.go
+	refs        map[int64]int64 // Spiegel: ID beim Ursprung → eigene ID (wird bei Bedarf aufgebaut)
 }
 
 // find liefert die Position einer Nachricht (Binärsuche über die aufsteigenden IDs).
@@ -235,7 +238,7 @@ func (r *room) info() RoomInfo {
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, Automod: r.amMode,
 		ReadRoles: append([]string{}, r.readRoles...), WriteRoles: append([]string{}, r.writeRoles...), Kind: r.kind,
 		Pins: len(r.pins), Group: r.group, Pos: r.pos, Voice: r.voice, Temp: r.temp, CreatedBy: r.createdBy,
-		HasPassword: r.passHash != "",
+		HasPassword: r.passHash != "", Share: r.share, Remote: r.remote.info(),
 	}
 	if n := len(r.history); n > 0 {
 		ri.LastID = r.history[n-1].ID
@@ -270,6 +273,8 @@ type RoomInfo struct {
 	CreatedBy   string       `json:"createdBy,omitempty"`
 	HasPassword bool         `json:"password,omitempty"` // mit Passwort geschützt
 	Locked      bool         `json:"locked,omitempty"`   // nur in RoomsFor: Passwort noch nicht eingegeben
+	Share       string       `json:"share,omitempty"`    // für andere Instanzen freigegeben: read, write
+	Remote      *RemoteInfo  `json:"remote,omitempty"`   // abonnierter Kanal einer anderen Instanz
 }
 
 // RoomInput sind die im Admin-Bereich änderbaren Werte eines Kanals.
@@ -362,6 +367,11 @@ type Hub struct {
 	beacon       *BeaconStore
 	i18n         *i18n.Catalog // Übersetzungen (i18n.go)
 	fed          *FedStore
+	chanFed      *ChanFed // Kanal-Föderation (chanfed.go)
+	// onFedRoom: nach Änderungen an Kanälen (wie onRoomChange) – Kanal-Föderation
+	onFedRoom func(oldName, newName string)
+	// onMirrorGone: ein Spiegelkanal wurde gelöscht (beim Ursprung abmelden)
+	onMirrorGone func(rc RemoteChan)
 	bus          map[chan BusEvent]struct{}
 	loc          atomic.Pointer[time.Location]
 
@@ -455,7 +465,7 @@ func NewHub(maxRooms int) *Hub {
 	h := &Hub{
 		rooms: make(map[string]*room), settings: defaultSettings, maxRooms: maxRooms,
 		automod: NewAutomod(), filter: NewAutomod(), pending: map[int64]string{}, bots: NewBots(), mod: NewModeration(),
-		audit: NewAudit(), accounts: NewAccounts(""), widgets: NewWidgets(), media: NewMediaLib(), commands: NewCommands(), roles: NewRoles(), blocks: NewBlocks(), reports: NewReports(), schedules: NewSchedules(), hosted: NewHosted(), groups: NewGroups(), beacon: NewBeaconStore(), fed: NewFedStore(), i18n: newCatalog(),
+		audit: NewAudit(), accounts: NewAccounts(""), widgets: NewWidgets(), media: NewMediaLib(), commands: NewCommands(), roles: NewRoles(), blocks: NewBlocks(), reports: NewReports(), schedules: NewSchedules(), hosted: NewHosted(), groups: NewGroups(), beacon: NewBeaconStore(), fed: NewFedStore(), chanFed: NewChanFed(), i18n: newCatalog(),
 		bus: map[chan BusEvent]struct{}{}, docs: map[string]docSpec{},
 	}
 	h.loc.Store(loadLocation(defaultSettings.Timezone))
@@ -599,6 +609,15 @@ func NewHub(maxRooms int) *Hub {
 			return err
 		}
 		return h.fed.restore(st)
+	})
+	h.chanFed.changed = func() { h.touchDoc(chanFedDoc) }
+	h.RegisterDoc(chanFedDoc, func() any { return h.chanFed.state() }, func(b []byte) error {
+		var st chanFedState
+		if err := jsonUnmarshal(b, &st); err != nil {
+			return err
+		}
+		h.chanFed.restore(st)
+		return nil
 	})
 	h.RegisterDoc("hosted.json", func() any { return h.hosted.Config() }, func(b []byte) error {
 		var c HostedConfig
@@ -1318,6 +1337,9 @@ func (h *Hub) subscribe(roomName string, viewer *Viewer, admin bool) (c chan Eve
 	h.presenceSoonLocked(r)
 	info = r.info()
 	info.CanWrite = r.canWrite(viewer.access())
+	if info.Remote != nil && viewer != nil && contains(r.remote.Subs, viewer.ID) {
+		info.Remote.Subscribed = true
+	}
 	return c, h.outAll(r, hist, false), more, info, nil
 }
 
@@ -1636,6 +1658,9 @@ func (h *Hub) roomChangedLocked(oldName, newName string) {
 	if f := h.onRoomChange; f != nil {
 		go f(oldName, newName)
 	}
+	if f := h.onFedRoom; f != nil {
+		go f(oldName, newName)
+	}
 }
 
 // UpdateRoom ändert Beschreibung und/oder Namen (ältere Schnittstelle).
@@ -1743,6 +1768,9 @@ func (h *Hub) DeleteRoom(name string) error {
 	}
 	h.closeClientsLocked(r, Event{Type: "room_deleted", Room: name})
 	delete(h.rooms, name)
+	if r.remote != nil && h.onMirrorGone != nil {
+		go h.onMirrorGone(*r.remote)
+	}
 	if h.settings.StartRoom == name { // Startkanal gelöscht: wieder automatisch
 		h.settings.StartRoom = ""
 		h.touchDoc("config.json")
@@ -1882,13 +1910,16 @@ type roomMeta struct {
 	CreatedBy   string           `json:"createdBy,omitempty"`
 	PassHash    string           `json:"passHash,omitempty"`
 	Unlocked    []string         `json:"unlocked,omitempty"`
+	Share       string           `json:"share,omitempty"`  // Kanal-Föderation: freigegeben
+	Remote      *RemoteChan      `json:"remote,omitempty"` // Kanal-Föderation: Spiegel eines fremden Kanals
 }
 
 func metaOfRoom(r *room) roomMeta {
 	m := roomMeta{Name: r.name, Description: r.description, Created: r.created, SlowMode: r.slowMode, Links: r.links,
 		BotSlowMode: r.botSlow, BotLinks: r.botLinks, ReadRoles: r.readRoles, WriteRoles: r.writeRoles,
 		Kind: r.kind, Members: r.members, Cleared: r.cleared, Voice: r.voice, Pins: r.pins, Group: r.group, Pos: r.pos,
-		Temp: r.temp, CreatedBy: r.createdBy, PassHash: r.passHash, Unlocked: unlockedList(r.unlocked)}
+		Temp: r.temp, CreatedBy: r.createdBy, PassHash: r.passHash, Unlocked: unlockedList(r.unlocked),
+		Share: r.share, Remote: r.remote.clone()}
 	if a := r.automodLocked(); a.Mode != AutomodGlobal || len(a.Patterns) > 0 {
 		m.Automod = &a
 	}
@@ -1935,7 +1966,7 @@ func (h *Hub) putRoom(meta roomMeta, msgs []Message) {
 		history: msgs, clients: make(map[chan Event]*Viewer),
 		readRoles: meta.ReadRoles, writeRoles: meta.WriteRoles, kind: meta.Kind, members: meta.Members, cleared: meta.Cleared, blocks: h.blocks, voice: meta.Voice, pins: meta.Pins,
 		group: meta.Group, pos: meta.Pos, temp: meta.Temp, createdBy: meta.CreatedBy, emptySince: time.Now(),
-		passHash: meta.PassHash, unlocked: map[string]bool{}}
+		passHash: meta.PassHash, unlocked: map[string]bool{}, share: meta.Share, remote: meta.Remote}
 	for _, id := range meta.Unlocked {
 		r.unlocked[id] = true
 	}

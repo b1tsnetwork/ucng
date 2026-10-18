@@ -17,17 +17,18 @@ import (
 // PublicSettings: Einstellungen plus feste Angaben für die Oberfläche.
 type PublicSettings struct {
 	Settings
-	Reactions   []string      `json:"reactions"`
-	EditMinutes int           `json:"editMinutes"`
-	Mode        string        `json:"appMode"` // simple oder hosted (nicht verwechseln mit Settings.Mode = Farbschema)
-	Hosted      *PublicHosted `json:"hosted,omitempty"`
-	About       AboutInfo     `json:"about"` // Version, Lizenz, Quellcode (AGPL)
-	Voice       bool          `json:"voice"` // Sprachkanäle verfügbar
+	Reactions   []string       `json:"reactions"`
+	EditMinutes int            `json:"editMinutes"`
+	Mode        string         `json:"appMode"` // simple oder hosted (nicht verwechseln mit Settings.Mode = Farbschema)
+	Hosted      *PublicHosted  `json:"hosted,omitempty"`
+	About       AboutInfo      `json:"about"`             // Version, Lizenz, Quellcode (AGPL)
+	Voice       bool           `json:"voice"`             // Sprachkanäle verfügbar
+	ChanFed     *PublicChanFed `json:"chanFed,omitempty"` // Kanal-Föderation (Kanäle anderer Instanzen)
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, PublicSettings{Settings: s.hub.Settings(), Reactions: s.hub.Media().Reactions().Reactions, EditMinutes: int(EditWindow / time.Minute),
-		Mode: s.cfg.Mode, Hosted: s.publicHosted(), About: s.about(), Voice: s.voice != nil})
+		Mode: s.cfg.Mode, Hosted: s.publicHosted(), About: s.about(), Voice: s.voice != nil, ChanFed: s.publicChanFed()})
 }
 
 func (s *Server) handleRooms(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +242,10 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		fail(w, ErrNoRoom)
 		return
 	}
+	if rc, ok := s.hub.Remote(room); ok { // abonnierter Kanal einer anderen Instanz: dort schreiben
+		s.postMirror(w, r, room, rc, me, ip, in.Text, in.GIF, in.ReplyTo, in.Thread)
+		return
+	}
 	if !s.hub.CanWrite(room, a) {
 		fail(w, s.writeDenied(room))
 		return
@@ -316,6 +321,20 @@ func (s *Server) handleEditOwn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room := NormRoom(r.PathValue("room"))
+	if rc, ok := s.hub.Remote(room); ok {
+		ref, err := s.mirrorOwnMsg(room, id, me)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		msg, err := s.mirrorWrite(r.Context(), room, rc, "edit", me, chanWriteReq{ID: ref, Text: in.Text})
+		if err != nil {
+			writeErr(w, chanStatus(err), err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, msg)
+		return
+	}
 	if in.E2E != "" {
 		msg, err := s.hub.EditOwnE2E(room, id, s.posterOf(me, ip), in.E2E)
 		if err != nil {
@@ -348,6 +367,20 @@ func (s *Server) handleDeleteOwn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room := NormRoom(r.PathValue("room"))
+	if rc, ok := s.hub.Remote(room); ok {
+		ref, err := s.mirrorOwnMsg(room, id, me)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		msg, err := s.mirrorWrite(r.Context(), room, rc, "delete", me, chanWriteReq{ID: ref})
+		if err != nil {
+			writeErr(w, chanStatus(err), err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, msg)
+		return
+	}
 	msg, err := s.hub.DeleteOwn(room, id, me.ID)
 	if err != nil {
 		writeErr(w, statusFor(err), err.Error())
@@ -382,6 +415,10 @@ func (s *Server) handleReact(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, _, fed := s.e2eMode(NormRoom(r.PathValue("room")), me); fed {
 		fail(w, ErrFedFeature)
+		return
+	}
+	if _, ok := s.hub.Remote(NormRoom(r.PathValue("room"))); ok {
+		fail(w, ErrMirrorFeature)
 		return
 	}
 	msg, err := s.hub.React(NormRoom(r.PathValue("room")), id, s.posterOf(me, ip), in.Emoji)

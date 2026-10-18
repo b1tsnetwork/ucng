@@ -144,6 +144,7 @@ func (s *Server) Routes() http.Handler {
 	// öffentlich
 	mux.HandleFunc("GET /api/v1/info", s.cors(s.handleInfo))
 	mux.HandleFunc("GET /api/v1/instances", s.cors(s.handleInstances))
+	mux.HandleFunc("GET /api/v1/channels", s.cors(s.handleChannels))
 	mux.HandleFunc("POST /api/v1/register", s.handleRegister)
 	mux.HandleFunc("GET /api/v1/collections", s.cors(s.handleCollections))
 	mux.HandleFunc("GET /api/v1/gifs", s.cors(s.handleGIFs))

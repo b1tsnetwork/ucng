@@ -58,7 +58,8 @@
     try { info = await api("/api/v1/info"); } catch { return; }
     $("brandName").textContent = info.name;
     document.title = info.name;
-    if (info.description) $("heroText").textContent = info.description;
+    if (info.description) heroDefault = info.description;
+    if (info.description && !location.hash.startsWith("#kanaele")) $("heroText").textContent = info.description;
     $("beaconUrl").textContent = info.url;
     renderFoot();
     const stats = [[_t("beacon.instanzen"), info.instances], [_t("beacon.nutzer_insgesamt"), info.users], [_t("beacon.gifs"), info.gifs], [_t("beacon.sammlungen"), info.collections]];
@@ -93,12 +94,14 @@
   // ---------- Tabs ----------
   function route() {
     const tab = (location.hash.slice(1) || "instanzen").split("/")[0];
-    const t = ["instanzen", "gifs", "sprachpakete", "verwaltung"].includes(tab) ? tab : "instanzen";
-    for (const id of ["instanzen", "gifs", "sprachpakete", "verwaltung"]) $("tab-" + id).hidden = id !== t;
+    const t = ["instanzen", "kanaele", "gifs", "sprachpakete", "verwaltung"].includes(tab) ? tab : "instanzen";
+    for (const id of ["instanzen", "kanaele", "gifs", "sprachpakete", "verwaltung"]) $("tab-" + id).hidden = id !== t;
     document.querySelectorAll(".tabs a").forEach((a) => (a.dataset.tab === t ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
     $("hero").hidden = t === "verwaltung" || t === "sprachpakete";
-    $("heroTitle").textContent = t === "gifs" ? _t("beacon.gif_sammlungen_zum_abonnieren") : _t("beacon.finde_eine_gochat_instanz");
+    $("heroTitle").textContent = t === "gifs" ? _t("beacon.gif_sammlungen_zum_abonnieren") : t === "kanaele" ? _t("beacon.kanaele_zum_abonnieren") : _t("beacon.finde_eine_gochat_instanz");
     if (t === "instanzen") loadInstances();
+    if (t === "kanaele") loadChannels();
+    $("heroText").textContent = t === "kanaele" ? _t("beacon.kanaele_hero") : t === "instanzen" ? heroDefault || _t("beacon.instanzen_melden_sich_hier_selbst_an_und") : $("heroText").textContent;
     if (t === "gifs") loadGifs(true);
     if (t === "verwaltung") showAdmin();
     if (t === "sprachpakete") loadLangPacks();
@@ -310,6 +313,46 @@
     }));
   }
   $("instFilters").addEventListener("input", () => { clearTimeout(instTimer); instTimer = setTimeout(loadInstances, 250); });
+
+  // ---------- Kanäle (Kanal-Föderation) ----------
+  var heroDefault = "";
+  let chanTimer = 0;
+  async function loadChannels() {
+    const p = new URLSearchParams({ q: $("chanQ").value.trim(), mode: $("chanMode").value });
+    let d;
+    try { d = await api("/api/v1/channels?" + p); } catch (e) { $("chanCount").textContent = e.message; return; }
+    $("chanCount").textContent = _t("beacon.n_channels", { n: d.total });
+    if (!d.channels.length) { $("chanList").replaceChildren(h("li", "empty", _t("beacon.kein_kanal_gefunden"))); return; }
+    $("chanList").replaceChildren(...d.channels.map((c) => {
+      const li = h("li", "inst trust-" + (c.trust || "community"));
+      const head = h("div", "inst-head");
+      const mark = h("span", "inst-mark", "#");
+      mark.style.background = colorFor(c.domain);
+      const t = h("div");
+      t.append(h("div", "inst-name", "#" + c.name), h("div", "inst-domain", c.title && c.title !== c.domain ? c.title + " · " + c.domain : c.domain));
+      head.append(mark, t, trustPill(c.trust, ""));
+      li.append(head);
+      if (c.description) li.append(h("p", "inst-desc", c.description));
+      const b = h("div", "badges");
+      b.append(h("span", "badge" + (c.mode === "write" ? " ok" : ""), c.mode === "write" ? _t("beacon.mitschreiben") : _t("beacon.nur_lesen")));
+      if (c.messages) b.append(h("span", "badge", _t("beacon.n_messages", { n: c.messages })));
+      if (c.language) b.append(h("span", "badge", langName(c.language)));
+      li.append(b, h("code", "chan-addr", c.address));
+      const foot = h("div", "inst-foot");
+      foot.append(h("span", null, c.lastAt && !c.lastAt.startsWith("0001") ? _t("beacon.zuletzt_aktiv", { ago: ago(c.lastAt) }) : ""));
+      const copy = h("button", "btn small", _t("beacon.adresse_kopieren"));
+      copy.type = "button";
+      copy.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(c.address); copy.textContent = _t("beacon.kopiert"); setTimeout(() => (copy.textContent = _t("beacon.adresse_kopieren")), 1500); }
+        catch { window.prompt(_t("beacon.adresse_kopieren"), c.address); }
+      });
+      foot.append(copy);
+      li.append(foot);
+      return li;
+    }));
+  }
+  $("chanFilters").addEventListener("input", () => { clearTimeout(chanTimer); chanTimer = setTimeout(loadChannels, 250); });
+  $("chanFilters").addEventListener("submit", (e) => e.preventDefault());
   $("instFilters").addEventListener("submit", (e) => e.preventDefault());
 
   // ---------- GIFs ----------

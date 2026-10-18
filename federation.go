@@ -112,6 +112,8 @@ type fedJob struct {
 	Body    json.RawMessage `json:"body"`
 	Room    string          `json:"room,omitempty"`
 	MsgID   int64           `json:"msgId,omitempty"` // lokale Nachricht (für den Zustellstatus)
+	Path    string          `json:"path,omitempty"`  // Kanal-Föderation: Ziel (sonst der Eingang für Direktnachrichten)
+	Chan    string          `json:"chan,omitempty"`  // Kanal-Föderation: freigegebener Kanal (für den Zustellstatus)
 	Tries   int             `json:"tries"`
 	Next    time.Time       `json:"next"`
 	Created time.Time       `json:"created"`
@@ -350,6 +352,8 @@ type WellKnown struct {
 	Users    string `json:"users,omitempty"`
 	// Föderation an? (Der Schlüssel steht auch ohne Föderation bereit – für den Beacon.)
 	Federation bool `json:"federation"`
+	// Kanal-Föderation an (freigegebene Kanäle unter /api/fed/channels)?
+	Channels bool `json:"channels,omitempty"`
 	// Fassung und Quellcode dieser Instanz (AGPL: Änderungen sind offenzulegen)
 	Build  string `json:"build,omitempty"`
 	Source string `json:"source,omitempty"`
@@ -369,7 +373,7 @@ func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == fedsig.LegacyWellKnown { // ältere Beacons/Instanzen erwarten dort die frühere Kennung
 		software = fedsig.LegacySoftware
 	}
-	wk := WellKnown{Build: version, Source: s.cfg.SourceURL, Software: software, Version: 1, Domain: s.fedDomain(), Key: s.hub.Fed().PublicKey(), Federation: s.fedEnabled()}
+	wk := WellKnown{Build: version, Source: s.cfg.SourceURL, Software: software, Version: 1, Domain: s.fedDomain(), Key: s.hub.Fed().PublicKey(), Federation: s.fedEnabled(), Channels: s.chanFedOn()}
 	if wk.Federation {
 		wk.Inbox, wk.Users = base+fedInboxPath, base+fedUserPath
 	}
@@ -416,7 +420,7 @@ func (s *Server) peerKey(ctx context.Context, domain string, refresh bool) (stri
 		}
 		return "", err
 	}
-	if !fedsig.IsInstance(wk.Software) || !strings.EqualFold(wk.Domain, domain) || !wk.Federation {
+	if !fedsig.IsInstance(wk.Software) || !strings.EqualFold(wk.Domain, domain) || !(wk.Federation || wk.Channels) {
 		return "", ErrFedRemote
 	}
 	if k, err := base64.StdEncoding.DecodeString(wk.Key); err != nil || len(k) != ed25519.PublicKeySize {
@@ -713,13 +717,20 @@ func (s *Server) fedSend(peer string, p fedPayload, room string, msgID int64) {
 
 // deliver schickt einen Auftrag an die andere Instanz.
 func (s *Server) deliver(ctx context.Context, j fedJob) (retry bool, err error) {
-	if err := s.fedCheckDomain(j.Domain); err != nil {
+	check := s.fedCheckDomain
+	if j.Path != "" {
+		check = s.chanCheckDomain
+	}
+	if err := check(j.Domain); err != nil {
 		return false, err
 	}
 	if _, err := s.peerKey(ctx, j.Domain, false); err != nil {
 		return !errors.Is(err, ErrFedKeyChange) && !errors.Is(err, ErrFedPrivate), err
 	}
 	target := j.Domain + fedInboxPath
+	if j.Path != "" {
+		target = j.Domain + j.Path
+	}
 	ts, sig := s.hub.Fed().sign(s.fedDomain(), "POST", target, j.Body, time.Now())
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -739,9 +750,9 @@ func (s *Server) deliver(ctx context.Context, j fedJob) (retry bool, err error) 
 	case res.StatusCode < 300:
 		return false, nil
 	case res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500 || res.StatusCode == http.StatusUnauthorized:
-		return true, fmt.Errorf("%s: %d %s", j.Domain, res.StatusCode, bytes.TrimSpace(msg))
+		return true, &chanRemoteErr{Status: res.StatusCode, Msg: fmt.Sprintf("%s: %d %s", j.Domain, res.StatusCode, bytes.TrimSpace(msg))}
 	default:
-		return false, fmt.Errorf("%s: %d %s", j.Domain, res.StatusCode, bytes.TrimSpace(msg))
+		return false, &chanRemoteErr{Status: res.StatusCode, Msg: fmt.Sprintf("%s: %d %s", j.Domain, res.StatusCode, bytes.TrimSpace(msg))}
 	}
 }
 
@@ -803,6 +814,9 @@ func (s *Server) fedWork(ctx context.Context) {
 			continue
 		}
 		retry, err := s.deliver(ctx, j)
+		if j.Chan != "" {
+			s.hub.chanFed.note(j.Chan, j.Domain, err)
+		}
 		if err == nil {
 			results[j.ID] = result{done: true}
 			if j.MsgID > 0 {
@@ -822,6 +836,10 @@ func (s *Server) fedWork(ctx context.Context) {
 		}
 		log.Printf("Föderation: Zustellung an %s aufgegeben: %v", j.Domain, err)
 		results[j.ID] = result{done: true}
+		var re *chanRemoteErr
+		if j.Chan != "" && errors.As(err, &re) && re.Status == http.StatusGone { // dort nicht (mehr) abonniert
+			s.hub.chanFed.removeSub(j.Chan, j.Domain)
+		}
 		if j.MsgID > 0 {
 			s.hub.SetFedState(j.Room, j.MsgID, "failed")
 		}

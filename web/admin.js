@@ -155,8 +155,9 @@
     uebersicht: _t("admin.uebersicht"), moderation: _t("admin.moderation"), automod: _t("admin.automod"), nutzer: _t("admin.personen"), protokoll: _t("admin.protokoll"), sprachserver: _t("admin.sprachserver"),
     kanaele: _t("admin.kanaele"), allgemein: _t("admin.allgemein"), medien: _t("admin.emotes_gifs"), befehle: _t("admin.befehle"), widgets: _t("admin.widgets"), bots: _t("admin.bots"),
     konten: _t("admin.team_zugaenge"), hosting: _t("admin.hosting"), beacon: _t("admin.beacon"), vorlagen: _t("admin.vorlagen"), sprachen: _t("admin.sprachen"), backups: _t("admin.backups"), transkripte: _t("admin.transkripte"), meldungen: _t("admin.meldungen"), ankuendigungen: _t("admin.ankuendigungen"),
+    kanalabos: _t("admin.cf_nav"),
   };
-  const ADMIN_VIEWS = new Set(["kanaele", "allgemein", "medien", "befehle", "widgets", "bots", "konten", "hosting", "beacon", "vorlagen", "sprachen", "backups", "ankuendigungen", "transkripte"]);
+  const ADMIN_VIEWS = new Set(["kanaele", "allgemein", "medien", "befehle", "widgets", "bots", "konten", "hosting", "beacon", "vorlagen", "sprachen", "backups", "ankuendigungen", "transkripte", "kanalabos"]);
 
   function route() {
     let view = TITLES[location.hash.slice(1)] ? location.hash.slice(1) : (location.hash === "#einbetten" ? "widgets" : "uebersicht");
@@ -181,6 +182,7 @@
     if (view === "konten") loadAccounts();
     if (view === "hosting") loadHosting();
     if (view === "beacon") loadBeacon();
+    if (view === "kanalabos") loadChanFed();
     if (view === "vorlagen") loadTemplates();
     if (view === "backups") loadBackups();
     if (view === "transkripte") loadTranscripts();
@@ -400,9 +402,10 @@
 
   async function loadRooms() {
     try {
-      let vs;
-      [rooms, layout, vs] = await Promise.all([api("GET", "/api/admin/rooms"), api("GET", "/api/admin/layout"),
-        api("GET", "/api/admin/voice").catch(() => ({ enabled: false }))]);
+      let vs, cf;
+      [rooms, layout, vs, cf] = await Promise.all([api("GET", "/api/admin/rooms"), api("GET", "/api/admin/layout"),
+        api("GET", "/api/admin/voice").catch(() => ({ enabled: false })), api("GET", "/api/admin/channelfed").catch(() => ({ on: false }))]);
+      chanFedOn = !!cf.on;
       voiceAvailable = !!vs.enabled;
       voicePeers = vs.rooms || {};
       voiceSTT = !!vs.stt; // sonst nur nach der Übersicht bekannt – „Untertitel“ war beim direkten Aufruf gesperrt
@@ -469,6 +472,12 @@
     if (r.voice && r.voice.video) stats.append(el("span", "rule voice", _t("admin.room_badge_video")));
     if (r.voice) stats.append(el("span", "rule voice", _t(r.voice.stage ? "admin.voice_badge_stage" : "admin.voice_badge", { n: (voicePeers[r.name] || 0) })));
     if (r.automod && r.automod !== "global") stats.append(el("span", "rule", AM_MODES[r.automod]));
+    if (r.share) stats.append(el("span", "rule fed", r.share === "write" ? _t("admin.cf_badge_write") : _t("admin.cf_badge_read")));
+    if (r.remote) {
+      const b = el("span", "rule fed", "🌐 " + r.remote.address + (r.remote.ended ? " · " + _t("admin.cf_ended") : ""));
+      b.title = r.remote.mode === "write" ? _t("admin.cf_mode_write") : _t("admin.cf_mode_read");
+      stats.append(b);
+    }
     const actions = el("div", "room-actions");
     const btn = (html, label, fn, cls, disabled) => {
       const b = el("button", "icon-action" + (cls ? " " + cls : ""));
@@ -594,6 +603,7 @@
   }
 
   let editing = null; // null = neuer Kanal
+  let chanFedOn = false; // Kanal-Föderation an (Admin → Föderierte Kanäle)
   let voiceAvailable = false; // Sprachkanäle auf diesem Server
   let voicePeers = {}; // Kanal → Teilnehmer gerade
 
@@ -627,6 +637,11 @@
     $("roomPasswordClear").checked = false;
     $("roomPasswordClearRow").hidden = !(r && r.password);
     $("roomVoiceSet").hidden = !voiceAvailable;
+    // Freigabe für andere Instanzen
+    $("roomShare").value = r && r.share ? r.share : "";
+    $("roomShareSet").hidden = !!(r && r.remote);
+    $("roomShare").disabled = !chanFedOn;
+    $("roomShareHint").textContent = chanFedOn ? _t("admin.cf_room_hint") : _t("admin.cf_room_off");
     syncVoiceFields();
     $("roomDialogTitle").textContent = r ? _t("admin.x_edit", { name: "#" + r.name }) : _t("admin.kanal_anlegen");
     $("roomSubmit").textContent = r ? _t("admin.aenderungen_speichern") : _t("admin.kanal_anlegen");
@@ -754,8 +769,13 @@
     if ($("roomPasswordClear").checked) body.password = "";
     else if ($("roomPassword").value) body.password = $("roomPassword").value;
     try {
-      if (editing) await api("PATCH", "/api/admin/rooms/" + encodeURIComponent(editing.name), body);
-      else await api("POST", "/api/admin/rooms", body);
+      let saved;
+      if (editing) saved = await api("PATCH", "/api/admin/rooms/" + encodeURIComponent(editing.name), body);
+      else saved = await api("POST", "/api/admin/rooms", body);
+      const share = $("roomShare").value;
+      if (chanFedOn && !(editing && editing.remote) && share !== ((editing && editing.share) || "")) {
+        await api("PUT", "/api/admin/rooms/" + encodeURIComponent((saved && saved.name) || body.name.toLowerCase()) + "/share", { mode: share });
+      }
       $("roomDialog").close();
       toast(editing ? _t("admin.kanal_gespeichert") : _t("admin.kanal_angelegt"));
       loadRooms();
@@ -2262,6 +2282,163 @@
       toast(editingAccount ? _t("admin.konto_gespeichert") : _t("admin.konto_angelegt_gib_anmeldename_und", { name: body.name }));
       loadAccounts();
     } catch (err) { $("accError").textContent = err.message; }
+  });
+
+  // ---------- Föderierte Kanäle ----------
+
+  let cfData = null;
+  function relAgo(iso) { // „vor 5 Minuten“
+    const t = new Date(iso);
+    if (!iso || t.getFullYear() < 2000) return "";
+    const s = (t - Date.now()) / 1000;
+    const steps = [[60, "second", 1], [3600, "minute", 60], [86400, "hour", 3600], [604800, "day", 86400], [Infinity, "week", 604800]];
+    for (const [lim, unit, d] of steps) if (Math.abs(s) < lim) return relFmt.format(Math.round(s / d), unit);
+    return "";
+  }
+  async function loadChanFed() {
+    try { cfData = await api("GET", "/api/admin/channelfed"); } catch (err) { toast(err.message, true); return; }
+    const c = cfData.config || {};
+    chanFedOn = !!cfData.on;
+    $("cfOn").checked = !!c.enabled;
+    $("cfOn").disabled = !cfData.publicUrl && !c.enabled;
+    $("cfUserSubs").checked = !!c.userSubs;
+    $("cfAllow").value = (c.allow || []).join("\n");
+    $("cfDeny").value = (c.deny || []).join("\n");
+    $("cfHint").textContent = !cfData.publicUrl ? _t("admin.cf_need_url")
+      : cfData.on ? _t("admin.cf_addr_hint", { domain: cfData.domain }) : _t("admin.cf_off_hint");
+    $("cfError").textContent = "";
+    $("cfSubForm").hidden = $("cfFindPanel").hidden = !cfData.on;
+    renderShared();
+    renderMirrors();
+  }
+  function renderShared() {
+    const ul = $("cfShared");
+    if (!cfData.shared.length) { ul.replaceChildren(el("li", "empty-row", cfData.on ? _t("admin.cf_no_shared") : _t("admin.cf_is_off"))); return; }
+    ul.replaceChildren(...cfData.shared.map((sh) => {
+      const li = el("li", "user-row cf-row");
+      const info = el("div", "user-main");
+      const t = el("strong", null, "#" + sh.name + "@" + cfData.domain);
+      info.append(t, el("small", null, (sh.mode === "write" ? _t("admin.cf_mode_write") : _t("admin.cf_mode_read")) + " · " +
+        _t("admin.cf_n_subscribers", { n: sh.subscribers.length })));
+      if (sh.subscribers.length) {
+        const subs = el("ul", "cf-subs");
+        for (const s of sh.subscribers) {
+          const row = el("li");
+          row.append(el("span", "cf-dom", s.domain), el("small", s.error ? "cf-err" : null, s.error ? "⚠ " + s.error : s.last ? _t("admin.cf_last_delivery", { ago: relAgo(s.last) }) : _t("admin.cf_since", { ago: relAgo(s.since) })));
+          const kick = el("button", "btn-quiet small", _t("admin.cf_kick"));
+          kick.type = "button";
+          kick.addEventListener("click", async () => {
+            if (!confirm(_t("admin.cf_kick_confirm", { domain: s.domain, room: sh.name }))) return;
+            try { await api("DELETE", `/api/admin/channelfed/shared/${encodeURIComponent(sh.name)}/${encodeURIComponent(s.domain)}`); loadChanFed(); }
+            catch (err) { toast(err.message, true); }
+          });
+          row.append(kick);
+          subs.append(row);
+        }
+        info.append(subs);
+      }
+      const copy = el("button", "btn-quiet", _t("admin.cf_copy"));
+      copy.type = "button";
+      copy.addEventListener("click", () => copyText("#" + sh.name + "@" + cfData.domain));
+      li.append(info, copy);
+      return li;
+    }));
+  }
+  function copyText(t) {
+    if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => toast(_t("admin.cf_copied")), () => window.prompt("", t));
+    else window.prompt("", t);
+  }
+  function renderMirrors() {
+    const ul = $("cfMirrors");
+    if (!cfData.mirrors.length) { ul.replaceChildren(el("li", "empty-row", _t("admin.cf_no_mirrors"))); return; }
+    ul.replaceChildren(...cfData.mirrors.map((m) => {
+      const li = el("li", "user-row cf-row");
+      const info = el("div", "user-main");
+      const t = el("strong");
+      t.append(el("span", "hash", "#"), m.room, el("span", "cf-addr", " ← " + m.address));
+      const bits = [m.mode === "write" ? _t("admin.cf_m_write") : _t("admin.cf_m_read")];
+      if (m.title) bits.push(m.title);
+      bits.push(m.public ? _t("admin.cf_for_all") : _t("admin.cf_for_n", { n: m.subs || 0 }));
+      if (m.ended) bits.push("⚠ " + _t("admin.cf_ended_long"));
+      else if (m.lastAt && !m.lastAt.startsWith("0001")) bits.push(_t("admin.cf_last_delivery", { ago: relAgo(m.lastAt) }));
+      info.append(t, el("small", null, bits.join(" · ")));
+      if (m.users && m.users.length) info.append(el("small", null, _t("admin.cf_personal_by", { names: m.users.slice(0, 10).join(", ") + (m.users.length > 10 ? " …" : "") })));
+      const tools = el("div", "row-tools");
+      const pub = el("button", "btn-quiet", m.public ? _t("admin.cf_make_private") : _t("admin.cf_make_public"));
+      pub.type = "button";
+      pub.title = m.public ? _t("admin.cf_make_private_hint") : "";
+      pub.addEventListener("click", async () => {
+        try { await api("PATCH", "/api/admin/channelfed/mirrors/" + encodeURIComponent(m.room), { public: !m.public }); loadChanFed(); }
+        catch (err) { toast(err.message, true); }
+      });
+      const del = el("button", "btn-quiet danger", _t("admin.cf_unsubscribe"));
+      del.type = "button";
+      del.addEventListener("click", async () => {
+        if (!confirm(_t("admin.cf_unsubscribe_confirm", { room: m.room, address: m.address }))) return;
+        try { await api("DELETE", "/api/admin/rooms/" + encodeURIComponent(m.room)); toast(_t("admin.cf_unsubscribed")); loadChanFed(); }
+        catch (err) { toast(err.message, true); }
+      });
+      tools.append(pub, del);
+      li.append(info, tools);
+      return li;
+    }));
+  }
+  $("cfForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("cfError").textContent = "";
+    try {
+      await api("PUT", "/api/admin/channelfed", { enabled: $("cfOn").checked, userSubs: $("cfUserSubs").checked,
+        allow: lines($("cfAllow").value), deny: lines($("cfDeny").value) });
+      $("cfSaved").textContent = _t("admin.gespeichert");
+      setTimeout(() => ($("cfSaved").textContent = ""), 2500);
+      loadChanFed();
+    } catch (err) { $("cfError").textContent = err.message; }
+  });
+  async function cfSubscribe(address, local, isPublic) {
+    $("cfSubError").textContent = "";
+    $("cfSubBtn").disabled = true;
+    try {
+      const r = await api("POST", "/api/admin/channelfed/subscribe", { address, name: local || "", public: isPublic });
+      toast(_t("admin.cf_subscribed", { room: r.room }));
+      $("cfAddr").value = ""; $("cfLocal").value = "";
+      loadChanFed();
+      return true;
+    } catch (err) { $("cfSubError").textContent = err.message; return false; }
+    finally { $("cfSubBtn").disabled = false; }
+  }
+  $("cfSubForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const a = $("cfAddr").value.trim();
+    if (!a) { $("cfAddr").focus(); return; }
+    cfSubscribe(a, $("cfLocal").value.trim(), $("cfPublic").checked);
+  });
+  function renderFound(list, empty) {
+    const ul = $("cfFound");
+    if (!list.length) { ul.replaceChildren(el("li", "empty-row", empty)); return; }
+    ul.replaceChildren(...list.map((c) => {
+      const li = el("li", "user-row cf-row");
+      const info = el("div", "user-main");
+      info.append(el("strong", null, c.address), el("small", null, [c.title && c.title !== c.domain ? c.title : "", c.mode === "write" ? _t("admin.cf_m_write") : _t("admin.cf_m_read"), c.description].filter(Boolean).join(" · ")));
+      if (c.room) { li.append(info, el("span", "rule fed", _t("admin.cf_already", { room: c.room }))); return li; }
+      const b = el("button", "btn-quiet", _t("admin.cf_subscribe_btn"));
+      b.type = "button";
+      b.addEventListener("click", async () => { b.disabled = true; if (await cfSubscribe(c.address, "", $("cfPublic").checked)) li.remove(); else b.disabled = false; });
+      li.append(info, b);
+      return li;
+    }));
+  }
+  $("cfBrowseBtn").addEventListener("click", async () => {
+    const d = $("cfBrowseDomain").value.trim();
+    if (!d) { $("cfBrowseDomain").focus(); return; }
+    $("cfFound").replaceChildren(el("li", "empty-row", _t("admin.cf_loading")));
+    try { const r = await api("GET", "/api/admin/channelfed/browse?domain=" + encodeURIComponent(d)); renderFound(r.channels, _t("admin.cf_none_shared_there")); }
+    catch (err) { $("cfFound").replaceChildren(el("li", "empty-row error", err.message)); }
+  });
+  $("cfBrowseDomain").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("cfBrowseBtn").click(); } });
+  $("cfDirBtn").addEventListener("click", async () => {
+    $("cfFound").replaceChildren(el("li", "empty-row", _t("admin.cf_loading")));
+    try { const r = await api("GET", "/api/admin/channelfed/directory?q=" + encodeURIComponent($("cfBrowseDomain").value.trim())); renderFound(r.channels, _t("admin.cf_dir_empty")); }
+    catch (err) { $("cfFound").replaceChildren(el("li", "empty-row error", err.message)); }
   });
 
   // ---------- Hosting: Nutzerkonten, E-Mail, Föderation ----------

@@ -56,6 +56,8 @@ type Instance struct {
 	First        time.Time `json:"first"`
 	Last         time.Time `json:"last"`
 	Hidden       bool      `json:"hidden,omitempty"` // von der Beacon-Verwaltung ausgeblendet
+	// Kanäle, die die Instanz für andere Instanzen freigibt (Kanal-Föderation)
+	Channels []SharedChannel `json:"channels,omitempty"`
 	// berechnet (siehe trust.go), nicht gespeichert
 	Trust      string `json:"trust"`                // official, recommended oder leer (Community)
 	TrustNote  string `json:"trustNote,omitempty"`  // Hinweis des Beacon-Teams

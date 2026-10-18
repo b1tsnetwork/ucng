@@ -124,6 +124,10 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 10h14M10 3c2 2.2 3 4.5 3 7s-1 4.8-3 7c-2-2.2-3-4.5-3-7s1-4.8 3-7z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
           <span data-i18n="admin.hosting">Hosting</span>
         </a>
+        <a href="#kanalabos" data-view="kanalabos" class="admin-only">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 3.5 6 16.5M14 3.5l-1.5 13M3.5 7.5h13M3 12.5h13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="16" cy="16" r="3.2" fill="var(--panel, #fff)" stroke="currentColor" stroke-width="1.4"/><path d="M12.8 16h6.4M16 12.8c.9 1 1.3 2 1.3 3.2s-.4 2.2-1.3 3.2c-.9-1-1.3-2-1.3-3.2s.4-2.2 1.3-3.2z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+          <span data-i18n="admin.cf_nav">Föderierte Kanäle</span>
+        </a>
         <a href="#beacon" data-view="beacon" class="admin-only">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="currentColor"/><path d="M5.8 5.8a6 6 0 0 0 0 8.4M14.2 5.8a6 6 0 0 1 0 8.4M3.3 3.3a9.5 9.5 0 0 0 0 13.4M16.7 3.3a9.5 9.5 0 0 1 0 13.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <span data-i18n="admin.beacon">Beacon</span>
@@ -1046,6 +1050,66 @@
         </div>
       </section>
 
+      <!-- Föderierte Kanäle: freigeben und abonnieren -->
+      <section class="view" id="view-kanalabos" hidden>
+        <p class="view-intro" data-i18n-html="admin.cf_intro">Gib Kanäle für andere UCNG-Instanzen frei und abonniere Kanäle anderer Instanzen. Abonnierte Kanäle erscheinen hier wie eigene (mit 🌐); geschrieben wird – wenn der Ursprung es erlaubt – direkt dort, mit dessen Regeln. Funktioniert ohne Nutzerkonten und mit.</p>
+        <form class="panel" id="cfForm">
+          <h2 class="panel-title" data-i18n="admin.cf_settings">Einstellungen</h2>
+          <p class="set-hint" id="cfHint"></p>
+          <label class="switch-row">
+            <span class="switch-text"><strong data-i18n="admin.cf_on">Kanal-Föderation einschalten</strong><small data-i18n-html="admin.cf_on_hint">Andere Instanzen können freigegebene Kanäle abonnieren, und diese Instanz kann Kanäle anderer abonnieren. Braucht <code>PUBLIC_URL</code>.</small></span>
+            <input type="checkbox" class="switch" id="cfOn">
+          </label>
+          <label class="switch-row">
+            <span class="switch-text"><strong data-i18n="admin.cf_usersubs">Personen dürfen selbst abonnieren</strong><small data-i18n="admin.cf_usersubs_hint">Im Chat gibt es dann „Kanal abonnieren“. Ein persönliches Abo steht nur bei der Person in der Liste. Im Modus „hosted“ nur mit Konto.</small></span>
+            <input type="checkbox" class="switch" id="cfUserSubs">
+          </label>
+          <div class="field-row">
+            <label class="field"><span data-i18n-html="admin.nur_diese_instanzen_leer_alle">Nur diese Instanzen <em>(leer = alle)</em></span><textarea id="cfAllow" rows="3" class="mono-area" spellcheck="false" placeholder="chat.example.org&#10;*.example.net"></textarea></label>
+            <label class="field"><span data-i18n="admin.gesperrte_instanzen">Gesperrte Instanzen</span><textarea id="cfDeny" rows="3" class="mono-area" spellcheck="false" placeholder="spam.example"></textarea></label>
+          </div>
+          <p class="form-error" id="cfError" role="alert"></p>
+          <div class="panel-actions">
+            <span class="saved" id="cfSaved" aria-live="polite"></span>
+            <button type="submit" class="btn-primary" data-i18n="admin.speichern">Speichern</button>
+          </div>
+        </form>
+
+        <div class="panel flush">
+          <div class="panel-head"><h2 class="panel-title" data-i18n="admin.cf_shared">Freigegebene Kanäle dieser Instanz</h2>
+          <p data-i18n="admin.cf_shared_hint">Freigeben unter Kanäle → Kanal bearbeiten → „Für andere Instanzen“. Nur öffentliche Kanäle (ohne Leserollen und Passwort). Schreiben dort nur bestimmte Rollen, lesen andere Instanzen nur mit.</p></div>
+          <ul class="user-list" id="cfShared"></ul>
+        </div>
+
+        <div class="panel flush">
+          <div class="panel-head"><h2 class="panel-title" data-i18n="admin.cf_mirrors">Abonnierte Kanäle anderer Instanzen</h2></div>
+          <ul class="user-list" id="cfMirrors"></ul>
+        </div>
+
+        <form class="panel" id="cfSubForm">
+          <h2 class="panel-title" data-i18n="admin.cf_subscribe">Kanal abonnieren</h2>
+          <div class="field-row">
+            <label class="field"><span data-i18n="admin.cf_address">Adresse</span><input id="cfAddr" placeholder="#kanal@chat.example.org" autocomplete="off" spellcheck="false" data-i18n-placeholder="admin.cf_address_ph"></label>
+            <label class="field narrow"><span data-i18n="admin.cf_localname">Name hier</span><span class="prefixed"><span aria-hidden="true">#</span><input id="cfLocal" maxlength="32" autocomplete="off" placeholder="optional" data-i18n-placeholder="admin.cf_localname_ph"></span></label>
+          </div>
+          <label class="check-row"><input type="checkbox" id="cfPublic" checked><span data-i18n="admin.cf_public">Für alle in der Kanalliste anzeigen</span></label>
+          <p class="form-error" id="cfSubError" role="alert"></p>
+          <div class="panel-actions">
+            <button type="submit" class="btn-primary" id="cfSubBtn" data-i18n="admin.cf_subscribe_btn">Abonnieren</button>
+          </div>
+        </form>
+
+        <div class="panel" id="cfFindPanel">
+          <h2 class="panel-title" data-i18n="admin.cf_find">Kanäle finden</h2>
+          <div class="cf-find-row">
+            <input id="cfBrowseDomain" placeholder="chat.example.org" autocomplete="off" spellcheck="false" aria-label="Instanz" data-i18n-aria-label="admin.cf_instance">
+            <button type="button" class="btn-quiet" id="cfBrowseBtn" data-i18n="admin.cf_browse">Kanäle dieser Instanz</button>
+            <button type="button" class="btn-quiet" id="cfDirBtn" data-i18n="admin.cf_directory">Beacon-Verzeichnis</button>
+          </div>
+          <ul class="user-list" id="cfFound"></ul>
+        </div>
+      </section>
+
       <!-- Beacon: Verzeichnis und GIF-Sammlungen -->
       <section class="view" id="view-beacon" hidden>
         <p class="view-intro" data-i18n-html="admin.ein_beacon_ist_ein_verzeichnis_von">Ein <strong>Beacon</strong> ist ein Verzeichnis von UCNG-Instanzen und ein gemeinsamer GIF-Hub (eigenes Programm <code>gochat-beacon</code>). Hier meldest du diese Instanz an und abonnierst GIF-Sammlungen.</p>
@@ -1237,6 +1301,17 @@
           <small data-i18n="admin.room_password_hint">Der Kanal bleibt in der Liste sichtbar (mit Schloss). Wer hinein will, gibt das Passwort einmal ein. Das Team braucht keins.</small>
         </label>
         <label class="check-row" id="roomPasswordClearRow"><input type="checkbox" id="roomPasswordClear"><span data-i18n="admin.room_password_clear">Passwort entfernen</span></label>
+      </fieldset>
+      <fieldset class="sub-set" id="roomShareSet">
+        <legend data-i18n="admin.cf_room_legend">Für andere Instanzen</legend>
+        <label class="field">
+          <select id="roomShare">
+            <option value="" data-i18n="admin.cf_mode_off">Nicht freigegeben</option>
+            <option value="read" data-i18n="admin.cf_mode_read">Freigegeben: nur lesen</option>
+            <option value="write" data-i18n="admin.cf_mode_write">Freigegeben: mitschreiben</option>
+          </select>
+          <small id="roomShareHint"></small>
+        </label>
       </fieldset>
       <fieldset class="sub-set" id="roomVoiceSet">
         <legend data-i18n="admin.voice_legend">Sprachkanal</legend>

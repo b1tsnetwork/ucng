@@ -49,7 +49,22 @@ type registration struct {
 	Version      string `json:"version"`
 	Source       string `json:"source"` // Quellcode dieser Fassung (AGPL)
 	Listed       bool   `json:"listed"` // false = aus dem Verzeichnis entfernen
+	// freigegebene Kanäle (Kanal-Föderation)
+	Channels []SharedChannel `json:"channels"`
 }
+
+// SharedChannel: ein Kanal, den eine Instanz für andere Instanzen freigibt.
+type SharedChannel struct {
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Mode        string    `json:"mode"` // read, write
+	Messages    int       `json:"messages,omitempty"`
+	LastAt      time.Time `json:"lastAt,omitempty"`
+}
+
+var channelNameRe = regexp.MustCompile(`^[\p{Ll}\p{Lo}\p{N}_-]{1,32}$`)
+
+const maxSharedChannels = 100
 
 type wellKnown struct {
 	Software string `json:"software"`
@@ -271,7 +286,84 @@ func cleanRegistration(in registration, domain string) (Instance, error) {
 	case "none", "read", "write":
 		x.Guests = in.Guests
 	}
+	seen := map[string]bool{}
+	for _, c := range in.Channels {
+		if !channelNameRe.MatchString(c.Name) || seen[c.Name] || (c.Mode != "read" && c.Mode != "write") {
+			continue
+		}
+		seen[c.Name] = true
+		if c.Messages < 0 {
+			c.Messages = 0
+		}
+		if c.LastAt.After(time.Now().Add(time.Hour)) {
+			c.LastAt = time.Time{}
+		}
+		x.Channels = append(x.Channels, SharedChannel{Name: c.Name, Description: cleanText(c.Description, 140), Mode: c.Mode, Messages: c.Messages, LastAt: c.LastAt.UTC()})
+		if len(x.Channels) >= maxSharedChannels {
+			break
+		}
+	}
 	return x, nil
+}
+
+// ChannelListing: ein freigegebener Kanal im Verzeichnis.
+type ChannelListing struct {
+	Address     string    `json:"address"` // #kanal@instanz
+	Domain      string    `json:"domain"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Mode        string    `json:"mode"`
+	Title       string    `json:"title"` // Name der Instanz
+	Messages    int       `json:"messages,omitempty"`
+	LastAt      time.Time `json:"lastAt,omitempty"`
+	Trust       string    `json:"trust"`
+	Language    string    `json:"language,omitempty"`
+	URL         string    `json:"url"`
+}
+
+// GET /api/v1/channels?q=&language=&trust=&mode= – freigegebene Kanäle aller Instanzen
+func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	lang, mode, trust := r.URL.Query().Get("language"), r.URL.Query().Get("mode"), r.URL.Query().Get("trust")
+	if trust == "community" {
+		trust = TrustCommunity
+	} else if !validTrust(trust) || trust == "" {
+		trust = "*"
+	}
+	out := []ChannelListing{}
+	for _, x := range s.store.Instances(time.Now(), false) {
+		if lang != "" && x.Language != lang && !strings.HasPrefix(x.Language, lang+"-") {
+			continue
+		}
+		if trust != "*" && x.Trust != trust {
+			continue
+		}
+		for _, c := range x.Channels {
+			if mode != "" && c.Mode != mode {
+				continue
+			}
+			if q != "" && !strings.Contains(strings.ToLower(c.Name+" "+c.Description+" "+x.Name+" "+x.Domain), q) {
+				continue
+			}
+			out = append(out, ChannelListing{Address: "#" + c.Name + "@" + x.Domain, Domain: x.Domain, Name: c.Name, Description: c.Description,
+				Mode: c.Mode, Title: x.Name, Messages: c.Messages, LastAt: c.LastAt, Trust: x.Trust, Language: x.Language, URL: x.URL})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if ra, rb := trustRank(a.Trust), trustRank(b.Trust); ra != rb {
+			return ra < rb
+		}
+		if !a.LastAt.Equal(b.LastAt) {
+			return a.LastAt.After(b.LastAt)
+		}
+		return a.Address < b.Address
+	})
+	total := len(out)
+	if len(out) > 500 {
+		out = out[:500]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"channels": out, "total": total})
 }
 
 // GET /api/v1/instances?q=&language=&country=&trust=official|recommended|community&sort=users|name|new|active

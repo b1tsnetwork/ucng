@@ -523,3 +523,38 @@ func TestGIFPreview(t *testing.T) {
 		t.Fatal("Vorschau nicht nachgezogen")
 	}
 }
+
+func TestSharedChannels(t *testing.T) {
+	bts, _ := testBeacon(t)
+	_, d, k := fakeInstance(t)
+	res := register(t, bts.URL, d, k, map[string]any{"url": "http://" + d, "name": "Alpen", "listed": true, "channels": []map[string]any{
+		{"name": "news", "description": "Neuigkeiten", "mode": "write", "messages": 12},
+		{"name": "Ungültig Name", "mode": "read"},
+		{"name": "ruhig", "mode": "egal"},
+		{"name": "lesen", "mode": "read"},
+	}})
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("anmelden: %d", res.StatusCode)
+	}
+	get := func(q string) []ChannelListing {
+		res, err := http.Get(bts.URL + "/api/v1/channels?" + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out struct{ Channels []ChannelListing }
+		json.NewDecoder(res.Body).Decode(&out)
+		return out.Channels
+	}
+	all := get("")
+	if len(all) != 2 || all[0].Address != "#lesen@"+d && all[0].Address != "#news@"+d || all[0].Title != "Alpen" {
+		t.Fatalf("Kanäle: %+v", all)
+	}
+	if w := get("mode=write"); len(w) != 1 || w[0].Name != "news" || w[0].Messages != 12 {
+		t.Fatalf("nur mitschreiben: %+v", w)
+	}
+	if q := get("q=neuigk"); len(q) != 1 || q[0].Name != "news" {
+		t.Fatalf("Suche: %+v", q)
+	}
+}
